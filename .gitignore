@@ -2,6 +2,9 @@ node_modules/
 dist/
 *.ehpk
 
+# Simulator screenshots land in the repo root
+glasses_*.png
+
 # Local env / secrets. Never bundle keys into a build, the package is extractable.
 .env
 .env.local

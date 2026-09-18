@@ -6,7 +6,34 @@ import {
   OsEventTypeList,
 } from '@evenrealities/even_hub_sdk'
 
-const bridge = await waitForEvenAppBridge()
+// The companion page is the only surface that can show startup problems, since a
+// failure here means nothing ever reaches the glasses.
+const statusEl = document.getElementById('app')
+
+function status(line: string) {
+  console.log(line)
+  if (statusEl) statusEl.textContent = line
+}
+
+window.addEventListener('unhandledrejection', event => {
+  status(`Startup failed: ${event.reason}`)
+})
+window.addEventListener('error', event => {
+  status(`Error: ${event.message}`)
+})
+
+status('Waiting for the Even app bridge...')
+
+// A hung bridge and a crashed bridge look identical on the glasses (blank screen,
+// no event container), so force the hang to announce itself.
+const bridge = await Promise.race([
+  waitForEvenAppBridge(),
+  new Promise<never>((_resolve, reject) => {
+    setTimeout(() => reject(new Error('bridge did not arrive within 10s')), 10000)
+  }),
+])
+
+status('Bridge ready, creating page...')
 
 const mainText = new TextContainerProperty({
   xPosition: 0,
@@ -29,7 +56,11 @@ const result = await bridge.createStartUpPageContainer(
   }),
 )
 
-console.log('Page created:', result === 0 ? 'success' : `failed (${result})`)
+status(
+  result === 0
+    ? 'Page created: success. Check the glasses display.'
+    : `Page created: FAILED with code ${result} (1 invalid, 2 oversize, 3 out of memory)`,
+)
 
 // Reads the event type out of one envelope.
 //
@@ -63,6 +94,7 @@ const unsubscribe = bridge.onEvenHubEvent(event => {
 
   if (sysType === OsEventTypeList.CLICK_EVENT || textType === OsEventTypeList.CLICK_EVENT) {
     taps += 1
+    status(`Tap received (${taps}).`)
     bridge.textContainerUpgrade(
       new TextContainerUpgrade({
         containerID: 1,
