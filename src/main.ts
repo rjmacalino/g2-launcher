@@ -1,8 +1,9 @@
 import {
   waitForEvenAppBridge,
   TextContainerProperty,
+  ListContainerProperty,
+  ListItemContainerProperty,
   CreateStartUpPageContainer,
-  TextContainerUpgrade,
   OsEventTypeList,
 } from '@evenrealities/even_hub_sdk'
 
@@ -35,24 +36,46 @@ const bridge = await Promise.race([
 
 status('Bridge ready, creating page...')
 
-const mainText = new TextContainerProperty({
+// Layout on the 576x288 canvas: title across the top, list filling the rest.
+// Two containers total; only the list captures events, since it owns input.
+const titleText = new TextContainerProperty({
   xPosition: 0,
   yPosition: 0,
   width: 576,
-  height: 288,
+  height: 48,
   borderWidth: 0,
   borderColor: 5,
   paddingLength: 4,
   containerID: 1,
-  containerName: 'main',
-  content: 'Hello from G2!\nTap to count · double-tap to exit.',
+  containerName: 'title',
+  content: 'Launcher',
+  isEventCapture: 0,
+})
+
+const menuList = new ListContainerProperty({
+  xPosition: 0,
+  yPosition: 48,
+  width: 576,
+  height: 240,
+  borderWidth: 0,
+  borderColor: 5,
+  paddingLength: 4,
+  containerID: 2,
+  containerName: 'menu',
   isEventCapture: 1,
+  itemContainer: new ListItemContainerProperty({
+    itemCount: 4,
+    itemWidth: 576,
+    isItemSelectBorderEn: 1,
+    itemName: ['Weather', 'GPS', 'Notes', 'Teleprompter'],
+  }),
 })
 
 const result = await bridge.createStartUpPageContainer(
   new CreateStartUpPageContainer({
-    containerTotalNum: 1,
-    textObject: [mainText],
+    containerTotalNum: 2,
+    textObject: [titleText],
+    listObject: [menuList],
   }),
 )
 
@@ -82,26 +105,13 @@ function eventTypeOf(envelope?: { eventType?: OsEventTypeList }): OsEventTypeLis
 //     must fire no matter which envelope the event arrives in, so users
 //     can always exit the app.
 //   • Check DOUBLE_CLICK_EVENT before CLICK_EVENT.
-let taps = 0
+//   • Single-tap handling is out of scope for G2-1; selection lands in G2-2.
 const unsubscribe = bridge.onEvenHubEvent(event => {
   const sysType = eventTypeOf(event.sysEvent)
   const textType = eventTypeOf(event.textEvent)
 
   if (sysType === OsEventTypeList.DOUBLE_CLICK_EVENT || textType === OsEventTypeList.DOUBLE_CLICK_EVENT) {
     bridge.shutDownPageContainer(1)
-    return
-  }
-
-  if (sysType === OsEventTypeList.CLICK_EVENT || textType === OsEventTypeList.CLICK_EVENT) {
-    taps += 1
-    status(`Tap received (${taps}).`)
-    bridge.textContainerUpgrade(
-      new TextContainerUpgrade({
-        containerID: 1,
-        containerName: 'main',
-        content: `Taps: ${taps}\nTap to count · double-tap to exit.`,
-      }),
-    )
     return
   }
 
