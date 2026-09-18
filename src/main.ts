@@ -174,13 +174,21 @@ const unsubscribe = bridge.onEvenHubEvent(event => {
   // elides zero values, so tapping Weather can arrive as `undefined`. Resolve
   // the default INSIDE the branch where we already know listEvent exists and
   // the event is a click — same shape as eventTypeOf above, one level deeper.
+  
   const listEvent = event.listEvent
   if (listEvent && listType === OsEventTypeList.CLICK_EVENT && screen.kind === 'menu') {
     const index = listEvent.currentSelectItemIndex ?? 0
     if (index >= 0 && index < TOOLS.length) {
-      screen = { kind: 'tool', index }
-      void bridge.rebuildPageContainer(new RebuildPageContainer(toolContainers(index)))
-      status(`Tool: ${TOOLS[index]}`)
+      bridge
+        .rebuildPageContainer(new RebuildPageContainer(toolContainers(index)))
+        .then(ok => {
+          if (ok) {
+            screen = { kind: 'tool', index }
+            status(`Tool: ${TOOLS[index]}`)
+          } else {
+            status(`Failed to open ${TOOLS[index]}`)
+          }
+        })
     }
     return
   }
@@ -192,9 +200,16 @@ const unsubscribe = bridge.onEvenHubEvent(event => {
     screen.kind === 'tool' &&
     (sysType === OsEventTypeList.CLICK_EVENT || textType === OsEventTypeList.CLICK_EVENT)
   ) {
-    screen = { kind: 'menu' }
-    void bridge.rebuildPageContainer(new RebuildPageContainer(menuContainers()))
-    status('Menu')
+    bridge
+      .rebuildPageContainer(new RebuildPageContainer(menuContainers()))
+      .then(ok => {
+        if (ok) {
+          screen = { kind: 'menu' }
+          status('Menu')
+        } else {
+          status('Failed to return to menu')
+        }
+      })
     return
   }
 
