@@ -5,6 +5,7 @@ import {
   ListItemContainerProperty,
   CreateStartUpPageContainer,
   RebuildPageContainer,
+  TextContainerUpgrade,
   OsEventTypeList,
 } from '@evenrealities/even_hub_sdk'
 
@@ -44,16 +45,111 @@ const TOOLS = ['Weather', 'GPS', 'Notes', 'Teleprompter'] as const
 
 // Which page is showing. A discriminated union, not `number | null`, because
 // index 0 (Weather) is falsy — an `if (currentToolIndex)` check would treat
-// "Weather is open" as "no tool is open". `screen.kind` has no such trap. The
-// union also lets TypeScript narrow the index when we branch on `kind === 'tool'`.
-//
-// Not persisted, per the ticket's out-of-scope list — a launcher starts on the
-// menu every launch.
+// "Weather is open" as "no tool is open". `screen.kind` has no such trap.
 type Screen = { kind: 'menu' } | { kind: 'tool'; index: number }
 let screen: Screen = { kind: 'menu' }
 
-// Container data for the menu page. Reused by both the initial page creation
-// (CreateStartUpPageContainer) and every return-to-menu (RebuildPageContainer).
+// --- Teleprompter state ---------------------------------------------------
+//
+// The smallest thing that distinguishes "one tool with behaviour" from "three
+// placeholders": a named constant and one guarded branch below. No registry,
+// no dispatch table, no per-tool module. When Weather lands with behaviour,
+// it gets a sibling constant and a sibling branch — and if those branches
+// start to look alike, that is the signal to factor, not before.
+const TELEPROMPTER_INDEX = TOOLS.indexOf('Teleprompter')
+
+// Hardcoded per the ticket's out-of-scope list ("Loading the script from
+// anywhere"). Kept short so lines don't wrap, and long enough that scrolling
+// is meaningful.
+const SCRIPT = [
+  'Good morning everyone.',
+  '',
+  'Thank you for being here.',
+  'This is the teleprompter.',
+  '',
+  'Scroll to advance.',
+  'Scroll back to return.',
+  '',
+  'The text you are reading',
+  'is delivered in place,',
+  'not redrawn.',
+  '',
+  'That matters because',
+  'a full redraw flickers,',
+  'and a teleprompter',
+  'that flickers is useless.',
+  '',
+  'Every line here',
+  'arrives through a single',
+  'in-place update.',
+  '',
+  'No page rebuild,',
+  'no visible flash,',
+  'just the words moving.',
+  '',
+  'When you reach the end,',
+  'scrolling further',
+  'does nothing.',
+  '',
+  'When you return to the top,',
+  'scrolling further',
+  'does nothing too.',
+  '',
+  'Tap once to go back',
+  'to the launcher menu.',
+  '',
+  'Double tap to exit',
+  'the app entirely.',
+  '',
+  'That is the whole demo.',
+  'Thank you.',
+]
+
+
+// How many script lines fit on one screen. This assumes one script line maps to
+// one display row — longer lines wrap and silently cost a row, so a script with
+// wrapped lines will show fewer than six entries per view. Fine for the current
+// short-line script; worth revisiting when the script becomes user-supplied.
+const LINES_PER_VIEW = 6
+
+// Highest valid starting line. If the script is shorter than one view, this
+// clamps to 0 so scrolling never advances past the only page.
+const TELEPROMPTER_MAX_START = Math.max(0, SCRIPT.length - LINES_PER_VIEW)
+
+// Current starting line. Reset to 0 each time the teleprompter opens —
+// persistence between openings is out of scope.
+let teleprompterLine = 0
+
+function scriptSlice(startLine: number): string {
+  return SCRIPT.slice(startLine, startLine + LINES_PER_VIEW).join('\n')
+}
+
+// Move the viewport by one line and redraw in place. Bounds-checked before any
+// state change; teleprompterLine is only committed when the upgrade resolves
+// true, so a failure leaves the line number matching what is on screen rather
+// than one ahead. Same principle as the deferred screen mutation in G2-2.
+function tryScroll(delta: 1 | -1) {
+  const target = teleprompterLine + delta
+  if (target < 0 || target > TELEPROMPTER_MAX_START) return
+  bridge
+    .textContainerUpgrade(
+      new TextContainerUpgrade({
+        containerID: 1,
+        containerName: 'tool',
+        content: scriptSlice(target),
+      }),
+    )
+    .then(ok => {
+      if (ok) {
+        teleprompterLine = target
+      } else {
+        status('Scroll failed')
+      }
+    })
+}
+
+// --- Containers -----------------------------------------------------------
+
 const titleText = new TextContainerProperty({
   xPosition: 0,
   yPosition: 0,
@@ -87,9 +183,14 @@ const menuList = new ListContainerProperty({
   }),
 })
 
-// Container data for a tool page. One full-canvas text container, and it MUST
-// set isEventCapture: 1 — a page with no capture container has no way out.
+// One full-canvas text container, and it MUST set isEventCapture: 1 — a page
+// with no capture container has no way out, and it is also the container that
+// receives the scroll events the teleprompter depends on.
+//
+// The teleprompter gets the script slice instead of the tool name. Every other
+// tool gets its name, unchanged from G2-2.
 function toolContainers(index: number) {
+  const isTeleprompter = index === TELEPROMPTER_INDEX
   return {
     containerTotalNum: 1,
     textObject: [
@@ -103,7 +204,7 @@ function toolContainers(index: number) {
         paddingLength: 4,
         containerID: 1,
         containerName: 'tool',
-        content: TOOLS[index],
+        content: isTeleprompter ? scriptSlice(teleprompterLine) : TOOLS[index],
         isEventCapture: 1,
       }),
     ],
@@ -118,8 +219,6 @@ function menuContainers() {
   }
 }
 
-// Initial page. Same container data the menu rebuild will use, so the menu
-// after a return is byte-identical to the menu on launch.
 const result = await bridge.createStartUpPageContainer(
   new CreateStartUpPageContainer(menuContainers()),
 )
@@ -134,28 +233,23 @@ status(
 //
 // CLICK_EVENT is 0, and protobuf omits zero-value fields on the wire, so a
 // single tap arrives as an envelope whose `eventType` is `undefined`. The
-// default has to be resolved INSIDE the envelope check. Writing
-// `event.sysEvent?.eventType ?? OsEventTypeList.CLICK_EVENT` instead would
-// read CLICK on events that carry no `sysEvent` at all, so every scroll,
-// exit and audio frame would fire the tap handler.
+// default has to be resolved INSIDE the envelope check.
 function eventTypeOf(envelope?: { eventType?: OsEventTypeList }): OsEventTypeList | null {
   if (!envelope) return null
   return envelope.eventType ?? OsEventTypeList.CLICK_EVENT
 }
 
-// Event routing. Three envelopes, and the order below is load-bearing:
+// Event routing. Four envelopes now, and the order below is load-bearing:
 //
 //   • sysEvent  → taps, double-taps, lifecycle
-//   • textEvent → scroll gestures on text containers
-//   • listEvent → list item events (highlight, click). THIS is the envelope
-//                 the launcher menu's taps arrive on.
+//   • textEvent → scroll gestures AND clicks on text containers
+//   • listEvent → list item events (highlight, click)
 //
-//   1. Double-tap → shutDownPageContainer(1) MUST be first. It is the only
-//      universal exit, and it must fire from any page in any state. If a
-//      later branch could swallow the event, the wearer is stuck.
-//   2. List click while on the menu → open the tool at currentSelectItemIndex.
-//   3. Any click while on a tool page → return to the menu.
-//   4. Exit events → unsubscribe.
+//   1. Double-tap → shutDownPageContainer(1) MUST be first. Universal exit.
+//   2. listEvent click while on the menu → open the tool.
+//   3. Scroll on the teleprompter page → advance/retreat one line.
+//   4. Any click while on a tool page → return to the menu.
+//   5. Exit events → unsubscribe.
 const unsubscribe = bridge.onEvenHubEvent(event => {
   const sysType = eventTypeOf(event.sysEvent)
   const textType = eventTypeOf(event.textEvent)
@@ -173,12 +267,14 @@ const unsubscribe = bridge.onEvenHubEvent(event => {
   // currentSelectItemIndex is 0 for the first item (Weather), and protobuf
   // elides zero values, so tapping Weather can arrive as `undefined`. Resolve
   // the default INSIDE the branch where we already know listEvent exists and
-  // the event is a click — same shape as eventTypeOf above, one level deeper.
-  
+  // the event is a click.
   const listEvent = event.listEvent
   if (listEvent && listType === OsEventTypeList.CLICK_EVENT && screen.kind === 'menu') {
     const index = listEvent.currentSelectItemIndex ?? 0
     if (index >= 0 && index < TOOLS.length) {
+      // Reset the teleprompter position before the rebuild, so toolContainers
+      // renders the top of the script rather than wherever it was left.
+      if (index === TELEPROMPTER_INDEX) teleprompterLine = 0
       bridge
         .rebuildPageContainer(new RebuildPageContainer(toolContainers(index)))
         .then(ok => {
@@ -193,9 +289,27 @@ const unsubscribe = bridge.onEvenHubEvent(event => {
     return
   }
 
-  // Tool pages have no list, so the tap arrives on sysEvent (or textEvent).
-  // Only fires when a tool page is showing — the menu's list clicks were
-  // handled above and returned early.
+  // Scroll handling on the teleprompter page. SCROLL_TOP_EVENT and
+  // SCROLL_BOTTOM_EVENT are 1 and 2, both non-zero, so the zero-elision trap
+  // does not apply here — the values arrive intact.
+  //
+  // At either bound we return early without doing anything: scrolling past an
+  // end must not wrap, throw, or render empty.
+
+  if (screen.kind === 'tool' && screen.index === TELEPROMPTER_INDEX) {
+    if (textType === OsEventTypeList.SCROLL_BOTTOM_EVENT) {
+      tryScroll(1)
+      return
+    }
+    if (textType === OsEventTypeList.SCROLL_TOP_EVENT) {
+      tryScroll(-1)
+      return
+    }
+  }
+
+  // Tool pages have no list, so a tap arrives on sysEvent or textEvent.
+  // A scroll is textType 1 or 2 and does not match CLICK_EVENT, so scrolls
+  // on placeholder tool pages fall through harmlessly.
   if (
     screen.kind === 'tool' &&
     (sysType === OsEventTypeList.CLICK_EVENT || textType === OsEventTypeList.CLICK_EVENT)
