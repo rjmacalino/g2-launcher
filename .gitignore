@@ -1,0 +1,15 @@
+node_modules/
+dist/
+*.ehpk
+
+# Local env / secrets. Never bundle keys into a build, the package is extractable.
+.env
+.env.local
+
+# Editor / OS noise
+.vscode/
+.idea/
+.DS_Store
+Thumbs.db
+
+claude.md
