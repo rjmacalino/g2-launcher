@@ -16,3 +16,8 @@ glasses_*.png
 Thumbs.db
 
 claude.md
+
+# Scratch files for PR/issue bodies — regenerated when needed, never committed
+pr-body.md
+issue-comment.md
+pr-comment.md

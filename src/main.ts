@@ -106,8 +106,10 @@ const SCRIPT = [
 ]
 
 
-// How many script lines fit on one screen. 576x288 minus padding is roughly
-// enough for six comfortable lines; adjust after looking at the simulator.
+// How many script lines fit on one screen. This assumes one script line maps to
+// one display row — longer lines wrap and silently cost a row, so a script with
+// wrapped lines will show fewer than six entries per view. Fine for the current
+// short-line script; worth revisiting when the script becomes user-supplied.
 const LINES_PER_VIEW = 6
 
 // Highest valid starting line. If the script is shorter than one view, this
@@ -120,6 +122,30 @@ let teleprompterLine = 0
 
 function scriptSlice(startLine: number): string {
   return SCRIPT.slice(startLine, startLine + LINES_PER_VIEW).join('\n')
+}
+
+// Move the viewport by one line and redraw in place. Bounds-checked before any
+// state change; teleprompterLine is only committed when the upgrade resolves
+// true, so a failure leaves the line number matching what is on screen rather
+// than one ahead. Same principle as the deferred screen mutation in G2-2.
+function tryScroll(delta: 1 | -1) {
+  const target = teleprompterLine + delta
+  if (target < 0 || target > TELEPROMPTER_MAX_START) return
+  bridge
+    .textContainerUpgrade(
+      new TextContainerUpgrade({
+        containerID: 1,
+        containerName: 'tool',
+        content: scriptSlice(target),
+      }),
+    )
+    .then(ok => {
+      if (ok) {
+        teleprompterLine = target
+      } else {
+        status('Scroll failed')
+      }
+    })
 }
 
 // --- Containers -----------------------------------------------------------
@@ -269,40 +295,14 @@ const unsubscribe = bridge.onEvenHubEvent(event => {
   //
   // At either bound we return early without doing anything: scrolling past an
   // end must not wrap, throw, or render empty.
+
   if (screen.kind === 'tool' && screen.index === TELEPROMPTER_INDEX) {
     if (textType === OsEventTypeList.SCROLL_BOTTOM_EVENT) {
-      status(`scroll down: line=${teleprompterLine} max=${TELEPROMPTER_MAX_START}`)
-      if (teleprompterLine < TELEPROMPTER_MAX_START) {
-        teleprompterLine += 1
-        bridge
-          .textContainerUpgrade(
-            new TextContainerUpgrade({
-              containerID: 1,
-              containerName: 'tool',
-              content: scriptSlice(teleprompterLine),
-            }),
-          )
-          .then(ok => {
-            if (!ok) status('Scroll failed')
-          })
-      }
+      tryScroll(1)
       return
     }
     if (textType === OsEventTypeList.SCROLL_TOP_EVENT) {
-      if (teleprompterLine > 0) {
-        teleprompterLine -= 1
-        bridge
-          .textContainerUpgrade(
-            new TextContainerUpgrade({
-              containerID: 1,
-              containerName: 'tool',
-              content: scriptSlice(teleprompterLine),
-            }),
-          )
-          .then(ok => {
-            if (!ok) status('Scroll failed')
-          })
-      }
+      tryScroll(-1)
       return
     }
   }
