@@ -224,7 +224,7 @@ const GPS_TIMEOUT_MS = 10_000
 const GPS_ACQUIRING_TEXT = 'Acquiring location...'
 const GPS_UNAVAILABLE_TEXT = 'Location unavailable'
 
-// Runtime GPS state. All four reset on every open. gpsActive is the guard
+// Runtime GPS state. All of this resets on every open. gpsActive is the guard
 // every async callback checks before acting — a late resolution after the
 // wearer has left must not touch the page or the subscription.
 let gpsActive = false
@@ -278,6 +278,11 @@ function startGps() {
   // Timeout starts now, not after startAppLocationUpdates resolves. Worst
   // case is GPS_TIMEOUT_MS from page open regardless of how slow the host
   // is to acknowledge — bounded, not "whenever."
+  // The timeout shows "unavailable" but deliberately does NOT call stopGps().
+  // The subscription stays live so a late fix still lands and the page
+  // self-heals — a fix at second 14 is better than none. Adding stopGps()
+  // here reads like tidying missed cleanup, passes every test in the PR, and
+  // silently removes that recovery. Leave the subscription running.
   gpsTimeoutId = setTimeout(() => {
     gpsTimeoutId = null
     if (!gpsActive) return
