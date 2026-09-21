@@ -456,11 +456,26 @@ const result = await bridge.createStartUpPageContainer(
   new CreateStartUpPageContainer(menuContainers()),
 )
 
-status(
-  result === 0
-    ? 'Page created: success. Check the glasses display.'
-    : `Page created: FAILED with code ${result} (1 invalid, 2 oversize, 3 out of memory)`,
-)
+// Page creation result.
+//
+// Hardware is the source of truth here. On real glasses this succeeds, which
+// proves the payload is valid. In the simulator and a plain browser, code 1
+// appears non-deterministically — sometimes on first load, sometimes on
+// refresh, sometimes not at all. See README "Page creation in the simulator
+// and browser" and issue #11.
+//
+// Deliberately no retry. Adding one would touch the path that works on
+// hardware in order to quiet an environment where failure is expected — the
+// wrong trade.
+if (result === 0) {
+  status('Page created: success. Check the glasses display.')
+} else {
+  status(
+    `Page creation returned code ${result} (1 invalid, 2 oversize, 3 out of memory). ` +
+      `On hardware this is a real problem. In the simulator and plain browser, ` +
+      `code 1 is expected and the page usually recovers on the next load.`,
+  )
+}
 
 teleprompterLine = await storedLinePromise
 

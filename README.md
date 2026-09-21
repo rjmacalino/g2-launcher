@@ -131,3 +131,21 @@ Keep it simple until it needs to be otherwise.
 - Device APIs: https://hub.evenrealities.com/docs/build/device-apis
 - Display system: https://hub.evenrealities.com/docs/build/display
 - Templates: https://github.com/even-realities/evenhub-templates
+
+### Page creation in the simulator and browser
+
+Page creation can report code 1 (invalid) in two environments:
+
+| Environment | First load |
+|---|---|
+| Real glasses via QR sideload | works, no failure |
+| Simulator | may report code 1 |
+| Plain browser at localhost:5173 | may report code 1 |
+
+**Hardware is the source of truth for page creation.** The payload is valid — it succeeds on glasses. In the simulator, the VM is likely not ready to accept a page when the first call lands; on a plain browser there is no host at all, so a rejection is the correct answer.
+
+The failure is non-deterministic. It has been observed on first load and on refresh, in both directions across runs, so do not expect a guaranteed reproduction.
+
+Do not "fix" this by adding a retry or suppressing the message. That is the exact shape of change that risks working code on hardware to quiet a diagnostic in an environment where failure is expected. The diagnostic has been softened to reflect this — see the message in `src/main.ts`.
+
+This is the fourth environment-versus-truth split on this project, after gesture ownership, the exit confirmation dialog, and storage persistence. See issue #11 for the full write-up.
