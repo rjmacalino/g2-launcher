@@ -58,9 +58,7 @@ let screen: Screen = { kind: 'menu' }
 // that is the signal to factor, not before.
 const TELEPROMPTER_INDEX = TOOLS.indexOf('Teleprompter')
 
-// Hardcoded per the ticket's out-of-scope list ("Loading the script from
-// anywhere"). Kept short so lines don't wrap, and long enough that scrolling
-// is meaningful.
+// Hardcoded per the G2-3 out-of-scope list ("Loading the script from anywhere").
 //
 // The last stanza describes the shipped gesture model. It has to stay in sync
 // with the event handler — it is the only place the wearer is told how to
@@ -119,18 +117,49 @@ const LINES_PER_VIEW = 6
 // clamps to 0 so scrolling never advances past the only page.
 const TELEPROMPTER_MAX_START = Math.max(0, SCRIPT.length - LINES_PER_VIEW)
 
-// Current starting line. Reset to 0 each time the teleprompter opens —
-// persistence between openings is out of scope.
+// Persisted scroll position. Survives app restarts, not just navigation —
+// the app process can be reclaimed by the OS without the wearer accepting
+// the exit dialog, so in-memory state is not sufficient. Dotted namespace
+// so future per-tool keys stay grouped: 'teleprompter.line', 'weather.last'.
+const STORAGE_KEY_TELEPROMPTER = 'teleprompter.line'
+
+// Current starting line. Assigned from storage at startup; updated on every
+// successful scroll. No longer reset on open — the whole point of the ticket
+// is that reopening resumes where the wearer left off.
 let teleprompterLine = 0
 
 function scriptSlice(startLine: number): string {
   return SCRIPT.slice(startLine, startLine + LINES_PER_VIEW).join('\n')
 }
 
+// Read the persisted line number and clamp it to the current script.
+//
+// Any failure resolves to 0: starting at the top is the safe default, and
+// every plausible representation of "no stored value" — empty string, the
+// literal 'null', 'undefined' — parses to NaN, which the finite check
+// catches. We do not need to know which one the host returns.
+async function readStoredLine(): Promise<number> {
+  try {
+    const raw = await bridge.getLocalStorage(STORAGE_KEY_TELEPROMPTER)
+    const parsed = parseInt(raw, 10)
+    if (!Number.isFinite(parsed) || parsed < 0) return 0
+    return Math.min(parsed, TELEPROMPTER_MAX_START)
+  } catch {
+    return 0
+  }
+}
+
 // Move the viewport by one line and redraw in place. Bounds-checked before any
 // state change; teleprompterLine is only committed when the upgrade resolves
 // true, so a failure leaves the line number matching what is on screen rather
-// than one ahead. Same principle as the deferred screen mutation in G2-2.
+// than one ahead.
+//
+// The write to storage is fired after the in-memory commit and does not block
+// further input. Fast scrolling may queue writes that race at the host. This
+// assumes the SDK delivers messages in order, so the last write wins — that is
+// an assumption, not something verified, and the project has been burned
+// before by treating a plausible guarantee as a known one. If it proves
+// untrue, the fix is a write queue, not a redesign.
 function tryScroll(delta: 1 | -1) {
   const target = teleprompterLine + delta
   if (target < 0 || target > TELEPROMPTER_MAX_START) return
@@ -145,6 +174,11 @@ function tryScroll(delta: 1 | -1) {
     .then(ok => {
       if (ok) {
         teleprompterLine = target
+        bridge
+          .setLocalStorage(STORAGE_KEY_TELEPROMPTER, String(target))
+          .then(stored => {
+            if (!stored) status('Failed to persist position')
+          })
       } else {
         status('Scroll failed')
       }
@@ -155,12 +189,11 @@ function tryScroll(delta: 1 | -1) {
 //
 // Mode 1, not 0: the QA guidelines require the confirmation dialog on the root
 // page, and explicitly reject both silent exit (mode 0) and a custom in-app
-// confirm. This is the single QA-graded behaviour in this ticket.
+// confirm. This is the single QA-graded behaviour in G2-5.
 //
 // shutDownPageContainer returns Promise<boolean>. A false result means the
 // wearer double-tapped and got nothing, which is exactly the rejection scenario
-// the root double-tap exists to prevent. Surface it — a silent failure here is
-// the one bug we cannot allow to hide.
+// the root double-tap exists to prevent. Surface it.
 function requestExit() {
   bridge.shutDownPageContainer(1).then(ok => {
     if (!ok) status('Exit request failed: shutDownPageContainer returned false')
@@ -238,6 +271,26 @@ function menuContainers() {
   }
 }
 
+// Kick off the storage read before page creation. The startup page is the
+// menu, which does not render teleprompter content, so page construction does
+// not depend on the stored line. The read resolves in parallel and is awaited
+// before the event handler is registered — by then the wearer cannot yet have
+// navigated anywhere, so there is no in-flight state to render around.
+//
+// Same hazard as waitForEvenAppBridge above: a hung host and a crashed host
+// look identical from here. readStoredLine's try/catch handles rejection, but
+// a promise that never settles is not a rejection — it hangs forever, and the
+// await below would block event handler registration. The menu has already
+// rendered by then, so the wearer would see a healthy app that responds to
+// nothing. Race against a timeout that resolves to 0 (top of script, the safe
+// default), so the read either returns a value or gives up.
+const storedLinePromise = Promise.race([
+  readStoredLine(),
+  new Promise<number>(resolve => {
+    setTimeout(() => resolve(0), 10000)
+  }),
+])
+
 const result = await bridge.createStartUpPageContainer(
   new CreateStartUpPageContainer(menuContainers()),
 )
@@ -247,6 +300,8 @@ status(
     ? 'Page created: success. Check the glasses display.'
     : `Page created: FAILED with code ${result} (1 invalid, 2 oversize, 3 out of memory)`,
 )
+
+teleprompterLine = await storedLinePromise
 
 // Reads the event type out of one envelope.
 //
@@ -273,8 +328,8 @@ function eventTypeOf(envelope?: { eventType?: OsEventTypeList }): OsEventTypeLis
 //   3. Scroll on the teleprompter page → advance/retreat one line.
 //   4. Exit events → unsubscribe.
 //
-// Tap on a tool page does nothing under the new model. No branch handles it,
-// which is correct — the tap is free for whichever tool wants it later.
+// Tap on a tool page does nothing under the current model. No branch handles
+// it, which is correct — the tap is free for whichever tool wants it later.
 const unsubscribe = bridge.onEvenHubEvent(event => {
   const sysType = eventTypeOf(event.sysEvent)
   const textType = eventTypeOf(event.textEvent)
@@ -282,8 +337,6 @@ const unsubscribe = bridge.onEvenHubEvent(event => {
 
   // Double-tap is context-sensitive:
   //   • On the menu (root), raise the system exit confirmation dialog.
-  //     The QA guidelines require mode 1 here — mode 0 (silent exit) and a
-  //     custom in-app confirm are both explicitly rejected on root.
   //   • On a tool page, return to the menu.
   //
   // This branch MUST stay first. If anything below it could swallow a
@@ -291,7 +344,7 @@ const unsubscribe = bridge.onEvenHubEvent(event => {
   //
   // Fail toward exit: if screen says tool but the rebuild to menu fails,
   // exit anyway. A wearer who gets an unexpected exit dialog can cancel.
-  // A wearer who gets nothing cannot escape. Those costs are not comparable.
+  // A wearer who gets nothing cannot escape.
   const isDoubleTap =
     sysType === OsEventTypeList.DOUBLE_CLICK_EVENT ||
     textType === OsEventTypeList.DOUBLE_CLICK_EVENT ||
@@ -306,7 +359,6 @@ const unsubscribe = bridge.onEvenHubEvent(event => {
             screen = { kind: 'menu' }
             status('Menu')
           } else {
-            // Back failed. Exit rather than leave the wearer stuck.
             requestExit()
           }
         })
@@ -322,13 +374,14 @@ const unsubscribe = bridge.onEvenHubEvent(event => {
   // elides zero values, so tapping Weather can arrive as `undefined`. Resolve
   // the default INSIDE the branch where we already know listEvent exists and
   // the event is a click.
+  //
+  // No reset of teleprompterLine here anymore: position is loaded once at
+  // startup and updated on every scroll, so it is already correct when the
+  // wearer opens the tool.
   const listEvent = event.listEvent
   if (listEvent && listType === OsEventTypeList.CLICK_EVENT && screen.kind === 'menu') {
     const index = listEvent.currentSelectItemIndex ?? 0
     if (index >= 0 && index < TOOLS.length) {
-      // Reset the teleprompter position before the rebuild, so toolContainers
-      // renders the top of the script rather than wherever it was left.
-      if (index === TELEPROMPTER_INDEX) teleprompterLine = 0
       bridge
         .rebuildPageContainer(new RebuildPageContainer(toolContainers(index)))
         .then(ok => {
@@ -345,10 +398,7 @@ const unsubscribe = bridge.onEvenHubEvent(event => {
 
   // Scroll handling on the teleprompter page. SCROLL_TOP_EVENT and
   // SCROLL_BOTTOM_EVENT are 1 and 2, both non-zero, so the zero-elision trap
-  // does not apply here — the values arrive intact.
-  //
-  // At either bound tryScroll returns early without doing anything: scrolling
-  // past an end must not wrap, throw, or render empty.
+  // does not apply here.
   if (screen.kind === 'tool' && screen.index === TELEPROMPTER_INDEX) {
     if (textType === OsEventTypeList.SCROLL_BOTTOM_EVENT) {
       tryScroll(1)
