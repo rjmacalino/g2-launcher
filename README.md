@@ -52,10 +52,12 @@ rejected.
 
 ## Input events
 
-Events arrive through `bridge.onEvenHubEvent`. Two separate envelopes:
+Events arrive through `bridge.onEvenHubEvent`. Three envelopes:
 
 - `event.sysEvent` carries taps, double taps, and lifecycle events
-- `event.textEvent` carries scroll gestures
+- `event.textEvent` carries scroll gestures and clicks on text containers
+- `event.listEvent` carries list item events (highlight and click). This is the
+  envelope the launcher menu runs on.
 
 Do not mix them up. Also note the protobuf gotcha documented in `src/main.ts`:
 `CLICK_EVENT` is `0`, and zero values are omitted on the wire, so a plain tap
@@ -68,84 +70,3 @@ Always check `DOUBLE_CLICK_EVENT` before `CLICK_EVENT`.
 
 ```bash
 npm install
-```
-
-## Running it
-
-Two terminals.
-
-```bash
-npm run dev        # terminal 1, Vite on port 5173
-npm run simulate   # terminal 2, opens the simulator against it
-```
-
-The simulator draws the green 576 x 288 canvas, so you do not need the glasses to
-start building.
-
-To run on real hardware, find your machine's LAN IP, then:
-
-```bash
-npx evenhub qr --url "http://<YOUR-LAN-IP>:5173"
-```
-
-Scan that from the Even Realities app using **Scan QR**. Hot reload works.
-
-## Shipping
-
-```bash
-npm run pack
-```
-
-That runs a typecheck, builds to `dist/`, and packs a `.ehpk` for the dev portal.
-
-Never bundle API keys. A released package can be extracted by anyone, so any third
-party credential has to sit behind a server side proxy.
-
-## Manifest
-
-`app.json` is the only Even specific config file. Fields worth knowing:
-
-- `package_id` reverse DNS, lowercase, at least two segments
-- `edition` must be `"202601"`
-- `name` max 20 characters
-- `min_sdk_version` should match the SDK you build against
-- `permissions` array of `{ name, desc }`, valid names are `network`, `location`,
-  `g2-microphone`, `phone-microphone`, `album`, `camera`
-
-`min_app_version` is derived from the SDK at pack time, so it is left out here on
-purpose.
-
-## Where this is going
-
-The plan is one launcher app that opens into a menu of small tools (weather, GPS,
-notes, teleprompter). Because the contextual menu is owned by the glasses OS and
-only holds quick actions, the launcher menu has to be ours: a list container of
-tool names, with our own state handling that calls `rebuildPageContainer` to swap
-between the menu screen and each tool screen.
-
-Keep it simple until it needs to be otherwise.
-
-## Docs
-
-- Overview and architecture: https://hub.evenrealities.com/docs
-- Device APIs: https://hub.evenrealities.com/docs/build/device-apis
-- Display system: https://hub.evenrealities.com/docs/build/display
-- Templates: https://github.com/even-realities/evenhub-templates
-
-### Page creation in the simulator and browser
-
-Page creation can report code 1 (invalid) in two environments:
-
-| Environment | First load |
-|---|---|
-| Real glasses via QR sideload | works, no failure |
-| Simulator | may report code 1 |
-| Plain browser at localhost:5173 | may report code 1 |
-
-**Hardware is the source of truth for page creation.** The payload is valid — it succeeds on glasses. In the simulator, the VM is likely not ready to accept a page when the first call lands; on a plain browser there is no host at all, so a rejection is the correct answer.
-
-The failure is non-deterministic. It has been observed on first load and on refresh, in both directions across runs, so do not expect a guaranteed reproduction.
-
-Do not "fix" this by adding a retry or suppressing the message. That is the exact shape of change that risks working code on hardware to quiet a diagnostic in an environment where failure is expected. The diagnostic has been softened to reflect this — see the message in `src/main.ts`.
-
-This is the fourth environment-versus-truth split on this project, after gesture ownership, the exit confirmation dialog, and storage persistence. See issue #11 for the full write-up.
