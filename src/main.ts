@@ -155,8 +155,10 @@ async function readStoredLine(): Promise<number> {
 // than one ahead.
 //
 // The write to storage is fired after the in-memory commit and does not block
-// further input. Fast scrolling may queue writes that race at the host; the
-// SDK passes messages in order, so the last write wins. If that ever proves
+// further input. Fast scrolling may queue writes that race at the host. This
+// assumes the SDK delivers messages in order, so the last write wins — that is
+// an assumption, not something verified, and the project has been burned
+// before by treating a plausible guarantee as a known one. If it proves
 // untrue, the fix is a write queue, not a redesign.
 function tryScroll(delta: 1 | -1) {
   const target = teleprompterLine + delta
@@ -274,7 +276,20 @@ function menuContainers() {
 // not depend on the stored line. The read resolves in parallel and is awaited
 // before the event handler is registered — by then the wearer cannot yet have
 // navigated anywhere, so there is no in-flight state to render around.
-const storedLinePromise = readStoredLine()
+//
+// Same hazard as waitForEvenAppBridge above: a hung host and a crashed host
+// look identical from here. readStoredLine's try/catch handles rejection, but
+// a promise that never settles is not a rejection — it hangs forever, and the
+// await below would block event handler registration. The menu has already
+// rendered by then, so the wearer would see a healthy app that responds to
+// nothing. Race against a timeout that resolves to 0 (top of script, the safe
+// default), so the read either returns a value or gives up.
+const storedLinePromise = Promise.race([
+  readStoredLine(),
+  new Promise<number>(resolve => {
+    setTimeout(() => resolve(0), 10000)
+  }),
+])
 
 const result = await bridge.createStartUpPageContainer(
   new CreateStartUpPageContainer(menuContainers()),
@@ -348,6 +363,8 @@ const unsubscribe = bridge.onEvenHubEvent(event => {
           }
         })
     } else {
+      // Menu, or any state we do not recognise. Treat as root for the exit
+      // check — the safer failure direction if they ever diverge.
       requestExit()
     }
     return
