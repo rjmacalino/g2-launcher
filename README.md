@@ -52,10 +52,12 @@ rejected.
 
 ## Input events
 
-Events arrive through `bridge.onEvenHubEvent`. Two separate envelopes:
+Events arrive through `bridge.onEvenHubEvent`. Three envelopes:
 
 - `event.sysEvent` carries taps, double taps, and lifecycle events
-- `event.textEvent` carries scroll gestures
+- `event.textEvent` carries scroll gestures and clicks on text containers
+- `event.listEvent` carries list item events (highlight and click). This is the
+  envelope the launcher menu runs on.
 
 Do not mix them up. Also note the protobuf gotcha documented in `src/main.ts`:
 `CLICK_EVENT` is `0`, and zero values are omitted on the wire, so a plain tap
@@ -89,6 +91,24 @@ npx evenhub qr --url "http://<YOUR-LAN-IP>:5173"
 ```
 
 Scan that from the Even Realities app using **Scan QR**. Hot reload works.
+
+## Page creation in the simulator and browser
+
+Page creation can report code 1 (invalid) in two environments:
+
+| Environment | First load |
+|---|---|
+| Real glasses via QR sideload | works, no failure |
+| Simulator | may report code 1 |
+| Plain browser at localhost:5173 | may report code 1 |
+
+**Hardware is the source of truth for page creation.** The payload is valid. It succeeds on glasses. In the simulator, the VM is likely not ready to accept a page when the first call lands; on a plain browser there is no host at all, so a rejection is the correct answer.
+
+The failure is non-deterministic. It has been observed on first load and on refresh, in both directions across runs, so do not expect a guaranteed reproduction.
+
+Do not "fix" this by adding a retry or suppressing the message. That is the exact shape of change that risks working code on hardware to quiet a diagnostic in an environment where failure is expected. The diagnostic has been softened to reflect this. See the message in `src/main.ts`.
+
+The pattern across this project is consistent: whenever the simulator and the hardware disagree, hardware decides. It has now happened across gesture ownership, the exit confirmation dialog, storage persistence, and permissions. See issue #11 for the full write-up.
 
 ## Shipping
 
@@ -131,3 +151,4 @@ Keep it simple until it needs to be otherwise.
 - Device APIs: https://hub.evenrealities.com/docs/build/device-apis
 - Display system: https://hub.evenrealities.com/docs/build/display
 - Templates: https://github.com/even-realities/evenhub-templates
+
