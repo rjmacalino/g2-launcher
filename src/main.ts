@@ -51,16 +51,20 @@ let screen: Screen = { kind: 'menu' }
 
 // --- Teleprompter state ---------------------------------------------------
 //
-// The smallest thing that distinguishes "one tool with behaviour" from "three
-// placeholders": a named constant and one guarded branch below. No registry,
-// no dispatch table, no per-tool module. When Weather lands with behaviour,
-// it gets a sibling constant and a sibling branch — and if those branches
-// start to look alike, that is the signal to factor, not before.
+// The smallest thing that distinguishes one real tool from three placeholders:
+// a named constant and one guarded branch in the event handler. No registry,
+// no dispatch table, no per-tool module. When Weather lands with behaviour it
+// gets a sibling constant and a sibling branch; if those start to look alike,
+// that is the signal to factor, not before.
 const TELEPROMPTER_INDEX = TOOLS.indexOf('Teleprompter')
 
 // Hardcoded per the ticket's out-of-scope list ("Loading the script from
 // anywhere"). Kept short so lines don't wrap, and long enough that scrolling
 // is meaningful.
+//
+// The last stanza describes the shipped gesture model. It has to stay in sync
+// with the event handler — it is the only place the wearer is told how to
+// leave this page.
 const SCRIPT = [
   'Good morning everyone.',
   '',
@@ -95,16 +99,15 @@ const SCRIPT = [
   'scrolling further',
   'does nothing too.',
   '',
-  'Tap once to go back',
+  'Double tap to return',
   'to the launcher menu.',
   '',
-  'Double tap to exit',
-  'the app entirely.',
+  'On the menu, double tap',
+  'to exit the app.',
   '',
   'That is the whole demo.',
   'Thank you.',
 ]
-
 
 // How many script lines fit on one screen. This assumes one script line maps to
 // one display row — longer lines wrap and silently cost a row, so a script with
@@ -146,6 +149,22 @@ function tryScroll(delta: 1 | -1) {
         status('Scroll failed')
       }
     })
+}
+
+// Request the system exit confirmation dialog.
+//
+// Mode 1, not 0: the QA guidelines require the confirmation dialog on the root
+// page, and explicitly reject both silent exit (mode 0) and a custom in-app
+// confirm. This is the single QA-graded behaviour in this ticket.
+//
+// shutDownPageContainer returns Promise<boolean>. A false result means the
+// wearer double-tapped and got nothing, which is exactly the rejection scenario
+// the root double-tap exists to prevent. Surface it — a silent failure here is
+// the one bug we cannot allow to hide.
+function requestExit() {
+  bridge.shutDownPageContainer(1).then(ok => {
+    if (!ok) status('Exit request failed: shutDownPageContainer returned false')
+  })
 }
 
 // --- Containers -----------------------------------------------------------
@@ -233,34 +252,69 @@ status(
 //
 // CLICK_EVENT is 0, and protobuf omits zero-value fields on the wire, so a
 // single tap arrives as an envelope whose `eventType` is `undefined`. The
-// default has to be resolved INSIDE the envelope check.
+// default has to be resolved INSIDE the envelope check. Writing
+// `event.sysEvent?.eventType ?? CLICK_EVENT` instead would read CLICK on
+// events that carry no `sysEvent` at all, so every scroll, exit and audio
+// frame would fire the tap handler.
 function eventTypeOf(envelope?: { eventType?: OsEventTypeList }): OsEventTypeList | null {
   if (!envelope) return null
   return envelope.eventType ?? OsEventTypeList.CLICK_EVENT
 }
 
-// Event routing. Four envelopes now, and the order below is load-bearing:
+// Event routing. Three envelopes, and the order below is load-bearing:
 //
 //   • sysEvent  → taps, double-taps, lifecycle
 //   • textEvent → scroll gestures AND clicks on text containers
 //   • listEvent → list item events (highlight, click)
 //
-//   1. Double-tap → shutDownPageContainer(1) MUST be first. Universal exit.
-//   2. listEvent click while on the menu → open the tool.
+//   1. Double-tap → context-sensitive: exit on the menu, back on a tool page.
+//      Must be first so nothing below can swallow it.
+//   2. listEvent click while on the menu → open the highlighted tool.
 //   3. Scroll on the teleprompter page → advance/retreat one line.
-//   4. Any click while on a tool page → return to the menu.
-//   5. Exit events → unsubscribe.
+//   4. Exit events → unsubscribe.
+//
+// Tap on a tool page does nothing under the new model. No branch handles it,
+// which is correct — the tap is free for whichever tool wants it later.
 const unsubscribe = bridge.onEvenHubEvent(event => {
   const sysType = eventTypeOf(event.sysEvent)
   const textType = eventTypeOf(event.textEvent)
   const listType = eventTypeOf(event.listEvent)
 
-  if (
+  // Double-tap is context-sensitive:
+  //   • On the menu (root), raise the system exit confirmation dialog.
+  //     The QA guidelines require mode 1 here — mode 0 (silent exit) and a
+  //     custom in-app confirm are both explicitly rejected on root.
+  //   • On a tool page, return to the menu.
+  //
+  // This branch MUST stay first. If anything below it could swallow a
+  // double-tap, the wearer might not be able to leave.
+  //
+  // Fail toward exit: if screen says tool but the rebuild to menu fails,
+  // exit anyway. A wearer who gets an unexpected exit dialog can cancel.
+  // A wearer who gets nothing cannot escape. Those costs are not comparable.
+  const isDoubleTap =
     sysType === OsEventTypeList.DOUBLE_CLICK_EVENT ||
     textType === OsEventTypeList.DOUBLE_CLICK_EVENT ||
     listType === OsEventTypeList.DOUBLE_CLICK_EVENT
-  ) {
-    bridge.shutDownPageContainer(1)
+
+  if (isDoubleTap) {
+    if (screen.kind === 'tool') {
+      bridge
+        .rebuildPageContainer(new RebuildPageContainer(menuContainers()))
+        .then(ok => {
+          if (ok) {
+            screen = { kind: 'menu' }
+            status('Menu')
+          } else {
+            // Back failed. Exit rather than leave the wearer stuck.
+            requestExit()
+          }
+        })
+    } else {
+      // Menu, or any state we do not recognise. Treat as root for the exit
+      // check — the safer failure direction if they ever diverge.
+      requestExit()
+    }
     return
   }
 
@@ -293,9 +347,8 @@ const unsubscribe = bridge.onEvenHubEvent(event => {
   // SCROLL_BOTTOM_EVENT are 1 and 2, both non-zero, so the zero-elision trap
   // does not apply here — the values arrive intact.
   //
-  // At either bound we return early without doing anything: scrolling past an
-  // end must not wrap, throw, or render empty.
-
+  // At either bound tryScroll returns early without doing anything: scrolling
+  // past an end must not wrap, throw, or render empty.
   if (screen.kind === 'tool' && screen.index === TELEPROMPTER_INDEX) {
     if (textType === OsEventTypeList.SCROLL_BOTTOM_EVENT) {
       tryScroll(1)
@@ -305,26 +358,6 @@ const unsubscribe = bridge.onEvenHubEvent(event => {
       tryScroll(-1)
       return
     }
-  }
-
-  // Tool pages have no list, so a tap arrives on sysEvent or textEvent.
-  // A scroll is textType 1 or 2 and does not match CLICK_EVENT, so scrolls
-  // on placeholder tool pages fall through harmlessly.
-  if (
-    screen.kind === 'tool' &&
-    (sysType === OsEventTypeList.CLICK_EVENT || textType === OsEventTypeList.CLICK_EVENT)
-  ) {
-    bridge
-      .rebuildPageContainer(new RebuildPageContainer(menuContainers()))
-      .then(ok => {
-        if (ok) {
-          screen = { kind: 'menu' }
-          status('Menu')
-        } else {
-          status('Failed to return to menu')
-        }
-      })
-    return
   }
 
   if (
