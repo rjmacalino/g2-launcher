@@ -5,6 +5,11 @@
   "version": "0.1.0",
   "min_sdk_version": "0.0.15",
   "entrypoint": "index.html",
-  "permissions": [],
+  "permissions": [
+    {
+      "name": "location",
+      "desc": "Shows your latitude and longitude on the glasses while the GPS tool is open. Used only when you open that tool."
+    }
+  ],
   "supported_languages": ["en"]
 }

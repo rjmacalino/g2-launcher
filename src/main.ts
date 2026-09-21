@@ -7,6 +7,8 @@ import {
   RebuildPageContainer,
   TextContainerUpgrade,
   OsEventTypeList,
+  AppLocationAccuracy,
+  type AppLocation,
 } from '@evenrealities/even_hub_sdk'
 
 // The companion page is the only surface that can show startup problems, since a
@@ -185,6 +187,153 @@ function tryScroll(delta: 1 | -1) {
     })
 }
 
+// --- GPS state ------------------------------------------------------------
+//
+// The first tool that asks the platform for something. Three concerns the
+// teleprompter never had:
+//
+//   • A declared permission in app.json. The host prompts on first use, and
+//     the wearer can refuse. We cannot observe refusal directly.
+//   • Data arriving after the page is already on screen. The page renders
+//     "Acquiring location..." immediately, before any fix exists.
+//   • A resource that runs until stopped. startAppLocationUpdates keeps the
+//     host polling; stopAppLocationUpdates stops the host side, and the
+//     unsubscribe returned by onAppLocationChanged only stops US receiving.
+//     Both are needed. A subscription that outlives the page is invisible —
+//     no error, no task manager, just battery drain the wearer notices weeks
+//     later. We call stopGps() on every path we control.
+//
+// Continuous rather than one-shot because the ticket's criteria are shaped
+// around a subscription that must be stopped ("Leaving the GPS page stops any
+// location subscription it started"). One-shot has no subscription, which
+// would dissolve the ticket's actual question.
+//
+// Accuracy is Low on purpose. This is a launcher on a face-worn device, not
+// navigation, and high accuracy runs the receiver hotter for precision nobody
+// asked for. The wearer wants "roughly where I am."
+//
+// "Permission denied" and "no fix available" collapse to the same message:
+// startAppLocationUpdates resolving false, timing out, and never calling back
+// are all indistinguishable from here. The display says "Location unavailable"
+// and deliberately NOT "Permission denied" — asserting a cause we cannot
+// observe is worse than saying less. Telling someone to check permissions when
+// the real problem is a weak fix is actively misleading.
+const GPS_INDEX = TOOLS.indexOf('GPS')
+const GPS_ACCURACY = AppLocationAccuracy.Low
+const GPS_TIMEOUT_MS = 10_000
+const GPS_ACQUIRING_TEXT = 'Acquiring location...'
+const GPS_UNAVAILABLE_TEXT = 'Location unavailable'
+
+// Runtime GPS state. All four reset on every open. gpsActive is the guard
+// every async callback checks before acting — a late resolution after the
+// wearer has left must not touch the page or the subscription.
+let gpsActive = false
+let gpsUnsubscribe: (() => void) | null = null
+let gpsTimeoutId: ReturnType<typeof setTimeout> | null = null
+
+function formatLocation(loc: AppLocation): string {
+  return `Lat: ${loc.latitude.toFixed(4)}\nLon: ${loc.longitude.toFixed(4)}`
+}
+
+// Update the GPS page text to show a fix. Uses textContainerUpgrade, not
+// rebuild — the layout does not change, only the words.
+function showGpsLocation(loc: AppLocation) {
+  status(`Location: ${loc.latitude.toFixed(4)}, ${loc.longitude.toFixed(4)}`)
+  bridge
+    .textContainerUpgrade(
+      new TextContainerUpgrade({
+        containerID: 1,
+        containerName: 'tool',
+        content: formatLocation(loc),
+      }),
+    )
+    .then(ok => {
+      if (!ok) status('GPS display update failed')
+    })
+}
+
+// Show "Location unavailable". Called when the host refuses, or when no fix
+// arrives within GPS_TIMEOUT_MS.
+function showGpsUnavailable() {
+  status('Location unavailable')
+  bridge
+    .textContainerUpgrade(
+      new TextContainerUpgrade({
+        containerID: 1,
+        containerName: 'tool',
+        content: GPS_UNAVAILABLE_TEXT,
+      }),
+    )
+    .then(ok => {
+      if (!ok) status('Failed to show unavailable state')
+    })
+}
+
+// Begin streaming location. Called only after the GPS page has been rebuilt —
+// the textContainerUpgrade calls below target the 'tool' container by ID and
+// name, so the container has to exist on screen first.
+function startGps() {
+  gpsActive = true
+
+  // Timeout starts now, not after startAppLocationUpdates resolves. Worst
+  // case is GPS_TIMEOUT_MS from page open regardless of how slow the host
+  // is to acknowledge — bounded, not "whenever."
+  gpsTimeoutId = setTimeout(() => {
+    gpsTimeoutId = null
+    if (!gpsActive) return
+    showGpsUnavailable()
+  }, GPS_TIMEOUT_MS)
+
+  // Subscribe BEFORE starting updates, so a fast first fix doesn't arrive
+  // before we have a callback to receive it.
+  gpsUnsubscribe = bridge.onAppLocationChanged(loc => {
+    if (!gpsActive) return
+    if (gpsTimeoutId !== null) {
+      clearTimeout(gpsTimeoutId)
+      gpsTimeoutId = null
+    }
+    showGpsLocation(loc)
+  })
+
+  bridge
+    .startAppLocationUpdates({ accuracy: GPS_ACCURACY })
+    .then(ok => {
+      if (!gpsActive) return
+      if (!ok) {
+        // Host refused — permission denied or platform error. From here they
+        // look identical, so we say the vaguer thing.
+        showGpsUnavailable()
+        stopGps()
+      }
+    })
+}
+
+// Stop streaming location and clean up local state. Safe to call when GPS is
+// not running — the gpsActive check makes it a no-op. Called from every exit
+// path we control: leaving the GPS page by double-tap, and the OS-initiated
+// exit events. Not called from a code path we do not reach, because we do not
+// reach one — process reclamation can tear the WebView down before any event
+// arrives, and the stop call in that case is impossible. That is the honest
+// limit, not a gap in the code.
+function stopGps() {
+  if (!gpsActive) return
+  gpsActive = false
+
+  if (gpsTimeoutId !== null) {
+    clearTimeout(gpsTimeoutId)
+    gpsTimeoutId = null
+  }
+
+  if (gpsUnsubscribe !== null) {
+    gpsUnsubscribe()
+    gpsUnsubscribe = null
+  }
+
+  bridge.stopAppLocationUpdates().then(ok => {
+    if (!ok) status('Failed to stop location updates')
+  })
+}
+
 // Request the system exit confirmation dialog.
 //
 // Mode 1, not 0: the QA guidelines require the confirmation dialog on the root
@@ -235,14 +384,21 @@ const menuList = new ListContainerProperty({
   }),
 })
 
+// What a tool page shows when it first opens. The teleprompter shows the
+// script from its persisted position; GPS shows the acquiring message and
+// then gets upgraded in place when a fix arrives; the other three show their
+// name, unchanged from G2-2.
+function toolInitialContent(index: number): string {
+  if (index === TELEPROMPTER_INDEX) return scriptSlice(teleprompterLine)
+  if (index === GPS_INDEX) return GPS_ACQUIRING_TEXT
+  return TOOLS[index]
+}
+
 // One full-canvas text container, and it MUST set isEventCapture: 1 — a page
 // with no capture container has no way out, and it is also the container that
-// receives the scroll events the teleprompter depends on.
-//
-// The teleprompter gets the script slice instead of the tool name. Every other
-// tool gets its name, unchanged from G2-2.
+// receives the scroll events the teleprompter depends on and the container
+// the GPS upgrades target.
 function toolContainers(index: number) {
-  const isTeleprompter = index === TELEPROMPTER_INDEX
   return {
     containerTotalNum: 1,
     textObject: [
@@ -256,7 +412,7 @@ function toolContainers(index: number) {
         paddingLength: 4,
         containerID: 1,
         containerName: 'tool',
-        content: isTeleprompter ? scriptSlice(teleprompterLine) : TOOLS[index],
+        content: toolInitialContent(index),
         isEventCapture: 1,
       }),
     ],
@@ -323,10 +479,12 @@ function eventTypeOf(envelope?: { eventType?: OsEventTypeList }): OsEventTypeLis
 //   • listEvent → list item events (highlight, click)
 //
 //   1. Double-tap → context-sensitive: exit on the menu, back on a tool page.
-//      Must be first so nothing below can swallow it.
-//   2. listEvent click while on the menu → open the highlighted tool.
+//      Must be first so nothing below can swallow it. Also the point where
+//      GPS stops streaming if the page being left is GPS.
+//   2. listEvent click while on the menu → open the highlighted tool. If the
+//      tool is GPS, start streaming AFTER the page is up.
 //   3. Scroll on the teleprompter page → advance/retreat one line.
-//   4. Exit events → unsubscribe.
+//   4. Exit events → stop GPS, unsubscribe.
 //
 // Tap on a tool page does nothing under the current model. No branch handles
 // it, which is correct — the tap is free for whichever tool wants it later.
@@ -352,6 +510,11 @@ const unsubscribe = bridge.onEvenHubEvent(event => {
 
   if (isDoubleTap) {
     if (screen.kind === 'tool') {
+      // Leaving a tool. If GPS was the page, stop streaming BEFORE the
+      // rebuild — a location arriving mid-transition would otherwise
+      // upgrade a container that is about to be replaced. stopGps() is
+      // a no-op when GPS was not running.
+      stopGps()
       bridge
         .rebuildPageContainer(new RebuildPageContainer(menuContainers()))
         .then(ok => {
@@ -388,6 +551,10 @@ const unsubscribe = bridge.onEvenHubEvent(event => {
           if (ok) {
             screen = { kind: 'tool', index }
             status(`Tool: ${TOOLS[index]}`)
+            // Start GPS streaming only after the page is on screen. The
+            // upgrade calls inside startGps target the 'tool' container by
+            // ID and name — it has to exist first.
+            if (index === GPS_INDEX) startGps()
           } else {
             status(`Failed to open ${TOOLS[index]}`)
           }
@@ -410,10 +577,15 @@ const unsubscribe = bridge.onEvenHubEvent(event => {
     }
   }
 
+  // OS-initiated exit. Best-effort: the WebView may be torn down before the
+  // event reaches us, so stopGps() here is not guaranteed to run. If it does,
+  // it saves the host from continuing to stream after we are gone. If it
+  // doesn't, the host owns cleanup on its side.
   if (
     sysType === OsEventTypeList.SYSTEM_EXIT_EVENT ||
     sysType === OsEventTypeList.ABNORMAL_EXIT_EVENT
   ) {
+    stopGps()
     unsubscribe()
   }
 })
