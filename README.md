@@ -102,14 +102,13 @@ Page creation can report code 1 (invalid) in two environments:
 | Simulator | may report code 1 |
 | Plain browser at localhost:5173 | may report code 1 |
 
-**Hardware is the source of truth for page creation.** The payload is valid ��� it succeeds on glasses. In the simulator, the VM is likely not ready to accept a page when the first call lands; on a plain browser there is no host at all, so a rejection is the correct answer.
+**Hardware is the source of truth for page creation.** The payload is valid. It succeeds on glasses. In the simulator, the VM is likely not ready to accept a page when the first call lands; on a plain browser there is no host at all, so a rejection is the correct answer.
 
 The failure is non-deterministic. It has been observed on first load and on refresh, in both directions across runs, so do not expect a guaranteed reproduction.
 
-Do not "fix" this by adding a retry or suppressing the message. That is the exact shape of change that risks working code on hardware to quiet a diagnostic in an environment where failure is expected. The diagnostic has been softened to reflect this ��� see the message in `src/main.ts`.
+Do not "fix" this by adding a retry or suppressing the message. That is the exact shape of change that risks working code on hardware to quiet a diagnostic in an environment where failure is expected. The diagnostic has been softened to reflect this. See the message in `src/main.ts`.
 
-The pattern across this project is consistent: whenever the simulator and the hardware disagree, hardware decides. It has now happened across gesture ownership, the exit confirmation dialog, storage persistence, and permissions.
-
+The pattern across this project is consistent: whenever the simulator and the hardware disagree, hardware decides. It has now happened across gesture ownership, the exit confirmation dialog, storage persistence, and permissions. See issue #11 for the full write-up.
 
 ## Shipping
 
