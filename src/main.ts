@@ -51,12 +51,37 @@ const TOOLS = ['Weather', 'GPS', 'Notes', 'Teleprompter'] as const
 type Screen = { kind: 'menu' } | { kind: 'tool'; index: number }
 let screen: Screen = { kind: 'menu' }
 
+// --- Layout ---------------------------------------------------------------
+//
+// Every page is the same two containers: a status bar across the top and one
+// content container filling the rest. The menu's content is a list, a tool's
+// content is text, but the geometry and the IDs never change.
+//
+// The IDs being invariant is the point, not a convenience. We still do not know
+// whether textContainerUpgrade matches on containerID alone or on ID and name
+// together (#14). If it is ID alone, a clock tick aimed at the bar could land on
+// tool content. Giving the bar ID 1 on every page and content ID 2 on every page
+// makes that impossible either way, so the open question stops mattering here
+// instead of being something to be careful about.
+const CANVAS_WIDTH = 576
+const CANVAS_HEIGHT = 288
+const PADDING = 4
+
+const STATUS_BAR_HEIGHT = 32
+const CONTENT_Y = STATUS_BAR_HEIGHT
+const CONTENT_HEIGHT = CANVAS_HEIGHT - STATUS_BAR_HEIGHT
+
+const CONTAINER_ID_STATUS = 1
+const CONTAINER_ID_CONTENT = 2
+const CONTAINER_NAME_STATUS = 'statusbar'
+
 // --- Storage keys ---------------------------------------------------------
 //
 // Dotted namespace so future per-tool keys stay grouped: 'teleprompter.line',
 // 'ui.screen', 'weather.last'.
 const STORAGE_KEY_TELEPROMPTER = 'teleprompter.line'
 const STORAGE_KEY_SCREEN = 'ui.screen'
+const STORAGE_KEY_STATUS_BAR = 'ui.statusbar'
 
 // How recently the screen must have changed for a cold start to restore it.
 // Long enough to cover a lock-screen resume (the Beta criterion locks the
@@ -134,12 +159,25 @@ const SCRIPT = [
   'Thank you.',
 ]
 
-// How many script lines fit on one screen. This assumes one script line maps to
-// one display row, so longer lines wrap and silently cost a row, and a script
-// with wrapped lines will show fewer than six entries per view. Fine for the
-// current short-line script; worth revisiting when the script becomes
-// user-supplied.
-const LINES_PER_VIEW = 6
+// How many script lines fit on one screen.
+//
+// Two assumptions, both worth stating because breaking either one silently cuts
+// off the last line of a tool whose entire job is being readable:
+//
+//   - one script line occupies one display row. A line long enough to wrap costs
+//     two rows and the view shows fewer entries than this number claims
+//   - APPROX_LINE_HEIGHT_PX is an estimate. The firmware owns text metrics and
+//     does not report them, so this cannot be computed exactly from here
+//
+// Derived from CONTENT_HEIGHT rather than hardcoded, so the status bar taking
+// vertical space cannot leave this number stale. The old comment predicted this
+// constant would need revisiting when the script became user-supplied; the
+// status bar got here first.
+const APPROX_LINE_HEIGHT_PX = 48
+const LINES_PER_VIEW = Math.max(
+  1,
+  Math.floor((CONTENT_HEIGHT - PADDING * 2) / APPROX_LINE_HEIGHT_PX),
+)
 
 // Highest valid starting line. If the script is shorter than one view, this
 // clamps to 0 so scrolling never advances past the only page.
@@ -187,7 +225,7 @@ function tryScroll(delta: 1 | -1) {
   bridge
     .textContainerUpgrade(
       new TextContainerUpgrade({
-        containerID: 1,
+        containerID: CONTAINER_ID_CONTENT,
         containerName: 'tool',
         content: scriptSlice(target),
       }),
@@ -303,7 +341,7 @@ function showGpsLocation(loc: AppLocation) {
   bridge
     .textContainerUpgrade(
       new TextContainerUpgrade({
-        containerID: 1,
+        containerID: CONTAINER_ID_CONTENT,
         containerName: 'tool',
         content: formatLocation(loc),
       }),
@@ -320,7 +358,7 @@ function showGpsUnavailable() {
   bridge
     .textContainerUpgrade(
       new TextContainerUpgrade({
-        containerID: 1,
+        containerID: CONTAINER_ID_CONTENT,
         containerName: 'tool',
         content: GPS_UNAVAILABLE_TEXT,
       }),
@@ -414,7 +452,7 @@ function rearmGps() {
     bridge
       .textContainerUpgrade(
         new TextContainerUpgrade({
-          containerID: 1,
+          containerID: CONTAINER_ID_CONTENT,
           containerName: 'tool',
           content: GPS_ACQUIRING_TEXT,
         }),
@@ -445,36 +483,172 @@ function requestExit() {
   })
 }
 
+// --- Status bar -----------------------------------------------------------
+//
+// Information that stays on screen regardless of which tool is open. A bar that
+// only appears on some pages is worse than no bar, because glancing at it stops
+// being reliable, so every page carries it and there is no way to build a page
+// that does not.
+//
+// Which fields appear is the wearer's choice. The config is persisted now even
+// though the UI to edit it comes later on the companion page, because the shape
+// of the stored value is what the settings screen will edit and getting it wrong
+// later means a migration.
+type StatusBarConfig = {
+  time: boolean
+  date: boolean
+  temperature: boolean
+}
+
+// Temperature defaults off because there is nothing to show yet. Turning it on
+// before a proxy exists would mean a field that is always blank.
+const STATUS_BAR_DEFAULTS: StatusBarConfig = {
+  time: true,
+  date: true,
+  temperature: false,
+}
+
+// The clock shows minutes, so a one-second timer would be 59 wasted host round
+// trips a minute. Polling faster than the displayed resolution and skipping the
+// update when the rendered string has not changed keeps the clock never more
+// than this far behind, at roughly one actual upgrade per minute.
+const STATUS_TICK_MS = 15_000
+
+let statusBarConfig: StatusBarConfig = { ...STATUS_BAR_DEFAULTS }
+
+// Filled in once a weather proxy exists. Until then the temperature field has a
+// defined place in the model and renders nothing.
+let temperatureText: string | null = null
+
+let statusTimerId: ReturnType<typeof setInterval> | null = null
+
+// What the bar currently shows. Kept in sync by every path that draws it, so the
+// tick can skip an upgrade when nothing has changed.
+let lastStatusText = ''
+
+const DAY_NAMES = ['Sun', 'Mon', 'Tue', 'Wed', 'Thu', 'Fri', 'Sat']
+const MONTH_NAMES = [
+  'Jan', 'Feb', 'Mar', 'Apr', 'May', 'Jun',
+  'Jul', 'Aug', 'Sep', 'Oct', 'Nov', 'Dec',
+]
+
+// Formatted by hand rather than through toLocaleString. Locale output varies by
+// host and can contain non-ASCII, and this repo is deliberately ASCII only.
+function formatClock(now: Date): string {
+  const h = String(now.getHours()).padStart(2, '0')
+  const m = String(now.getMinutes()).padStart(2, '0')
+  return `${h}:${m}`
+}
+
+function formatDate(now: Date): string {
+  return `${DAY_NAMES[now.getDay()]} ${now.getDate()} ${MONTH_NAMES[now.getMonth()]}`
+}
+
+function renderStatusBar(): string {
+  const now = new Date()
+  const parts: string[] = []
+  if (statusBarConfig.time) parts.push(formatClock(now))
+  if (statusBarConfig.date) parts.push(formatDate(now))
+  if (statusBarConfig.temperature && temperatureText) parts.push(temperatureText)
+  return parts.join('   ')
+}
+
+// Read the persisted config. Any failure falls back to defaults rather than an
+// empty bar: a wearer who has never opened settings should still get a clock,
+// and a corrupt value should not produce a blank strip they cannot explain.
+async function readStatusBarConfig(): Promise<StatusBarConfig> {
+  try {
+    const raw = await bridge.getLocalStorage(STORAGE_KEY_STATUS_BAR)
+    const parsed = JSON.parse(raw)
+    if (!parsed || typeof parsed !== 'object') return { ...STATUS_BAR_DEFAULTS }
+    return {
+      time: typeof parsed.time === 'boolean' ? parsed.time : STATUS_BAR_DEFAULTS.time,
+      date: typeof parsed.date === 'boolean' ? parsed.date : STATUS_BAR_DEFAULTS.date,
+      temperature:
+        typeof parsed.temperature === 'boolean'
+          ? parsed.temperature
+          : STATUS_BAR_DEFAULTS.temperature,
+    }
+  } catch {
+    return { ...STATUS_BAR_DEFAULTS }
+  }
+}
+
+// The bar container. Every page builder calls this, which is what makes the bar
+// impossible to omit. It records what it drew so the tick can dedupe against it.
+function statusBarContainer(): TextContainerProperty {
+  lastStatusText = renderStatusBar()
+  return new TextContainerProperty({
+    xPosition: 0,
+    yPosition: 0,
+    width: CANVAS_WIDTH,
+    height: STATUS_BAR_HEIGHT,
+    borderWidth: 0,
+    paddingLength: PADDING,
+    containerID: CONTAINER_ID_STATUS,
+    containerName: CONTAINER_NAME_STATUS,
+    content: lastStatusText,
+    // Never the capture container. Exactly one container per page receives
+    // input and it is always the content, because the bar is not interactive
+    // and taking capture would strand the wearer on every page at once.
+    isEventCapture: 0,
+  })
+}
+
+function refreshStatusBar() {
+  const text = renderStatusBar()
+  if (text === lastStatusText) return
+  lastStatusText = text
+  bridge
+    .textContainerUpgrade(
+      new TextContainerUpgrade({
+        containerID: CONTAINER_ID_STATUS,
+        containerName: CONTAINER_NAME_STATUS,
+        content: text,
+      }),
+    )
+    .then(ok => {
+      if (!ok) status('Status bar update failed')
+    })
+}
+
+// The timer is a resource in the same sense the GPS subscription is: it runs
+// until stopped, a leaked one is invisible, and the OS suspends it out from
+// under us. Same lifecycle handling as GPS rather than a second pattern beside
+// it, started on foreground-enter and stopped on foreground-exit.
+function startStatusBar() {
+  if (statusTimerId !== null) return
+  // Refresh immediately. After a resume the displayed time is as stale as the
+  // suspension was long, and waiting a tick to correct it is the one moment a
+  // wearer is most likely to be looking at the clock.
+  refreshStatusBar()
+  statusTimerId = setInterval(refreshStatusBar, STATUS_TICK_MS)
+}
+
+function stopStatusBar() {
+  if (statusTimerId === null) return
+  clearInterval(statusTimerId)
+  statusTimerId = null
+}
+
 // --- Containers -----------------------------------------------------------
 
-const titleText = new TextContainerProperty({
-  xPosition: 0,
-  yPosition: 0,
-  width: 576,
-  height: 48,
-  borderWidth: 0,
-  borderColor: 5,
-  paddingLength: 4,
-  containerID: 1,
-  containerName: 'title',
-  content: 'Launcher',
-  isEventCapture: 0,
-})
-
+// The menu's "Launcher" title is gone. The status bar occupies that strip now
+// and earns it better: a wearer opening the launcher already knows what it is,
+// and a clock is worth more than a label naming the screen they are looking at.
 const menuList = new ListContainerProperty({
   xPosition: 0,
-  yPosition: 48,
-  width: 576,
-  height: 240,
+  yPosition: CONTENT_Y,
+  width: CANVAS_WIDTH,
+  height: CONTENT_HEIGHT,
   borderWidth: 0,
-  borderColor: 5,
-  paddingLength: 4,
-  containerID: 2,
+  paddingLength: PADDING,
+  containerID: CONTAINER_ID_CONTENT,
   containerName: 'menu',
   isEventCapture: 1,
   itemContainer: new ListItemContainerProperty({
     itemCount: TOOLS.length,
-    itemWidth: 576,
+    itemWidth: CANVAS_WIDTH,
     isItemSelectBorderEn: 1,
     itemName: [...TOOLS],
   }),
@@ -496,17 +670,17 @@ function toolInitialContent(index: number): string {
 // the GPS upgrades target.
 function toolContainers(index: number) {
   return {
-    containerTotalNum: 1,
+    containerTotalNum: 2,
     textObject: [
+      statusBarContainer(),
       new TextContainerProperty({
         xPosition: 0,
-        yPosition: 0,
-        width: 576,
-        height: 288,
+        yPosition: CONTENT_Y,
+        width: CANVAS_WIDTH,
+        height: CONTENT_HEIGHT,
         borderWidth: 0,
-        borderColor: 5,
-        paddingLength: 4,
-        containerID: 1,
+        paddingLength: PADDING,
+        containerID: CONTAINER_ID_CONTENT,
         containerName: 'tool',
         content: toolInitialContent(index),
         isEventCapture: 1,
@@ -518,7 +692,7 @@ function toolContainers(index: number) {
 function menuContainers() {
   return {
     containerTotalNum: 2,
-    textObject: [titleText],
+    textObject: [statusBarContainer()],
     listObject: [menuList],
   }
 }
@@ -532,6 +706,17 @@ const storedScreenPromise = Promise.race([
   readStoredScreen(),
   new Promise<Screen | null>(resolve => {
     setTimeout(() => resolve(null), STORAGE_READ_TIMEOUT_MS)
+  }),
+])
+// The bar is drawn during page creation, before this resolves, so the first
+// frame shows defaults. Loading the config afterwards costs one extra upgrade
+// and refreshStatusBar skips even that when the stored config matches the
+// defaults. Awaiting it here instead would block the first frame on storage,
+// which is the thing the startup order exists to avoid.
+const storedStatusBarPromise = Promise.race([
+  readStatusBarConfig(),
+  new Promise<StatusBarConfig>(resolve => {
+    setTimeout(() => resolve({ ...STATUS_BAR_DEFAULTS }), STORAGE_READ_TIMEOUT_MS)
   }),
 ])
 const storedLinePromise = Promise.race([
@@ -569,10 +754,13 @@ if (result === 0) {
 }
 
 // Await persisted state.
-const [restoredScreen, restoredLine] = await Promise.all([
+const [restoredScreen, restoredLine, restoredStatusBar] = await Promise.all([
   storedScreenPromise,
   storedLinePromise,
+  storedStatusBarPromise,
 ])
+
+statusBarConfig = restoredStatusBar
 
 teleprompterLine = restoredLine
 
@@ -603,6 +791,11 @@ if (restoredScreen && restoredScreen.kind === 'tool') {
 // this, a string of quick resumes would expire after the original window
 // elapsed, even though the wearer never left the app for long.
 persistScreen(screen)
+
+// Start the clock last, once the config has loaded and whichever page we are
+// showing has settled. startStatusBar refreshes immediately, so this is also
+// what corrects the bar from defaults to the stored config.
+startStatusBar()
 
 // Reads the event type out of one envelope.
 //
@@ -690,6 +883,10 @@ const unsubscribe = bridge.onEvenHubEvent(event => {
   // tears down first, which works for both, and resets the visible fix so a
   // stale coordinate cannot masquerade as a current one.
   if (sysType === OsEventTypeList.FOREGROUND_ENTER_EVENT) {
+    // The clock is stale by however long we were away, and it is on screen on
+    // every page, so it gets corrected first. startStatusBar refreshes before
+    // it re-arms the interval.
+    startStatusBar()
     if (screen.kind === 'tool' && screen.index === GPS_INDEX) {
       rearmGps()
     }
@@ -701,6 +898,10 @@ const unsubscribe = bridge.onEvenHubEvent(event => {
   // re-arms against a known-clean slate.
   if (sysType === OsEventTypeList.FOREGROUND_EXIT_EVENT) {
     stopGps()
+    // Nothing is watching the glasses while we are backgrounded, so a ticking
+    // clock is pure cost. Same reasoning as the GPS teardown: stop what the
+    // wearer cannot see, and re-arm on the way back in.
+    stopStatusBar()
     return
   }
 
