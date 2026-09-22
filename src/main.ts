@@ -161,18 +161,34 @@ const SCRIPT = [
 
 // How many script lines fit on one screen.
 //
-// Two assumptions, both worth stating because breaking either one silently cuts
-// off the last line of a tool whose entire job is being readable:
+// PROVENANCE, because this number looks more rigorous than it is.
 //
-//   - one script line occupies one display row. A line long enough to wrap costs
-//     two rows and the view shows fewer entries than this number claims
-//   - APPROX_LINE_HEIGHT_PX is an estimate. The firmware owns text metrics and
-//     does not report them, so this cannot be computed exactly from here
+// The original was `LINES_PER_VIEW = 6`, introduced in G2-3 with the note
+// "roughly enough for six comfortable lines; adjust after looking at the
+// simulator". Nobody ever adjusted it. APPROX_LINE_HEIGHT_PX below was then
+// back-solved from that 6: (288 - 8) / 6 = 46.7, rounded up to 48 because
+// rounding up yields fewer lines, and a clipped line is the worse failure.
 //
-// Derived from CONTENT_HEIGHT rather than hardcoded, so the status bar taking
-// vertical space cannot leave this number stale. The old comment predicted this
-// constant would need revisiting when the script became user-supplied; the
-// status bar got here first.
+// So this constant is an unverified estimate with arithmetic wrapped around it.
+// The formula is not evidence. It is calibration from a guess, and the division
+// lends it a precision nothing has earned.
+//
+// TO CALIBRATE PROPERLY: temporarily replace SCRIPT with numbered lines ('1',
+// '2', '3' ... '12'), open the teleprompter, and count how many are fully
+// visible. That count IS lines-per-view at the current geometry, measured
+// rather than computed. Then set APPROX_LINE_HEIGHT_PX to
+// (CONTENT_HEIGHT - PADDING * 2) / <that count> and the derivation becomes
+// calibrated from an observation instead of from this comment's ancestor.
+//
+// The derivation is kept rather than hardcoding a measured count, so that
+// changing STATUS_BAR_HEIGHT cannot silently leave the line count stale. That
+// was the failure this replaced. It trades one stale-number risk for a
+// miscalibration risk, which is the better trade only once the calibration is
+// real.
+//
+// Separately, and still true: this assumes one script line occupies one display
+// row. A line long enough to wrap costs two rows, and the view then shows fewer
+// entries than this number claims.
 const APPROX_LINE_HEIGHT_PX = 48
 const LINES_PER_VIEW = Math.max(
   1,
