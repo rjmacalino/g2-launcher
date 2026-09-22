@@ -21,9 +21,15 @@ export const STATUS_BAR_HEIGHT = 32
 export const CONTENT_Y = STATUS_BAR_HEIGHT
 export const CONTENT_HEIGHT = CANVAS_HEIGHT - STATUS_BAR_HEIGHT
 
-export const CONTAINER_ID_STATUS = 1
-export const CONTAINER_ID_CONTENT = 2
-export const CONTAINER_NAME_STATUS = 'statusbar'
+// The bar occupies IDs 1 to 3, one per slot. Content is 4 on every page.
+//
+// What matters is that bar IDs and the content ID are disjoint and identical on
+// every page, so a bar update can never land on content whichever way the firmware
+// matches. Adding slots means extending this range, never reusing the content ID.
+export const CONTAINER_ID_STATUS_LEFT = 1
+export const CONTAINER_ID_STATUS_CENTRE = 2
+export const CONTAINER_ID_STATUS_RIGHT = 3
+export const CONTAINER_ID_CONTENT = 4
 export const CONTAINER_NAME_CONTENT = 'tool'
 
 // Replace the text in the content area, in place, with no page rebuild.

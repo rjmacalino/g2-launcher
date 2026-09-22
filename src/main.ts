@@ -16,7 +16,12 @@ import {
   PADDING,
 } from './page'
 import { readWithTimeout } from './storage'
-import { hydrate as hydrateStatusBar, startStatusBar, statusBarContainer, stopStatusBar } from './statusbar'
+import {
+  hydrate as hydrateStatusBar,
+  startStatusBar,
+  statusBarContainers,
+  stopStatusBar,
+} from './statusbar'
 import { persistScreen, readStoredScreen, type Screen } from './screen'
 import { TOOLS, TOOL_NAMES } from './tools'
 
@@ -39,8 +44,13 @@ const RESTORE_REBUILD_TIMEOUT_MS = 5000
 // --- Pages ----------------------------------------------------------------
 //
 // Every page is the status bar plus exactly one content container. The bar is
-// built by statusBarContainer() in both builders below, which is what makes a
+// built by statusBarContainers() in both builders below, which is what makes a
 // page without a bar impossible to construct.
+//
+// containerTotalNum counts the bar's slots plus the one content container, so it
+// is derived rather than written down. A hardcoded count here would go stale the
+// next time the bar gains or loses a slot, and the failure would be a rejected
+// page rather than an obviously wrong number.
 
 // The menu's "Launcher" title is gone. The status bar occupies that strip now and
 // earns it better: a wearer opening the launcher already knows what it is, and a
@@ -67,10 +77,11 @@ const menuList = new ListContainerProperty({
 // container has no way out, and it is also the container the firmware scrolls and
 // the one every tool's setContent targets.
 function toolContainers(index: number) {
+  const bar = statusBarContainers()
   return {
-    containerTotalNum: 2,
+    containerTotalNum: bar.length + 1,
     textObject: [
-      statusBarContainer(),
+      ...bar,
       new TextContainerProperty({
         xPosition: 0,
         yPosition: CONTENT_Y,
@@ -88,9 +99,10 @@ function toolContainers(index: number) {
 }
 
 function menuContainers() {
+  const bar = statusBarContainers()
   return {
-    containerTotalNum: 2,
-    textObject: [statusBarContainer()],
+    containerTotalNum: bar.length + 1,
+    textObject: bar,
     listObject: [menuList],
   }
 }
