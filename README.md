@@ -66,6 +66,62 @@ envelope check or every unrelated event fires the tap handler.
 
 Always check `DOUBLE_CLICK_EVENT` before `CLICK_EVENT`.
 
+## Gestures
+
+This is the app's main behavioural contract. The event handler in `src/main.ts` is
+the implementation; this table is what it is implementing.
+
+| Gesture | Menu (root) | Tool page |
+| --- | --- | --- |
+| Tap | open the highlighted tool | free, the tool decides, currently unused |
+| Double tap | `shutDownPageContainer(1)`, **required** | back to the menu |
+| Long press | free, unassigned | free, unassigned |
+| Tap then long press | OS native menu, never bind this | OS native menu, never bind this |
+
+Three things are load-bearing here.
+
+**Root double tap must exit.** Submission QA rejects apps that exit silently or do
+nothing on root double tap, and it rejects a custom in-app confirmation. Mode `1` is
+the only acceptable call. Relying on the OS menu's Close instead is explicitly
+insufficient.
+
+**The double-tap branch runs before everything else** in the handler, so nothing
+below it can swallow the one gesture that guarantees the wearer can leave. Its else
+branch covers anything that is not a confirmed tool page, not the menu specifically,
+so a screen variant added later defaults to escapable rather than stranded.
+
+**Tap then long press belongs to the glasses OS.** It raises the system overlay,
+which always offers Close. Plain long press is ours and is deliberately unassigned.
+An earlier version of this project assumed the opposite based on simulator
+behaviour; hardware disagreed.
+
+## Backgrounding and resume
+
+Android may suspend the WebView under memory pressure and the module re-runs on
+resume. iOS generally keeps it alive. The docs are blunt about it: treat Android
+suspend as the app starting cold.
+
+Two consequences, both handled in `src/main.ts`:
+
+- **Location updates stop when suspended and do not restart themselves.**
+  `FOREGROUND_ENTER_EVENT` re-arms GPS by tearing down and starting again, and
+  resets the display to `Acquiring location...` first. Silently refreshing the
+  numbers would leave a stale fix looking identical to a live one.
+- **In-memory state does not survive a cold start.** The open page and the
+  teleprompter position are both persisted. The page is restored only if it was
+  stored within the last 30 minutes, so a resume lands where you left off but a
+  relaunch the next day lands on the menu.
+
+Anything awaited between page creation and event handler registration needs a
+timeout. On that stretch the menu is already drawn, so a host call that never
+settles leaves a healthy-looking app that responds to nothing, including root
+double tap.
+
+Testing note: on a high-RAM phone the documented 5-minute lock test may not trigger
+suspension at all, because there is no memory pressure to cause it. Force-stopping
+the host app produces the same cold start from this code's point of view and is the
+more reliable trigger. Verified on a Samsung S23 Ultra.
+
 ## Getting set up
 
 ```bash
@@ -135,13 +191,33 @@ party credential has to sit behind a server side proxy.
 `min_app_version` is derived from the SDK at pack time, so it is left out here on
 purpose.
 
-## Where this is going
+## Where this is
 
-The plan is one launcher app that opens into a menu of small tools (weather, GPS,
-notes, teleprompter). Because the contextual menu is owned by the glasses OS and
-only holds quick actions, the launcher menu has to be ours: a list container of
-tool names, with our own state handling that calls `rebuildPageContainer` to swap
-between the menu screen and each tool screen.
+One launcher app that opens into a menu of small tools. Because the contextual menu
+is owned by the glasses OS and only holds quick actions, the launcher menu is ours:
+a list container of tool names, with our own state handling calling
+`rebuildPageContainer` to swap between the menu and each tool page.
+
+| Tool | State |
+| --- | --- |
+| Teleprompter | built. Scroll to advance, position persisted across restarts |
+| GPS | built. Live coordinates, re-arms on foreground, degrades to `Location unavailable` |
+| Weather | not started. Needs a server side proxy, see below |
+| Notes | not started. Needs a text input surface, and the glasses have no keyboard |
+
+**Weather is blocked on infrastructure, not on the glasses.** A released `.ehpk` can
+be extracted by anyone, so a weather API key physically cannot ship inside the app.
+It needs a proxy we control, which is the point where this project grows a backend
+and a container to run it in.
+
+**Notes is blocked on a design question.** There is no keyboard. Text has to come
+from the phone companion page, from dictation through `audioControl`, or from
+somewhere else entirely. That choice shapes the whole tool, so it wants deciding
+before any code.
+
+There is no plugin system and no tool registry. Two tools with behaviour share a
+named constant and a guarded branch each. If a third one makes those branches look
+alike, that is the signal to factor. Not before.
 
 Keep it simple until it needs to be otherwise.
 
