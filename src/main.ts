@@ -51,6 +51,31 @@ const TOOLS = ['Weather', 'GPS', 'Notes', 'Teleprompter'] as const
 type Screen = { kind: 'menu' } | { kind: 'tool'; index: number }
 let screen: Screen = { kind: 'menu' }
 
+// --- Storage keys ---------------------------------------------------------
+//
+// Dotted namespace so future per-tool keys stay grouped: 'teleprompter.line',
+// 'ui.screen', 'weather.last'.
+const STORAGE_KEY_TELEPROMPTER = 'teleprompter.line'
+const STORAGE_KEY_SCREEN = 'ui.screen'
+
+// How recently the screen must have changed for a cold start to restore it.
+// Long enough to cover a lock-screen resume (the Beta criterion locks the
+// phone for 5 minutes), short enough that a deliberate relaunch the next
+// morning lands on the menu.
+const RESTORE_WINDOW_MS = 30 * 60 * 1000
+
+// Ceiling on how long we wait for a storage read before giving up and using
+// the fallback. Storage reads resolve in milliseconds; a hang means the host
+// is not answering, and the fallback (menu, line 0) is always correct.
+const STORAGE_READ_TIMEOUT_MS = 5000
+
+// Same ceiling for the restore rebuild. Anything awaited between page creation
+// and event handler registration can strand the wearer if it never settles:
+// the menu is already drawn, so the glasses show a healthy app that listens to
+// nothing, and root double-tap does nothing, which is the documented rejection
+// trigger. Every host call on that stretch gets a timeout for that reason.
+const RESTORE_REBUILD_TIMEOUT_MS = 5000
+
 // --- Teleprompter state ---------------------------------------------------
 //
 // The smallest thing that distinguishes one real tool from three placeholders:
@@ -120,12 +145,6 @@ const LINES_PER_VIEW = 6
 // clamps to 0 so scrolling never advances past the only page.
 const TELEPROMPTER_MAX_START = Math.max(0, SCRIPT.length - LINES_PER_VIEW)
 
-// Persisted scroll position. Survives app restarts, not just navigation. The
-// app process can be reclaimed by the OS without the wearer accepting the exit
-// dialog, so in-memory state is not sufficient. Dotted namespace so future
-// per-tool keys stay grouped: 'teleprompter.line', 'weather.last'.
-const STORAGE_KEY_TELEPROMPTER = 'teleprompter.line'
-
 // Current starting line. Assigned from storage at startup; updated on every
 // successful scroll. No longer reset on open; the whole point of G2-7 is that
 // reopening resumes where the wearer left off.
@@ -161,8 +180,7 @@ async function readStoredLine(): Promise<number> {
 // further input. Fast scrolling may queue writes that race at the host. This
 // assumes the SDK delivers messages in order, so the last write wins. That is
 // an assumption, not something verified, and the project has been burned
-// before by treating a plausible guarantee as a known one. If it proves
-// untrue, the fix is a write queue, not a redesign.
+// before by treating a plausible guarantee as a known one.
 function tryScroll(delta: 1 | -1) {
   const target = teleprompterLine + delta
   if (target < 0 || target > TELEPROMPTER_MAX_START) return
@@ -188,6 +206,48 @@ function tryScroll(delta: 1 | -1) {
     })
 }
 
+// --- Screen persistence ---------------------------------------------------
+//
+// `screen` is in-memory. On Android, the WebView can be suspended under memory
+// pressure and the module re-runs on resume, so in-memory state is lost. We
+// persist the current screen eagerly and restore it on startup if it is recent
+// enough to be a resume rather than a fresh launch.
+//
+// The timestamp answers "how long ago was the wearer last on this page?" A
+// cold start picks the value up and compares against RESTORE_WINDOW_MS. Below
+// the window, restore. Above it, start on the menu as usual.
+function persistScreen(s: Screen) {
+  const payload = JSON.stringify({
+    kind: s.kind,
+    index: s.kind === 'tool' ? s.index : null,
+    at: Date.now(),
+  })
+  bridge.setLocalStorage(STORAGE_KEY_SCREEN, payload).then(ok => {
+    if (!ok) status('Failed to persist screen')
+  })
+}
+
+// Parse the persisted screen. Returns null on any failure or if the value is
+// stale by RESTORE_WINDOW_MS. The caller falls back to the menu.
+async function readStoredScreen(): Promise<Screen | null> {
+  try {
+    const raw = await bridge.getLocalStorage(STORAGE_KEY_SCREEN)
+    const parsed = JSON.parse(raw)
+    if (!parsed || typeof parsed !== 'object') return null
+    if (typeof parsed.at !== 'number') return null
+    if (Date.now() - parsed.at > RESTORE_WINDOW_MS) return null
+    if (parsed.kind === 'menu') return { kind: 'menu' }
+    if (parsed.kind === 'tool') {
+      const i = parsed.index
+      if (typeof i !== 'number' || i < 0 || i >= TOOLS.length) return null
+      return { kind: 'tool', index: i }
+    }
+    return null
+  } catch {
+    return null
+  }
+}
+
 // --- GPS state ------------------------------------------------------------
 //
 // The first tool that asks the platform for something. Three concerns the
@@ -197,17 +257,18 @@ function tryScroll(delta: 1 | -1) {
 //     the wearer can refuse. We cannot observe refusal directly.
 //   - Data arriving after the page is already on screen. The page renders
 //     "Acquiring location..." immediately, before any fix exists.
-//   - A resource that runs until stopped. startAppLocationUpdates keeps the
-//     host polling; stopAppLocationUpdates stops the host side, and the
-//     unsubscribe returned by onAppLocationChanged only stops US receiving.
-//     Both are needed. A subscription that outlives the page is invisible:
-//     no error, no task manager, just battery drain the wearer notices weeks
-//     later. We call stopGps() on every path we control.
+//   - A resource that runs until stopped. stopAppLocationUpdates stops the
+//     HOST sending; the unsubscribe returned by onAppLocationChanged only
+//     stops US receiving. Both are needed. Dropping either one looks clean
+//     from the side you kept, which is why a leak here is invisible: no
+//     error, no task manager, just battery the wearer notices weeks later.
+//     We call stopGps() on every exit path we control, and re-arm on every
+//     foreground-enter if the GPS page is showing, because the OS stops the
+//     subscription for us when the WebView is suspended.
 //
-// Continuous rather than one-shot because the ticket's criteria are shaped
-// around a subscription that must be stopped ("Leaving the GPS page stops any
-// location subscription it started"). One-shot has no subscription, which
-// would dissolve the ticket's actual question.
+// Continuous rather than one-shot. A one-shot read has no subscription to
+// stop, which would make the lifecycle question disappear rather than answer
+// it, and the GPS page is meant to keep up with a wearer who is moving.
 //
 // Accuracy is Low on purpose. This is a launcher on a face-worn device, not
 // navigation, and high accuracy runs the receiver hotter for precision nobody
@@ -217,8 +278,7 @@ function tryScroll(delta: 1 | -1) {
 // startAppLocationUpdates resolving false, timing out, and never calling back
 // are all indistinguishable from here. The display says "Location unavailable"
 // and deliberately NOT "Permission denied", because asserting a cause we
-// cannot observe is worse than saying less. Telling someone to check
-// permissions when the real problem is a weak fix is actively misleading.
+// cannot observe is worse than saying less.
 const GPS_INDEX = TOOLS.indexOf('GPS')
 const GPS_ACCURACY = AppLocationAccuracy.Low
 const GPS_TIMEOUT_MS = 10_000
@@ -270,16 +330,16 @@ function showGpsUnavailable() {
     })
 }
 
-// Begin streaming location. Called only after the GPS page has been rebuilt,
+// Begin streaming location. Called only after the GPS page is on screen,
 // because the textContainerUpgrade calls below target the 'tool' container by
-// ID and name, so the container has to exist on screen first.
+// ID and name, so the container has to exist first.
 function startGps() {
   gpsActive = true
 
   // The timeout shows "unavailable" but deliberately does NOT call stopGps().
   // The subscription stays live so a late fix still lands and the page
   // self-heals. A fix at second 14 is better than none. Adding stopGps() here
-  // reads like tidying missed cleanup, passes every test in the PR, and
+  // reads like tidying up missed cleanup, passes every test we have, and
   // silently removes that recovery. Leave the subscription running.
   //
   // The timer starts now, not after startAppLocationUpdates resolves. Worst
@@ -291,7 +351,7 @@ function startGps() {
     showGpsUnavailable()
   }, GPS_TIMEOUT_MS)
 
-  // Subscribe BEFORE starting updates, so a fast first fix doesn't arrive
+  // Subscribe BEFORE starting updates, so a fast first fix does not arrive
   // before we have a callback to receive it.
   gpsUnsubscribe = bridge.onAppLocationChanged(loc => {
     if (!gpsActive) return
@@ -315,15 +375,12 @@ function startGps() {
     })
 }
 
-// Stop streaming location and clean up local state. Safe to call when GPS is
-// not running; the gpsActive check makes it a no-op. Called from every exit
-// path we control: leaving the GPS page by double-tap, and the OS-initiated
-// exit events. Not called from a code path we do not reach, because we do not
-// reach one. Process reclamation can tear the WebView down before any event
-// arrives, and the stop call in that case is impossible. That is the honest
-// limit, not a gap in the code.
-function stopGps() {
-  if (!gpsActive) return
+// Stop streaming location and clean up local state. Returns a promise that
+// resolves when the host has acknowledged the stop, so callers that want to
+// re-arm immediately (rearmGps) can sequence correctly. Callers that just
+// want cleanup (double-tap, OS exit, foreground-exit) can ignore the promise.
+function stopGps(): Promise<void> {
+  if (!gpsActive) return Promise.resolve()
   gpsActive = false
 
   if (gpsTimeoutId !== null) {
@@ -336,8 +393,40 @@ function stopGps() {
     gpsUnsubscribe = null
   }
 
-  bridge.stopAppLocationUpdates().then(ok => {
+  return bridge.stopAppLocationUpdates().then(ok => {
     if (!ok) status('Failed to stop location updates')
+  })
+}
+
+// Bring GPS back after a foreground return. The subscription may or may not
+// still be live depending on the platform and whether the WebView was
+// suspended; tearing down first guarantees a clean re-arm either way. On iOS
+// the subscription survives backgrounding, so this is a stop-start that
+// costs a fraction of a second. On Android the subscription is likely already
+// dead, so this is the path that actually restarts it.
+//
+// The display is reset to "Acquiring location..." before re-arming. Showing
+// the last fix as though it were live is the failure mode this exists to
+// prevent: a stale coordinate is indistinguishable from a fresh one at four
+// decimal places.
+function rearmGps() {
+  stopGps().then(() => {
+    bridge
+      .textContainerUpgrade(
+        new TextContainerUpgrade({
+          containerID: 1,
+          containerName: 'tool',
+          content: GPS_ACQUIRING_TEXT,
+        }),
+      )
+      .then(() => {
+        // Only start if we are still on the GPS page. If the wearer navigated
+        // away during the async stop, do not restart a subscription they did
+        // not ask for.
+        if (screen.kind === 'tool' && screen.index === GPS_INDEX) {
+          startGps()
+        }
+      })
   })
 }
 
@@ -434,26 +523,27 @@ function menuContainers() {
   }
 }
 
-// Kick off the storage read before page creation. The startup page is the
-// menu, which does not render teleprompter content, so page construction does
-// not depend on the stored line. The read resolves in parallel and is awaited
-// before the event handler is registered; by then the wearer cannot yet have
-// navigated anywhere, so there is no in-flight state to render around.
+// --- Startup --------------------------------------------------------------
 //
-// Same hazard as waitForEvenAppBridge above: a hung host and a crashed host
-// look identical from here. readStoredLine's try/catch handles rejection, but
-// a promise that never settles is not a rejection, it hangs forever, and the
-// await below would block event handler registration. The menu has already
-// rendered by then, so the wearer would see a healthy app that responds to
-// nothing. Race against a timeout that resolves to 0 (top of script, the safe
-// default), so the read either returns a value or gives up.
+// Both reads race a timeout, so a hung host cannot block startup. A cold start
+// after Android suspend re-runs this module from scratch, so whatever we do
+// here also defines the cold-start experience.
+const storedScreenPromise = Promise.race([
+  readStoredScreen(),
+  new Promise<Screen | null>(resolve => {
+    setTimeout(() => resolve(null), STORAGE_READ_TIMEOUT_MS)
+  }),
+])
 const storedLinePromise = Promise.race([
   readStoredLine(),
   new Promise<number>(resolve => {
-    setTimeout(() => resolve(0), 10000)
+    setTimeout(() => resolve(0), STORAGE_READ_TIMEOUT_MS)
   }),
 ])
 
+// Show the menu first. It is the safe default and every path that does not
+// restore lands here anyway. Creating it before the reads resolve means the
+// first frame is never blocked on storage.
 const result = await bridge.createStartUpPageContainer(
   new CreateStartUpPageContainer(menuContainers()),
 )
@@ -467,8 +557,7 @@ const result = await bridge.createStartUpPageContainer(
 // and browser" and issue #11.
 //
 // Deliberately no retry. Adding one would touch the path that works on
-// hardware in order to quiet an environment where failure is expected, which
-// is the wrong trade.
+// hardware in order to quiet an environment where failure is expected.
 if (result === 0) {
   status('Page created: success. Check the glasses display.')
 } else {
@@ -479,7 +568,41 @@ if (result === 0) {
   )
 }
 
-teleprompterLine = await storedLinePromise
+// Await persisted state.
+const [restoredScreen, restoredLine] = await Promise.all([
+  storedScreenPromise,
+  storedLinePromise,
+])
+
+teleprompterLine = restoredLine
+
+// If a recent tool page was stored, rebuild to it. The menu was already shown;
+// the rebuild causes a brief flicker during cold start, which is the trade for
+// never blocking the first frame on a storage read.
+if (restoredScreen && restoredScreen.kind === 'tool') {
+  const ok = await Promise.race([
+    bridge.rebuildPageContainer(
+      new RebuildPageContainer(toolContainers(restoredScreen.index)),
+    ),
+    new Promise<boolean>(resolve => {
+      setTimeout(() => resolve(false), RESTORE_REBUILD_TIMEOUT_MS)
+    }),
+  ])
+  if (ok) {
+    screen = restoredScreen
+    status(`Restored: ${TOOLS[restoredScreen.index]}`)
+    if (restoredScreen.index === GPS_INDEX) startGps()
+  } else {
+    status(`Failed to restore ${TOOLS[restoredScreen.index]}`)
+  }
+}
+
+// Refresh the persisted screen's timestamp. If we restored to a tool, this
+// carries the new "current"; if we stayed on the menu, it stamps menu as
+// current so a subsequent quick suspend-resume correctly lands here. Without
+// this, a string of quick resumes would expire after the original window
+// elapsed, even though the wearer never left the app for long.
+persistScreen(screen)
 
 // Reads the event type out of one envelope.
 //
@@ -496,17 +619,21 @@ function eventTypeOf(envelope?: { eventType?: OsEventTypeList }): OsEventTypeLis
 
 // Event routing. Three envelopes, and the order below is load-bearing:
 //
-//   - sysEvent  -> taps, double-taps, lifecycle
-//   - textEvent -> scroll gestures AND clicks on text containers
+//   - sysEvent  -> taps, double-taps, lifecycle (foreground, exit)
+//   - textEvent -> scroll gestures and clicks on text containers
 //   - listEvent -> list item events (highlight, click)
 //
 //   1. Double-tap -> context-sensitive: exit on the menu, back on a tool page.
-//      Must be first so nothing below can swallow it. Also the point where
-//      GPS stops streaming if the page being left is GPS.
-//   2. listEvent click while on the menu -> open the highlighted tool. If the
-//      tool is GPS, start streaming AFTER the page is up.
-//   3. Scroll on the teleprompter page -> advance/retreat one line.
-//   4. Exit events -> stop GPS, unsubscribe.
+//      Must be first so nothing below can swallow it. Also the point where GPS
+//      stops streaming if the page being left is GPS.
+//   2. Foreground enter -> re-arm GPS if the GPS page is showing. The
+//      subscription may or may not have survived; rearmGps handles both.
+//   3. Foreground exit -> tear down GPS. The OS may stop the subscription for
+//      us, but stopping it explicitly means the next foreground enter re-arms
+//      against a known-clean slate.
+//   4. listEvent click while on the menu -> open the highlighted tool.
+//   5. Scroll on the teleprompter page -> advance/retreat one line.
+//   6. Exit events -> stop GPS, unsubscribe.
 //
 // Tap on a tool page does nothing under the current model. No branch handles
 // it, which is correct. The tap is free for whichever tool wants it later.
@@ -532,26 +659,48 @@ const unsubscribe = bridge.onEvenHubEvent(event => {
 
   if (isDoubleTap) {
     if (screen.kind === 'tool') {
-      // Leaving a tool. If GPS was the page, stop streaming BEFORE the
-      // rebuild, so a location arriving mid-transition cannot upgrade a
-      // container that is about to be replaced. stopGps() is a no-op when
-      // GPS was not running.
+      // Stop streaming BEFORE the rebuild, so a location arriving
+      // mid-transition cannot upgrade a container that is about to be
+      // replaced. stopGps() is a no-op when GPS was not the page.
       stopGps()
       bridge
         .rebuildPageContainer(new RebuildPageContainer(menuContainers()))
         .then(ok => {
           if (ok) {
             screen = { kind: 'menu' }
+            persistScreen(screen)
             status('Menu')
           } else {
             requestExit()
           }
         })
     } else {
-      // Menu, or any state we do not recognise. Treat as root for the exit
-      // check, which is the safer failure direction if they ever diverge.
+      // Menu, or any state we do not recognise. This is deliberately not
+      // `screen.kind === 'menu'`: anything that is not a confirmed tool page
+      // falls through to exit, so a screen variant added later defaults to
+      // escapable rather than stranded. That is the guarantee the branch used
+      // to get for free by being unconditional.
       requestExit()
     }
+    return
+  }
+
+  // Foreground return. If GPS was showing when we went away, the subscription
+  // may have stopped (Android suspend) or may still be live (iOS). rearmGps
+  // tears down first, which works for both, and resets the visible fix so a
+  // stale coordinate cannot masquerade as a current one.
+  if (sysType === OsEventTypeList.FOREGROUND_ENTER_EVENT) {
+    if (screen.kind === 'tool' && screen.index === GPS_INDEX) {
+      rearmGps()
+    }
+    return
+  }
+
+  // Going to background. Tear down the GPS subscription so we do not leak one
+  // if the OS does not kill the WebView, and so the next foreground enter
+  // re-arms against a known-clean slate.
+  if (sysType === OsEventTypeList.FOREGROUND_EXIT_EVENT) {
+    stopGps()
     return
   }
 
@@ -559,10 +708,6 @@ const unsubscribe = bridge.onEvenHubEvent(event => {
   // elides zero values, so tapping Weather can arrive as `undefined`. Resolve
   // the default INSIDE the branch where we already know listEvent exists and
   // the event is a click.
-  //
-  // No reset of teleprompterLine here anymore: position is loaded once at
-  // startup and updated on every scroll, so it is already correct when the
-  // wearer opens the tool.
   const listEvent = event.listEvent
   if (listEvent && listType === OsEventTypeList.CLICK_EVENT && screen.kind === 'menu') {
     const index = listEvent.currentSelectItemIndex ?? 0
@@ -572,6 +717,7 @@ const unsubscribe = bridge.onEvenHubEvent(event => {
         .then(ok => {
           if (ok) {
             screen = { kind: 'tool', index }
+            persistScreen(screen)
             status(`Tool: ${TOOLS[index]}`)
             // Start GPS streaming only after the page is on screen. The
             // upgrade calls inside startGps target the 'tool' container by
@@ -601,8 +747,7 @@ const unsubscribe = bridge.onEvenHubEvent(event => {
 
   // OS-initiated exit. Best-effort: the WebView may be torn down before the
   // event reaches us, so stopGps() here is not guaranteed to run. If it does,
-  // it saves the host from continuing to stream after we are gone. If it
-  // doesn't, the host owns cleanup on its side.
+  // it saves the host from continuing to stream after we are gone.
   if (
     sysType === OsEventTypeList.SYSTEM_EXIT_EVENT ||
     sysType === OsEventTypeList.ABNORMAL_EXIT_EVENT
