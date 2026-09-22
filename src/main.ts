@@ -69,6 +69,13 @@ const RESTORE_WINDOW_MS = 30 * 60 * 1000
 // is not answering, and the fallback (menu, line 0) is always correct.
 const STORAGE_READ_TIMEOUT_MS = 5000
 
+// Same ceiling for the restore rebuild. Anything awaited between page creation
+// and event handler registration can strand the wearer if it never settles:
+// the menu is already drawn, so the glasses show a healthy app that listens to
+// nothing, and root double-tap does nothing, which is the documented rejection
+// trigger. Every host call on that stretch gets a timeout for that reason.
+const RESTORE_REBUILD_TIMEOUT_MS = 5000
+
 // --- Teleprompter state ---------------------------------------------------
 //
 // The smallest thing that distinguishes one real tool from three placeholders:
@@ -250,10 +257,18 @@ async function readStoredScreen(): Promise<Screen | null> {
 //     the wearer can refuse. We cannot observe refusal directly.
 //   - Data arriving after the page is already on screen. The page renders
 //     "Acquiring location..." immediately, before any fix exists.
-//   - A resource that runs until stopped, and that the OS stops for us when
-//     the WebView is suspended. We call stopGps() on every exit path we
-//     control, and re-arm on every foreground-enter if the GPS page is
-//     showing.
+//   - A resource that runs until stopped. stopAppLocationUpdates stops the
+//     HOST sending; the unsubscribe returned by onAppLocationChanged only
+//     stops US receiving. Both are needed. Dropping either one looks clean
+//     from the side you kept, which is why a leak here is invisible: no
+//     error, no task manager, just battery the wearer notices weeks later.
+//     We call stopGps() on every exit path we control, and re-arm on every
+//     foreground-enter if the GPS page is showing, because the OS stops the
+//     subscription for us when the WebView is suspended.
+//
+// Continuous rather than one-shot. A one-shot read has no subscription to
+// stop, which would make the lifecycle question disappear rather than answer
+// it, and the GPS page is meant to keep up with a wearer who is moving.
 //
 // Accuracy is Low on purpose. This is a launcher on a face-worn device, not
 // navigation, and high accuracy runs the receiver hotter for precision nobody
@@ -323,7 +338,9 @@ function startGps() {
 
   // The timeout shows "unavailable" but deliberately does NOT call stopGps().
   // The subscription stays live so a late fix still lands and the page
-  // self-heals. A fix at second 14 is better than none.
+  // self-heals. A fix at second 14 is better than none. Adding stopGps() here
+  // reads like tidying up missed cleanup, passes every test we have, and
+  // silently removes that recovery. Leave the subscription running.
   //
   // The timer starts now, not after startAppLocationUpdates resolves. Worst
   // case is GPS_TIMEOUT_MS from page open regardless of how slow the host is
@@ -563,9 +580,14 @@ teleprompterLine = restoredLine
 // the rebuild causes a brief flicker during cold start, which is the trade for
 // never blocking the first frame on a storage read.
 if (restoredScreen && restoredScreen.kind === 'tool') {
-  const ok = await bridge.rebuildPageContainer(
-    new RebuildPageContainer(toolContainers(restoredScreen.index)),
-  )
+  const ok = await Promise.race([
+    bridge.rebuildPageContainer(
+      new RebuildPageContainer(toolContainers(restoredScreen.index)),
+    ),
+    new Promise<boolean>(resolve => {
+      setTimeout(() => resolve(false), RESTORE_REBUILD_TIMEOUT_MS)
+    }),
+  ])
   if (ok) {
     screen = restoredScreen
     status(`Restored: ${TOOLS[restoredScreen.index]}`)
@@ -637,6 +659,9 @@ const unsubscribe = bridge.onEvenHubEvent(event => {
 
   if (isDoubleTap) {
     if (screen.kind === 'tool') {
+      // Stop streaming BEFORE the rebuild, so a location arriving
+      // mid-transition cannot upgrade a container that is about to be
+      // replaced. stopGps() is a no-op when GPS was not the page.
       stopGps()
       bridge
         .rebuildPageContainer(new RebuildPageContainer(menuContainers()))
@@ -650,6 +675,11 @@ const unsubscribe = bridge.onEvenHubEvent(event => {
           }
         })
     } else {
+      // Menu, or any state we do not recognise. This is deliberately not
+      // `screen.kind === 'menu'`: anything that is not a confirmed tool page
+      // falls through to exit, so a screen variant added later defaults to
+      // escapable rather than stranded. That is the guarantee the branch used
+      // to get for free by being unconditional.
       requestExit()
     }
     return
