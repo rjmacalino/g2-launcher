@@ -68,15 +68,38 @@ Always check `DOUBLE_CLICK_EVENT` before `CLICK_EVENT`.
 
 ## Gestures
 
-This is the app's main behavioural contract. The event handler in `src/main.ts` is
-the implementation; this table is what it is implementing.
+This is the app's main behavioural contract and it is a **rule, not a per-tool
+choice**. Every tool built from here obeys it. A wearer should never have to learn
+what a gesture means in this tool as opposed to that one.
+
+| Gesture | Always means | Owner |
+| --- | --- | --- |
+| Tap | forward: next, go, open, confirm | ours |
+| Double tap | back: previous, close, exit | ours |
+| Long press | reserved for a per-tool action | ours, opt in |
+| Tap then long press | raises the OS native menu | the glasses OS, never bind |
+
+Applied to what exists today:
 
 | Gesture | Menu (root) | Tool page |
 | --- | --- | --- |
-| Tap | open the highlighted tool | free, the tool decides, currently unused |
+| Tap | open the highlighted tool | forward within the tool |
 | Double tap | `shutDownPageContainer(1)`, **required** | back to the menu |
-| Long press | free, unassigned | free, unassigned |
-| Tap then long press | OS native menu, never bind this | OS native menu, never bind this |
+| Long press | unassigned | the tool's one special action, if it has one |
+| Tap then long press | OS native menu | OS native menu |
+
+Note that back and exit are the same rule, not two. On the root page there is
+nowhere further back to go, so back means leaving the app. That the platform also
+requires root double tap to exit is a convenience, not a coincidence to work around.
+
+**Long press is the pressure valve and should not be spent casually.** It exists so
+that a tool needing an action that is neither forward nor back has somewhere to put
+it. Pausing live captions is the archetype: it is not navigation, so it does not
+belong on tap or double tap. A tool that binds long press to something forward-ish
+has taken the valve away from the tool that actually needed it.
+
+Scroll is a separate axis and stays available: lists use it for highlight movement,
+and the teleprompter uses it for line-by-line control alongside tap for paging.
 
 Three things are load-bearing here.
 
@@ -220,6 +243,44 @@ named constant and a guarded branch each. If a third one makes those branches lo
 alike, that is the signal to factor. Not before.
 
 Keep it simple until it needs to be otherwise.
+
+## Direction
+
+The launcher is meant to behave less like an app with a menu and more like a small
+operating system for the glasses.
+
+**A persistent status bar.** Time, date and temperature stay visible no matter which
+tool is open, with the wearer choosing which of them to show. This is ours to build.
+Even has said dashboard widgets, dashboard layouts and AI skills are coming as
+platform surfaces, but those appear to concern the glasses idle dashboard rather
+than overlays inside a running app, so they are not the same thing and we should not
+wait for them.
+
+Structurally this means a page stops being "content" and becomes "status bar plus
+content". Both `menuContainers` and `toolContainers` carry the bar, every
+`rebuildPageContainer` redraws it, and the bar updates in place through
+`textContainerUpgrade` so the clock does not flicker the page. Budget allows it:
+8 non-image containers per page, so the bar takes one or two and tools keep the
+rest. Only one container can capture events, and it is never the bar.
+
+**The phone is a real second screen, not a status line.** `index.html` currently
+shows one line of text. It is a full WebView on a device with a keyboard, a touch
+screen and a filesystem, and other Even Hub apps already use it that way. Settings
+for the status bar belong there. So does teleprompter control: script width, font
+size, loading a saved file. Anything needing typing or fine adjustment belongs on
+the phone, and the glasses show the result.
+
+**Tools worth building**, in rough order of what they need:
+
+| Tool | Needs |
+| --- | --- |
+| Clock and date | nothing, the phone already knows the time |
+| Teleprompter controls | nothing new, companion page work |
+| Weather | a proxy, because an API key cannot ship in an extractable package |
+| Live captions | a proxy, and the SDK has no speech recognition, only raw PCM at 16kHz |
+
+Weather and live captions need the same backend. That is what justifies building one,
+rather than each feature paying for its own.
 
 ## Docs
 
