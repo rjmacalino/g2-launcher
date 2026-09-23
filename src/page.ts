@@ -28,6 +28,19 @@ export const CONTENT_GAP = 8
 export const CONTENT_Y = STATUS_BAR_HEIGHT + CONTENT_GAP
 export const CONTENT_HEIGHT = CANVAS_HEIGHT - CONTENT_Y
 
+// Measured rather than estimated: on the simulator consecutive rendered lines sat
+// exactly 27px apart, and a blank line cost exactly 54. The firmware owns text
+// metrics and does not report them, so this is the one number here that came from
+// looking at a screenshot rather than from the docs.
+export const ROW_HEIGHT_PX = 27
+
+// How many rows of text fit in the content area. Used for vertical centring,
+// which is the only kind of centring available: text containers are top-left
+// aligned with no alignment option, and a non-monospaced font makes horizontal
+// centring by space padding unreliable. Real horizontal centring needs a
+// container positioned for it.
+export const CONTENT_ROWS = Math.floor((CONTENT_HEIGHT - PADDING * 2) / ROW_HEIGHT_PX)
+
 // The bar occupies IDs 1 to 3, one per slot. Content is 4 on every page.
 //
 // What matters is that bar IDs and the content ID are disjoint and identical on

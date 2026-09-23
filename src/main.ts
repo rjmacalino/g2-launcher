@@ -12,6 +12,7 @@ import {
   CONTAINER_ID_CONTENT,
   CONTAINER_NAME_CONTENT,
   CONTENT_HEIGHT,
+  CONTENT_ROWS,
   CONTENT_Y,
   PADDING,
   setContent,
@@ -36,23 +37,52 @@ function activeTool() {
   return screen.kind === 'tool' ? TOOLS[screen.index] : null
 }
 
-// Whether the active tool is currently asking whether to leave.
+// Whether the active tool is currently asking whether to leave, and which answer
+// is selected.
 //
 // Not part of Screen, and deliberately not persisted. A cold start should never
 // restore the wearer into a half-answered question about a page they cannot
 // remember opening.
 let confirming = false
 
-// The prompt names the gesture as well as asking the question, because this is
-// the only screen where tap does something a wearer has not been taught yet.
-// Everywhere else tap means forward and double tap means back; here forward means
-// "yes, leave", which is worth spelling out rather than expecting them to infer.
+// 0 is No, 1 is Yes. Defaults to No every time the prompt opens, so the dangerous
+// answer is never the one already selected when a wearer taps without reading.
+const CONFIRM_NO = 0
+const CONFIRM_YES = 1
+let confirmChoice: 0 | 1 = CONFIRM_NO
+
+// A marker you move beats a gesture you have to be told about. The previous
+// version asked the wearer to remember that tap meant leave and double tap meant
+// stay, which is fine once you know it and unguessable before.
+//
+// Labels are padded to a common width so the marker sits in one column. Without
+// it the marker tracks the label length and appears to jump sideways as the
+// selection moves, which reads as the marker being unstable rather than the
+// selection changing.
 function confirmText(toolName: string): string {
-  return `Leave ${toolName}?\n\nTap to leave\nDouble tap to stay`
+  const row = (label: string, value: 0 | 1) =>
+    `${label.padEnd(3)} ${confirmChoice === value ? '<' : ''}`.trimEnd()
+
+  const lines = [`End ${toolName}`, '', row('No', CONFIRM_NO), row('Yes', CONFIRM_YES)]
+
+  // Vertically centred by padding with blank rows, which is the only centring
+  // available. Text containers are top-left aligned with no alignment option, and
+  // the font is not monospaced, so padding with spaces to centre horizontally
+  // would not line up. Real horizontal centring needs its own container
+  // positioned for it, which would mean declaring one on every tool page.
+  const padding = Math.max(0, Math.floor((CONTENT_ROWS - lines.length) / 2))
+  return '\n'.repeat(padding) + lines.join('\n')
 }
 
 function enterConfirm(toolName: string) {
   confirming = true
+  confirmChoice = CONFIRM_NO
+  setContent(confirmText(toolName))
+}
+
+function moveConfirm(next: 0 | 1, toolName: string) {
+  if (confirmChoice === next) return
+  confirmChoice = next
   setContent(confirmText(toolName))
 }
 
@@ -364,22 +394,40 @@ const unsubscribe = bridge.onEvenHubEvent(event => {
     return
   }
 
-  // Tap while the leave prompt is showing means yes. This is the one place tap
-  // does something other than move forward within a tool, and it is why the
-  // prompt spells the gesture out.
+  // The leave prompt. Scroll moves the marker, tap takes the selected answer,
+  // which is the same vocabulary as the launcher menu rather than a special case
+  // the wearer has to be taught.
   //
-  // Requiring a different gesture than the one that opened the prompt is the
-  // whole protection. A thumb misfiring double taps will produce another double
-  // tap far sooner than a deliberate single one, so "double tap again to
-  // confirm" would have guarded against almost nothing.
+  // Everything here is swallowed, including gestures that mean nothing, so no
+  // input reaches the tool behind the prompt while a question is open.
   if (confirming) {
-    if (sysType === OsEventTypeList.CLICK_EVENT || textType === OsEventTypeList.CLICK_EVENT) {
+    const tool = activeTool()
+    if (!tool) {
+      // Cannot happen: confirming is only ever set on a tool page and every
+      // navigation clears it. Bail rather than trap the wearer behind a prompt
+      // with nothing to answer for.
       confirming = false
-      returnToMenu()
+      return
     }
-    // Everything else, scroll included, is swallowed while the prompt is up.
-    // Scrolling text the wearer cannot currently see would move their position
-    // behind the question.
+
+    if (sysType === OsEventTypeList.CLICK_EVENT || textType === OsEventTypeList.CLICK_EVENT) {
+      if (confirmChoice === CONFIRM_YES) {
+        returnToMenu()
+      } else {
+        cancelConfirm(tool)
+      }
+      return
+    }
+
+    // Two options, so up is always No and down is always Yes. Absolute rather
+    // than a toggle: scrolling up twice should leave you on No, not flip you
+    // back to Yes, and a wearer who is not sure which way they scrolled can
+    // press up and know where they landed.
+    if (textType === OsEventTypeList.SCROLL_TOP_EVENT) {
+      moveConfirm(CONFIRM_NO, tool.name)
+    } else if (textType === OsEventTypeList.SCROLL_BOTTOM_EVENT) {
+      moveConfirm(CONFIRM_YES, tool.name)
+    }
     return
   }
 
