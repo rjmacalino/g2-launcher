@@ -1,5 +1,5 @@
 import { getDaily, getState, onUpdate, refresh } from '../weather-service'
-import { CONDITION_GLYPHS, CONDITION_LABELS } from '../statusbar'
+import { CONDITION_LABELS } from '../statusbar'
 import { requestRebuild } from '../rebuild'
 import type { DailyForecast, HourlyForecast } from '../weather-api'
 import type { Tool } from './types'
@@ -75,15 +75,14 @@ function dayRow(day: DailyForecast, index: number): string {
   return `${label} ${shortDate(day.date)}: ${hi}/${lo}C ${CONDITION_LABELS[day.condition]}`.slice(0, 64)
 }
 
-// A glyph where one is trusted to render (see CONDITION_GLYPHS - this is the
-// hardware trial for it), the word where it is not (fog has none). Column
-// widths are fixed regardless of which one lands, so a row of three hours
-// lines up the same either way.
+// Word, not glyph. CONDITION_GLYPHS was tried here and failed on hardware -
+// see the RESULT note on it in statusbar.ts. Column widths stay fixed either
+// way, so a row of three hours lines up the same regardless of which map
+// fills this slot.
 function hourCell(hour: HourlyForecast): string {
   const time = hourLabel(hour.hour).padEnd(HOUR_TIME_WIDTH)
   const temp = `${Math.round(hour.celsius)}C`.padStart(HOUR_TEMP_WIDTH)
-  const glyph = CONDITION_GLYPHS[hour.condition]
-  return `${time}${temp} ${glyph}`
+  return `${time}${temp} ${CONDITION_LABELS[hour.condition]}`
 }
 
 // Several hours per row instead of one, using the canvas's horizontal room

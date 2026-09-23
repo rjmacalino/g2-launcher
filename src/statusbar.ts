@@ -119,18 +119,19 @@ export const CONDITION_LABELS: Record<WeatherCondition, string> = {
   storm: 'Storm',
 }
 
-// EXPERIMENTAL, UNVERIFIED ON HARDWARE. Single-codepoint glyphs from the
-// Miscellaneous Symbols block (BMP, no surrogate pair) for the best odds of
-// firmware coverage - still no proof this font contains them, per the
-// comment above. \uXXXX escapes keep this source file ASCII while emitting
-// the real codepoint at runtime.
+// RESULT: tried on hardware in Weather's hourly view and failed. Not the
+// placeholder-box failure the simulator notes predicted (see the comment
+// above) - the glyph rendered as nothing at all, zero width, like the
+// character was silently dropped somewhere between here and the display
+// rather than drawn as an unknown codepoint. The " | " divider and the words
+// on either side of the gap rendered fine, so this is specific to the glyph
+// character itself, not a problem with the row generally.
 //
-// Used only by Weather's hourly detail view (tools/weather.ts) for now, not
-// the status bar, which every page shows: a bad result there (placeholder
-// boxes) has the smallest possible blast radius while this gets tried for
-// real. If it renders cleanly on hardware, it is the evidence needed to use
-// it more widely; if it draws boxes, tools/weather.ts falls back to
-// CONDITION_LABELS with a one-line change.
+// Kept, unused, as the record of that result rather than deleted: the next
+// idea for an icon on this display (a raw image container instead of a text
+// glyph, see the exploration note in G2-26's commit message) starts from
+// knowing this path is closed, not from re-discovering it. Nothing in this
+// codebase currently imports CONDITION_GLYPHS.
 //
 // No glyph for fog - nothing in this symbol block reads as fog rather than
 // generic cloud, and a wrong-looking icon is worse than the word.
