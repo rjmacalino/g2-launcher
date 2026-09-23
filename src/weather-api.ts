@@ -7,11 +7,35 @@ import type { WeatherCondition } from './statusbar'
 // or backend anywhere in this feature.
 const FORECAST_URL = 'https://api.open-meteo.com/v1/forecast'
 
+// Only daytime hours: a wearer expanding a day wants "what is it doing while
+// I am out", not a 24-row list dominated by hours they will be asleep for.
+const DAY_START_HOUR = 6
+const DAY_END_HOUR = 18
+
+// 16, not 7: Open-Meteo's actual maximum for a real forecast, not an
+// arbitrary deeper number. Requested per direct question about "infinite
+// scroll" - true infinite scroll is not buildable here for two independent
+// reasons (see tools/weather.ts): the native list widget gives no
+// near-the-end scroll signal to hang pagination off, and a forecast beyond
+// ~16 days is not real data to prefetch in the first place. Asking for more
+// days than this costs nothing extra - it is the same single request either
+// way - and 16 rows already fits under this platform's own 20-item list cap
+// with room to spare.
+const FORECAST_DAYS = 16
+
+export type HourlyForecast = {
+  hour: number
+  condition: WeatherCondition
+  celsius: number
+}
+
 export type DailyForecast = {
   date: string
   condition: WeatherCondition
   highCelsius: number
   lowCelsius: number
+  // 6am-18:00 only, for the day-detail view. See DAY_START_HOUR/DAY_END_HOUR.
+  hourly: HourlyForecast[]
 }
 
 export type ForecastResult = {
@@ -42,6 +66,11 @@ type OpenMeteoResponse = {
     temperature_2m_max: number[]
     temperature_2m_min: number[]
   }
+  hourly: {
+    time: string[]
+    weather_code: number[]
+    temperature_2m: number[]
+  }
 }
 
 function isOpenMeteoResponse(x: unknown): x is OpenMeteoResponse {
@@ -49,6 +78,7 @@ function isOpenMeteoResponse(x: unknown): x is OpenMeteoResponse {
   const r = x as Record<string, unknown>
   const current = r.current as Record<string, unknown> | undefined
   const daily = r.daily as Record<string, unknown> | undefined
+  const hourly = r.hourly as Record<string, unknown> | undefined
   return (
     !!current &&
     typeof current.temperature_2m === 'number' &&
@@ -57,8 +87,32 @@ function isOpenMeteoResponse(x: unknown): x is OpenMeteoResponse {
     Array.isArray(daily.time) &&
     Array.isArray(daily.weather_code) &&
     Array.isArray(daily.temperature_2m_max) &&
-    Array.isArray(daily.temperature_2m_min)
+    Array.isArray(daily.temperature_2m_min) &&
+    !!hourly &&
+    Array.isArray(hourly.time) &&
+    Array.isArray(hourly.weather_code) &&
+    Array.isArray(hourly.temperature_2m)
   )
+}
+
+// Open-Meteo's hourly time strings are 'YYYY-MM-DDTHH:MM', always local to
+// the `timezone=auto` location, same as the daily dates - a plain string
+// prefix match is enough to group hours under their day, no date parsing
+// needed.
+function hoursForDate(body: OpenMeteoResponse, date: string): HourlyForecast[] {
+  const hours: HourlyForecast[] = []
+  for (let i = 0; i < body.hourly.time.length; i++) {
+    const t = body.hourly.time[i]
+    if (!t.startsWith(date)) continue
+    const hour = Number(t.slice(11, 13))
+    if (hour < DAY_START_HOUR || hour > DAY_END_HOUR) continue
+    hours.push({
+      hour,
+      condition: conditionFromCode(body.hourly.weather_code[i]),
+      celsius: body.hourly.temperature_2m[i],
+    })
+  }
+  return hours
 }
 
 export async function fetchForecast(latitude: number, longitude: number): Promise<ForecastResult> {
@@ -67,7 +121,8 @@ export async function fetchForecast(latitude: number, longitude: number): Promis
   url.searchParams.set('longitude', longitude.toFixed(4))
   url.searchParams.set('current', 'temperature_2m,weather_code')
   url.searchParams.set('daily', 'weather_code,temperature_2m_max,temperature_2m_min')
-  url.searchParams.set('forecast_days', '7')
+  url.searchParams.set('hourly', 'temperature_2m,weather_code')
+  url.searchParams.set('forecast_days', String(FORECAST_DAYS))
   url.searchParams.set('timezone', 'auto')
 
   const res = await fetch(url.toString())
@@ -86,6 +141,7 @@ export async function fetchForecast(latitude: number, longitude: number): Promis
     condition: conditionFromCode(body.daily.weather_code[i]),
     highCelsius: body.daily.temperature_2m_max[i],
     lowCelsius: body.daily.temperature_2m_min[i],
+    hourly: hoursForDate(body, date),
   }))
 
   return { current, daily }

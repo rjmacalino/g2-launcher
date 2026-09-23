@@ -29,6 +29,7 @@ import {
   statusBarContainers,
   stopStatusBar,
 } from './statusbar'
+import { registerRebuildHandler } from './rebuild'
 import { persistScreen, readStoredScreen, type Screen } from './screen'
 import { TOOLS, TOOL_NAMES, type Tool } from './tools'
 import { start as startWeather, stop as stopWeather } from './weather-service'
@@ -260,6 +261,20 @@ function toolContainers(index: number) {
     textObject: [...bar, toolTextContent(tool)],
   }
 }
+
+// A tool's data changed out from under it (see rebuild.ts) and wants its own
+// page redrawn. Verified here, not trusted from the caller: only rebuild if
+// the given tool is actually the one on screen right now, and not while a
+// leave prompt is open, so a background data update can never clobber
+// whatever the wearer is currently looking at or answering.
+registerRebuildHandler(tool => {
+  if (confirming) return
+  if (screen.kind !== 'tool') return
+  if (TOOLS[screen.index] !== tool) return
+  bridge.rebuildPageContainer(new RebuildPageContainer(toolContainers(screen.index))).then(ok => {
+    if (!ok) status(`Failed to update ${tool.name}`)
+  })
+})
 
 function menuContainers() {
   const bar = statusBarContainers()

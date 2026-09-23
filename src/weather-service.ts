@@ -1,6 +1,6 @@
 import { fetchForecast, type DailyForecast } from './weather-api'
 import { getCurrentLocation } from './location'
-import { CONDITION_LABELS, setWeather } from './statusbar'
+import { setWeather } from './statusbar'
 import { status } from './bridge'
 
 // Weather data lives here, independent of whether the Weather tool page is
@@ -9,40 +9,36 @@ import { status } from './bridge'
 // background the same way the clock does - start()/stop() are called
 // alongside startStatusBar()/stopStatusBar() in main.ts, not from the tool's
 // own onOpen/onClose. The Weather tool (tools/weather.ts) just reads
-// whatever this module already has.
+// whatever this module already has, and subscribes via onUpdate to redraw
+// itself when new data lands while it happens to be open.
 const REFRESH_INTERVAL_MS = 15 * 60 * 1000
 
-const DAY_NAMES = ['Sun', 'Mon', 'Tue', 'Wed', 'Thu', 'Fri', 'Sat']
+export type WeatherState = 'loading' | 'ready' | 'unavailable'
 
-export const LOADING_TEXT = 'Getting your forecast...'
-export const UNAVAILABLE_TEXT = 'Weather unavailable.\nCheck location and try again.'
-
-let forecastText = LOADING_TEXT
+let state: WeatherState = 'loading'
+let daily: DailyForecast[] = []
 let timerId: ReturnType<typeof setInterval> | null = null
 
 // Coalesced: a resume and the periodic timer landing at the same moment
 // should not fire two overlapping fetches racing each other's result into
-// forecastText. Every caller awaits the same in-flight promise instead of
-// each starting its own.
+// `daily`. Every caller awaits the same in-flight promise instead of each
+// starting its own.
 let inFlight: Promise<void> | null = null
 
-function dayLabel(index: number): string {
-  if (index === 0) return 'Today'
-  if (index === 1) return 'Tomorrow'
-  // Anchored to the device's own clock, not the forecast location's - a
-  // wearer travelling across timezones gets a weekday name that can be off
-  // by one near midnight, which is an acceptable approximation for a day
-  // label, same spirit as the other measured-not-exact constants in page.ts.
-  return DAY_NAMES[new Date(Date.now() + index * 86_400_000).getDay()]
+// Tools with a stake in fresh data subscribe here instead of polling. Kept
+// deliberately dumb (a Set of callbacks, no payload) - a subscriber reads
+// getState()/getDaily() itself when notified, same as everything else in
+// this app treats "the data changed" as a cue to re-read, not a channel to
+// carry the data itself.
+const listeners = new Set<() => void>()
+
+export function onUpdate(fn: () => void): () => void {
+  listeners.add(fn)
+  return () => listeners.delete(fn)
 }
 
-function formatForecast(days: DailyForecast[]): string {
-  return days
-    .map(
-      (day, i) =>
-        `${dayLabel(i)}: ${Math.round(day.highCelsius)}/${Math.round(day.lowCelsius)}C ${CONDITION_LABELS[day.condition]}`,
-    )
-    .join('\n')
+function notify() {
+  for (const fn of listeners) fn()
 }
 
 export function refresh(): Promise<void> {
@@ -51,27 +47,33 @@ export function refresh(): Promise<void> {
   inFlight = (async () => {
     const loc = await getCurrentLocation()
     if (!loc) {
-      forecastText = UNAVAILABLE_TEXT
+      state = 'unavailable'
       return
     }
 
     try {
       const result = await fetchForecast(loc.latitude, loc.longitude)
-      forecastText = formatForecast(result.daily)
+      daily = result.daily
+      state = 'ready'
       setWeather(result.current)
     } catch {
-      forecastText = UNAVAILABLE_TEXT
+      state = 'unavailable'
       status('Weather update failed')
     }
   })().finally(() => {
     inFlight = null
+    notify()
   })
 
   return inFlight
 }
 
-export function getForecastText(): string {
-  return forecastText
+export function getState(): WeatherState {
+  return state
+}
+
+export function getDaily(): DailyForecast[] {
+  return daily
 }
 
 // Resource lifecycle in the same shape as the status bar clock and, before
