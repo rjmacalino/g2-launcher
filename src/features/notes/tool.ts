@@ -1,6 +1,6 @@
-import { notes as notesStore, NOTE_ITEM_MAX_CHARS, type ChecklistItem, type NoteDoc } from '../data'
-import { status } from '../bridge'
-import type { Tool } from './types'
+import { notes as notesStore, NOTE_ITEM_MAX_CHARS, type ChecklistItem, type NoteDoc } from './store'
+import { status } from '../../platform/bridge'
+import type { Tool } from '../../core/tool'
 
 // A checklist tool, not a text editor. Authoring is phone-only, same as
 // Teleprompter's scripts: the glasses have no keyboard, so creating and

@@ -1,8 +1,8 @@
-import { getDaily, getState, onUpdate, refresh } from '../weather-service'
-import { CONDITION_LABELS } from '../statusbar'
-import { requestRebuild } from '../rebuild'
-import type { DailyForecast, HourlyForecast } from '../weather-api'
-import type { Tool } from './types'
+import { getDaily, getState, onUpdate, refresh } from './service'
+import { CONDITION_LABELS } from './conditions'
+import { requestRebuild } from '../../core/rebuild'
+import type { DailyForecast, HourlyForecast } from './api'
+import type { Tool } from '../../core/tool'
 
 // Two levels of depth, same shape as Notes and Teleprompter: a picker (which
 // day), then a detail view (that day's daytime hours). Both are native lists
@@ -13,8 +13,8 @@ import type { Tool } from './types'
 // the native list widget is firmware-owned for scrolling and gives this app
 // no "wearer is nearing the end" signal to hang pagination off of, and a
 // forecast beyond Open-Meteo's own ~16-day ceiling is not real data to fetch
-// more of in the first place (see FORECAST_DAYS in weather-api.ts). The
-// whole 16-day range comes back in the one request weather-service.ts
+// more of in the first place (see FORECAST_DAYS in api.ts). The
+// whole 16-day range comes back in the one request service.ts
 // already makes, so there is nothing left to page in.
 const LOADING_ITEM = 'Getting your forecast...'
 const UNAVAILABLE_ITEM = 'Weather unavailable. Check location and try again.'
@@ -23,7 +23,7 @@ const EMPTY_HOURS_ITEM = 'No hourly data for this day.'
 const DAY_NAMES = ['Sun', 'Mon', 'Tue', 'Wed', 'Thu', 'Fri', 'Sat']
 
 // The canvas is 576px wide and a list item can carry up to 64 characters
-// (see page.ts / data.ts's platform-limit comments) - far more than one
+// (see docs/platform.md, List containers) - far more than one
 // short reading needs. Packing several hours into a single row uses that
 // width instead of leaving it empty and forcing a scroll for what would
 // otherwise be one reading per line.
@@ -41,7 +41,7 @@ let depth: Depth = 'days'
 let selectedIndex = 0
 
 // Whether this tool's page is the one on screen. Same reasoning as the old
-// GPS tool's isOpen flag: a background refresh (weather-service's own timer)
+// GPS tool's isOpen flag: a background refresh (the weather service's own timer)
 // can land at any time, including while some other tool is open, and only
 // THIS flag says whether redrawing is this tool's business right now.
 let isOpen = false
@@ -75,10 +75,9 @@ function dayRow(day: DailyForecast, index: number): string {
   return `${label} ${shortDate(day.date)}: ${hi}/${lo}C ${CONDITION_LABELS[day.condition]}`.slice(0, 64)
 }
 
-// Word, not glyph. CONDITION_GLYPHS was tried here and failed on hardware -
-// see the RESULT note on it in statusbar.ts. Column widths stay fixed either
-// way, so a row of three hours lines up the same regardless of which map
-// fills this slot.
+// Word, not glyph: weather symbols were tried here and the firmware font drops
+// them (see docs/platform.md, Glyphs). Column widths stay fixed so a row of
+// three hours lines up regardless of which word fills the last slot.
 function hourCell(hour: HourlyForecast): string {
   const time = hourLabel(hour.hour).padEnd(HOUR_TIME_WIDTH)
   const temp = `${Math.round(hour.celsius)}C`.padStart(HOUR_TEMP_WIDTH)

@@ -135,14 +135,14 @@ export const CONFIRM_LIST_Y = CONFIRM_TITLE_Y + CONFIRM_TITLE_HEIGHT
 // hand-rolled bounce bug" in exchange for a cost that was not actually avoided.
 //
 // So the confirm prompt is a native list again (see confirmContainers in
-// main.ts): correct bounce at the real ends of No/Yes, for no additional cost
+// app/main.ts): correct bounce at the real ends of No/Yes, for no additional cost
 // versus the text version it replaced.
 //
 // This also unlocked the actual fix for where "Yes" goes. Teleprompter now has
 // two levels of its own depth (script picker, then reading), and confirming
 // leave should step back one level, not necessarily out of the tool entirely -
 // the same "back" that double-tap already means everywhere else in this app.
-// See Tool.onConfirmedExit in tools/types.ts.
+// See Tool.onConfirmedExit in core/tool.ts.
 
 // Replace the text in the content area, in place, with no page rebuild.
 //

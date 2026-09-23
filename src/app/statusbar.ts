@@ -1,13 +1,14 @@
 import { TextContainerProperty, TextContainerUpgrade } from '@evenrealities/even_hub_sdk'
-import { bridge, status } from './bridge'
+import { bridge, status } from '../platform/bridge'
 import {
   CONTAINER_ID_STATUS_CENTRE,
   CONTAINER_ID_STATUS_LEFT,
   CONTAINER_ID_STATUS_RIGHT,
   PADDING,
   STATUS_BAR_HEIGHT,
-} from './page'
-import { STORAGE_KEY_STATUS_BAR, readJson, readWithTimeout } from './storage'
+} from '../platform/page'
+import { STORAGE_KEY_STATUS_BAR, readJson, readWithTimeout } from '../platform/storage'
+import { currentConditionWord, type CurrentWeather } from '../features/weather/conditions'
 
 // Information that stays on screen regardless of which tool is open. A bar that
 // only appears on some pages is worse than no bar, because glancing at it stops
@@ -26,7 +27,7 @@ export type StatusBarConfig = {
 
 // Temperature now defaults on. It used to default off because there was
 // nothing to show yet - true while Weather was a placeholder, no longer true
-// now that it fetches real conditions (see weather-service.ts). Leaving this
+// now that it fetches real conditions (see features/weather/service.ts). Leaving this
 // off by default would have meant the centre slot stayed silently blank on
 // every device forever, since nothing else ever flips it on.
 const DEFAULTS: StatusBarConfig = {
@@ -84,91 +85,20 @@ function formatDate(now: Date): string {
   return `${DAY_NAMES[now.getDay()]} ${now.getDate()} ${MONTH_NAMES[now.getMonth()]}`
 }
 
-// What the weather slot shows. Populated by Weather (tools/weather.ts via
-// weather-service.ts), which now fetches from Open-Meteo - the old "null
-// until a proxy exists" blocker turned out to only apply to APIs that need a
-// key; Open-Meteo does not, so no proxy was ever actually required.
+// What the weather slot shows. The app shell pushes the current reading here
+// whenever the weather service refreshes (see app/main.ts).
 //
-// ICONS ARE NOT YET POSSIBLE TO CONFIRM. The requested design is a sun or
-// umbrella glyph next to the temperature. Three things stand in the way:
-//
-//   - the SDK exposes no icon, symbol or glyph API at all
-//   - the glasses use one fixed LVGL font baked into firmware, and the simulator
-//     notes say unknown glyphs render through LV_USE_FONT_PLACEHOLDER to match
-//     hardware, so an unsupported codepoint draws a placeholder box rather than
-//     nothing
-//   - which codepoints that font actually contains is undocumented
-//
-// So the labels are words until a glyph is proven to render. A box where the sun
-// should be is worse than the word "Clear".
-//
-// Testing a glyph is cheap and safe despite this repo being ASCII only: a '\uXXXX'
-// escape keeps the source file pure ASCII while emitting the codepoint at runtime,
-// which sidesteps the encoding corruption that damaged the README in #16.
-//
-// Six buckets, not one per WMO weather code: Open-Meteo defines dozens of
-// codes (drizzle, freezing rain, snow grains, and so on) that this small
-// ASCII display has no room to distinguish usefully. weather-api.ts collapses
-// all of them into whichever of these a wearer would actually act on
-// differently.
-export type WeatherCondition = 'clear' | 'cloudy' | 'fog' | 'rain' | 'snow' | 'storm'
-
-export const CONDITION_LABELS: Record<WeatherCondition, string> = {
-  clear: 'Sunny',
-  cloudy: 'Cloudy',
-  fog: 'Fog',
-  rain: 'Rainy',
-  snow: 'Snow',
-  storm: 'Storm',
-}
-
-// RESULT: tried on hardware in Weather's hourly view and failed. Not the
-// placeholder-box failure the simulator notes predicted (see the comment
-// above) - the glyph rendered as nothing at all, zero width, like the
-// character was silently dropped somewhere between here and the display
-// rather than drawn as an unknown codepoint. The " | " divider and the words
-// on either side of the gap rendered fine, so this is specific to the glyph
-// character itself, not a problem with the row generally.
-//
-// Kept, unused, as the record of that result rather than deleted: the next
-// idea for an icon on this display (a raw image container instead of a text
-// glyph, see the exploration note in G2-26's commit message) starts from
-// knowing this path is closed, not from re-discovering it. Nothing in this
-// codebase currently imports CONDITION_GLYPHS.
-//
-// No glyph for fog - nothing in this symbol block reads as fog rather than
-// generic cloud, and a wrong-looking icon is worse than the word.
-export const CONDITION_GLYPHS: Record<WeatherCondition, string> = {
-  clear: '\u2600', // sun
-  cloudy: '\u2601', // cloud
-  fog: 'Fog',
-  rain: '\u2614', // umbrella with rain drops
-  snow: '\u2744', // snowflake
-  storm: '\u26a1', // high voltage (lightning bolt)
-}
-
 // Shown whenever there is no current reading: before the very first refresh
-// completes at startup, and whenever weather-service.ts calls setWeather(null)
-// after a failed refresh (no location fix, or the forecast request itself
-// failing). A blank slot looked like the field was simply off; naming the gap
-// is more honest about what the wearer is looking at, per direct request.
+// completes at startup, and after a failed refresh (no location fix, or the
+// forecast request itself failing). A blank slot looked like the field was
+// simply off; naming the gap is more honest, per direct request.
 const NO_DATA_TEXT = 'N/A'
 
-let weather: { condition: WeatherCondition; celsius: number; isDay: boolean } | null = null
-
-// "Sunny" is a daytime-only word; WMO code 0 ("clear sky") is equally
-// correct at night, when there is no sun to name. weather-api.ts's is_day
-// flag catches that case here, for this single point-in-time reading only -
-// see the comment on ForecastResult.current there for why the daily/hourly
-// rows do not need the same check.
-function conditionWord(w: { condition: WeatherCondition; isDay: boolean }): string {
-  if (w.condition === 'clear' && !w.isDay) return 'Clear'
-  return CONDITION_LABELS[w.condition]
-}
+let weather: CurrentWeather | null = null
 
 function renderWeather(): string {
   if (!weather) return NO_DATA_TEXT
-  return `${conditionWord(weather)} ${Math.round(weather.celsius)}C`
+  return `${currentConditionWord(weather)} ${Math.round(weather.celsius)}C`
 }
 
 // Date on the left, weather in the middle, time on the right.
@@ -311,15 +241,13 @@ function refresh() {
   }
 }
 
-// Set the weather shown in the centre slot. Called from weather-service.ts
-// after every refresh, success or failure (null clears the slot to the N/A
+// Set the weather shown in the centre slot. Called by the app shell after every
+// weather refresh, success or failure (null clears the slot to the N/A
 // placeholder - see NO_DATA_TEXT).
 //
 // Takes Celsius as a number rather than a preformatted string, so the display
 // format stays a decision this file owns and the weather tool cannot drift from it.
-export function setWeather(
-  next: { condition: WeatherCondition; celsius: number; isDay: boolean } | null,
-) {
+export function setWeather(next: CurrentWeather | null) {
   weather = next
   refresh()
 }

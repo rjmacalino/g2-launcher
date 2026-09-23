@@ -196,7 +196,7 @@
         color: #E5E5E5;
       }
       /* An approximation of the glasses canvas, not a pixel-perfect replica -
-         see the comment on glassesPreview() in companion.ts for why one is
+         see the comment on glassesPreview() in src/companion/main.ts for why one is
          not possible. 576x288 is the real canvas size, so the aspect ratio
          (2:1) is the one thing here that IS exact. */
       .glasses-preview {
@@ -240,7 +240,7 @@
   <body>
     <div id="companion"></div>
     <div id="status">Companion app is running. Check the glasses display.</div>
-    <script type="module" src="/src/main.ts"></script>
-    <script type="module" src="/src/companion.ts"></script>
+    <script type="module" src="/src/app/main.ts"></script>
+    <script type="module" src="/src/companion/main.ts"></script>
   </body>
 </html>
