@@ -54,6 +54,25 @@ export const ROW_HEIGHT_PX = 27
 // container positioned for it.
 export const CONTENT_ROWS = Math.floor((CONTENT_HEIGHT - PADDING * 2) / ROW_HEIGHT_PX)
 
+// A confirm strip reserved permanently at the bottom of every TOOL page (never
+// the menu, which exits straight through the OS dialog and never asks). It is
+// declared once at tool-open time alongside the content container and simply
+// stays empty until needed, because it must never be added by a later rebuild:
+// see CONTAINER_ID_CONFIRM below for why a rebuild cannot be used here at all.
+//
+// Four rows: "End ToolName", a blank line, "No", "Yes".
+export const CONFIRM_STRIP_ROWS = 4
+export const CONFIRM_STRIP_GAP = 8
+export const CONFIRM_STRIP_HEIGHT = CONFIRM_STRIP_ROWS * ROW_HEIGHT_PX + PADDING * 2
+
+// Tool content is shorter than the menu's full content area by the strip and its
+// gap, permanently, whether or not a prompt is showing. The teleprompter does not
+// care: since G2-17 it hands the whole script to the firmware and lets it scroll
+// natively within whatever height it is given, so a few fewer visible rows costs
+// nothing structurally, just a slightly smaller window.
+export const TOOL_CONTENT_HEIGHT = CONTENT_HEIGHT - CONFIRM_STRIP_GAP - CONFIRM_STRIP_HEIGHT
+export const CONFIRM_STRIP_Y = CONTENT_Y + TOOL_CONTENT_HEIGHT + CONFIRM_STRIP_GAP
+
 // The bar occupies IDs 1 to 3, one per slot. Content is 4 on every page.
 //
 // What matters is that bar IDs and the content ID are disjoint and identical on
@@ -65,48 +84,46 @@ export const CONTAINER_ID_STATUS_RIGHT = 3
 export const CONTAINER_ID_CONTENT = 4
 export const CONTAINER_NAME_CONTENT = 'tool'
 
-// The leave-confirm prompt is a native list, not hand-drawn text. See the note
-// below for why. It occupies the SAME content slot (rebuilding replaces whatever
-// is at CONTAINER_ID_CONTENT), plus a small title strip above it at a distinct ID.
-// Title and list sit at different y-ranges, so unlike the dead-end below there is
-// nothing here for two containers to fight over.
-export const CONTAINER_ID_CONFIRM_TITLE = 5
-export const CONTAINER_NAME_CONFIRM_TITLE = 'confirm.title'
+export const CONTAINER_ID_CONFIRM = 5
+export const CONTAINER_NAME_CONFIRM = 'confirm'
 
-export const CONFIRM_TITLE_HEIGHT = STATUS_BAR_HEIGHT
-export const CONFIRM_LIST_Y = CONTENT_Y + CONFIRM_TITLE_HEIGHT
-export const CONFIRM_LIST_HEIGHT = CONTENT_HEIGHT - CONFIRM_TITLE_HEIGHT
-
-// GEOMETRY-LEVEL DEAD ENDS, kept as notes rather than deleted quietly.
-//
-// A second container layered over content (a "modal") was tried twice and both
-// routes failed for platform reasons rather than implementation bugs.
+// GEOMETRY-LEVEL DEAD ENDS, kept as notes rather than deleted quietly. Four
+// attempts at the leave-confirm prompt failed before this one, each for a
+// platform reason rather than an implementation bug, and each finding narrowed
+// what was left to try.
 //
 // An image container occludes reliably (every pixel value paints, none are
 // transparent) but cannot be cleared: a zero-length push returns sendFailed, and
 // the container must be declared at page creation, so a drawn image backdrop is
 // permanently visible.
 //
-// A second text container layered with zOrderIndex does NOT occlude. Text
-// containers have no background fill, so zOrderIndex controls draw order only.
-// Two text containers sharing the same rows render both sets of glyphs
-// interleaved rather than one hiding the other, confirmed on hardware as garbled
-// overlapping text.
+// A second TEXT container layered over content with zOrderIndex does NOT
+// occlude. Text containers have no background fill, so zOrderIndex controls
+// draw order only. Two text containers sharing the same rows render both sets
+// of glyphs interleaved rather than one hiding the other, confirmed on hardware
+// as garbled overlapping text.
 //
-// A THIRD attempt replaced the content container's own text with hand-drawn
-// prompt lines and a "<" marker, re-sent on every scroll tick. That avoided the
-// overlap, but it bounced on every single move rather than only at the genuine
-// ends of the No/Yes choice. The reason: a container that is re-pushed small and
-// non-overflowing on every tick never gives the firmware anything to scroll, so
-// every gesture looks identical to the firmware regardless of direction or
-// position, and it plays the boundary animation every time. Getting a bounce
-// only at real edges needs the firmware to own genuine scroll state, which a
-// repush-per-tick design cannot provide.
+// Replacing content's own text with hand-drawn prompt lines and a "<" marker,
+// re-sent on every scroll tick, avoided the overlap but bounced on every single
+// move rather than only at the genuine ends of No/Yes: a container re-pushed
+// small and non-overflowing on every tick never gives the firmware anything to
+// scroll, so every gesture looks identical to it regardless of direction.
 //
-// The fix is CONFIRM_LIST below: a native ListContainerProperty, exactly the
-// widget the launcher menu already uses. Firmware owns highlight, scroll, and
-// boundary bounce, and reports the chosen index back on click. No hand-rolled
-// marker, no re-push per tick, correct bounce behaviour for free.
+// A native ListContainerProperty fixed the bounce, since firmware owns real
+// scroll and highlight state for a list. But a list can only be shown or
+// changed by REBUILDING the page, and rebuilding the page was confirmed on
+// hardware to reset the teleprompter's scroll position even when the content
+// container's own text is left untouched. So a list-based prompt, however
+// correct its bounce behaviour, costs the wearer their place every time.
+//
+// That is the constraint this design finally respects: nothing about showing
+// or hiding this prompt may ever call rebuildPageContainer. Only
+// textContainerUpgrade, only on containers other than content itself.
+// CONFIRM_STRIP_* above reserves a permanent, separate region so the prompt
+// never needs adding after the fact. It is hand-drawn text again, so the bounce
+// problem returns while moving the marker inside this small strip; that is
+// accepted, because position loss is the worse failure and no other option on
+// this platform avoids both at once.
 
 // Replace the text in the content area, in place, with no page rebuild.
 //
@@ -125,6 +142,25 @@ export function setContent(text: string): Promise<boolean> {
     )
     .then(ok => {
       if (!ok) status('Content update failed')
+      return ok
+    })
+}
+
+// Write the confirm strip. Never the content container. This is the whole point:
+// the strip is a separate container declared once at tool-open, so showing or
+// clearing the prompt never touches content's text and never triggers a rebuild,
+// which is the only way anything here can coexist with a scrolled teleprompter.
+export function setConfirmStrip(text: string): Promise<boolean> {
+  return bridge
+    .textContainerUpgrade(
+      new TextContainerUpgrade({
+        containerID: CONTAINER_ID_CONFIRM,
+        containerName: CONTAINER_NAME_CONFIRM,
+        content: text,
+      }),
+    )
+    .then(ok => {
+      if (!ok) status('Confirm strip update failed')
       return ok
     })
 }

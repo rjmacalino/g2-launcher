@@ -9,17 +9,19 @@ import {
 import { bridge, status } from './bridge'
 import {
   CANVAS_WIDTH,
-  CONFIRM_LIST_HEIGHT,
-  CONFIRM_LIST_Y,
-  CONFIRM_TITLE_HEIGHT,
-  CONTAINER_ID_CONFIRM_TITLE,
+  CONFIRM_STRIP_Y,
+  CONFIRM_STRIP_HEIGHT,
+  CONFIRM_STRIP_ROWS,
+  CONTAINER_ID_CONFIRM,
   CONTAINER_ID_CONTENT,
-  CONTAINER_NAME_CONFIRM_TITLE,
+  CONTAINER_NAME_CONFIRM,
   CONTAINER_NAME_CONTENT,
   CONTENT_HEIGHT,
   CONTENT_Y,
   LIST_ITEM_WIDTH,
   PADDING,
+  TOOL_CONTENT_HEIGHT,
+  setConfirmStrip,
 } from './page'
 import { readWithTimeout } from './storage'
 import {
@@ -41,102 +43,74 @@ function activeTool() {
   return screen.kind === 'tool' ? TOOLS[screen.index] : null
 }
 
-// Whether the active tool is currently asking whether to leave.
+// Whether the active tool is currently asking whether to leave, and which
+// answer is currently marked.
 //
 // Not part of Screen, and deliberately not persisted. A cold start should never
 // restore the wearer into a half-answered question about a page they cannot
 // remember opening.
 let confirming = false
 
-// No is index 0, Yes is index 1. Firmware defaults a fresh list's highlight to
-// index 0, which conveniently means the dangerous answer is never pre-selected
-// without any code having to arrange it.
+// 0 is No, 1 is Yes. Defaults to No every time the prompt opens, so the
+// dangerous answer is never the one already marked when a wearer taps without
+// reading.
 const CONFIRM_NO = 0
 const CONFIRM_YES = 1
+let confirmChoice: 0 | 1 = CONFIRM_NO
 
-// A NATIVE LIST, not hand-drawn text. Two things forced this, both discovered on
-// hardware rather than anticipated (see page.ts for the full account):
+// HAND-DRAWN TEXT AGAIN, not the native list this ticket started with. The list
+// was correct about bounce behaviour and wrong about the one thing that actually
+// matters: it can only be shown or updated through rebuildPageContainer, and
+// rebuilding was confirmed on hardware to reset the teleprompter's scroll
+// position regardless of what the content container's own text says. See
+// page.ts for the full chain of four attempts.
 //
-//   - two overlapping text containers do not occlude, they interleave glyphs
-//   - a single re-pushed text container never overflows, so every scroll gesture
-//     looks identical to the firmware and it bounces on every move rather than
-//     only at the real ends of the No/Yes choice
+// This writes ONLY to the reserved confirm strip (CONTAINER_ID_CONFIRM),
+// declared once when the tool opens and never rebuilt while a prompt is shown
+// or dismissed. Content itself is never touched, so its scroll position is
+// physically incapable of resetting: not "unlikely to reset", not "restored
+// afterwards", but never written to in the first place.
 //
-// A list container sidesteps both: it is the SAME widget the launcher menu
-// already uses, firmware owns highlight and scroll, and it bounces correctly at
-// its own genuine boundaries because the firmware's own selection state IS the
-// boundary, not something we are faking with padded text.
+// Known, accepted cost: because content still owns capture (moving capture to
+// the strip would itself require a rebuild), a scroll gesture aimed at the
+// marker also reaches the tool underneath. For the teleprompter, still
+// overflowing and still natively scrolled, that means the visible script can
+// drift by roughly the number of marker moves made. Selecting No without
+// scrolling, the common case for an accidental double-tap, drifts by nothing.
 //
-// This costs a rebuild to enter and a rebuild to exit, rather than the
-// flicker-free upgrade the earlier text-based attempts used. Accepted: a rebuild
-// already resets the tool's scroll position, which was already an accepted cost
-// of showing this prompt at all (see toolContainers / cancelConfirm below), so
-// switching to a list adds no NEW loss, only the existing one plus a visible
-// redraw.
-function confirmContainers(toolName: string) {
-  const bar = statusBarContainers()
-  return {
-    containerTotalNum: bar.length + 2,
-    textObject: [
-      ...bar,
-      new TextContainerProperty({
-        xPosition: 0,
-        yPosition: CONTENT_Y,
-        width: CANVAS_WIDTH,
-        height: CONFIRM_TITLE_HEIGHT,
-        borderWidth: 0,
-        paddingLength: PADDING,
-        containerID: CONTAINER_ID_CONFIRM_TITLE,
-        containerName: CONTAINER_NAME_CONFIRM_TITLE,
-        content: `End ${toolName}`,
-        isEventCapture: 0,
-      }),
-    ],
-    listObject: [
-      new ListContainerProperty({
-        xPosition: 0,
-        yPosition: CONFIRM_LIST_Y,
-        width: CANVAS_WIDTH,
-        height: CONFIRM_LIST_HEIGHT,
-        borderWidth: 0,
-        paddingLength: PADDING,
-        containerID: CONTAINER_ID_CONTENT,
-        containerName: CONTAINER_NAME_CONTENT,
-        isEventCapture: 1,
-        itemContainer: new ListItemContainerProperty({
-          itemCount: 2,
-          itemWidth: LIST_ITEM_WIDTH,
-          isItemSelectBorderEn: 1,
-          itemName: ['No', 'Yes'],
-        }),
-      }),
-    ],
-  }
+// Also accepted: the strip is small and fixed-size, so re-pushing it on every
+// scroll tick means the firmware has nothing to scroll and plays its boundary
+// bounce on every move rather than only at the real ends of No/Yes. That
+// regression was deliberately reopened in favour of the position guarantee,
+// which is the higher priority between the two.
+function confirmText(toolName: string): string {
+  const row = (label: string, value: 0 | 1) =>
+    `${label.padEnd(3)} ${confirmChoice === value ? '<' : ''}`.trimEnd()
+
+  const lines = [`End ${toolName}`, '', row('No', CONFIRM_NO), row('Yes', CONFIRM_YES)]
+
+  const padding = Math.max(0, Math.floor((CONFIRM_STRIP_ROWS - lines.length) / 2))
+  return '\n'.repeat(padding) + lines.join('\n')
 }
 
 function enterConfirm(toolName: string) {
-  bridge.rebuildPageContainer(new RebuildPageContainer(confirmContainers(toolName))).then(ok => {
-    if (ok) {
-      confirming = true
-    } else {
-      status('Failed to open leave prompt')
-    }
-  })
+  confirming = true
+  confirmChoice = CONFIRM_NO
+  setConfirmStrip(confirmText(toolName))
 }
 
-// Rebuild back to the tool's own containers. For the teleprompter this shows the
-// whole script from the top, since G2-17 removed position tracking entirely;
-// there is no "line the wearer was on" to return to any more.
-function cancelConfirm(index: number) {
-  bridge.rebuildPageContainer(new RebuildPageContainer(toolContainers(index))).then(ok => {
-    if (ok) {
-      confirming = false
-    } else {
-      // Stuck between two container layouts is worse than exiting. Same
-      // fail-toward-exit reasoning as requestExit elsewhere in this file.
-      requestExit()
-    }
-  })
+function moveConfirm(next: 0 | 1, toolName: string) {
+  if (confirmChoice === next) return
+  confirmChoice = next
+  setConfirmStrip(confirmText(toolName))
+}
+
+// Clear the strip. Content was never touched, so there is nothing to restore on
+// it; the wearer sees exactly the script position they left, because it never
+// moved from underneath them.
+function cancelConfirm() {
+  confirming = false
+  setConfirmStrip('')
 }
 
 // Ceiling on the restore rebuild. Anything awaited between page creation and
@@ -180,23 +154,41 @@ const menuList = new ListContainerProperty({
 // The content container MUST set isEventCapture: 1. A page with no capture
 // container has no way out, and it is also the container the firmware scrolls and
 // the one every tool's setContent targets.
+//
+// Every tool page also carries the confirm strip, empty, declared here at open
+// time and never added or removed afterwards. That permanence is the entire
+// point: showing or clearing the leave prompt is then just a textContainerUpgrade
+// on this one extra container, and never has to rebuild the page, which is the
+// one operation confirmed to reset the teleprompter's scroll.
 function toolContainers(index: number) {
   const bar = statusBarContainers()
   return {
-    containerTotalNum: bar.length + 1,
+    containerTotalNum: bar.length + 2,
     textObject: [
       ...bar,
       new TextContainerProperty({
         xPosition: 0,
         yPosition: CONTENT_Y,
         width: CANVAS_WIDTH,
-        height: CONTENT_HEIGHT,
+        height: TOOL_CONTENT_HEIGHT,
         borderWidth: 0,
         paddingLength: PADDING,
         containerID: CONTAINER_ID_CONTENT,
         containerName: CONTAINER_NAME_CONTENT,
         content: TOOLS[index].initialContent(),
         isEventCapture: 1,
+      }),
+      new TextContainerProperty({
+        xPosition: 0,
+        yPosition: CONFIRM_STRIP_Y,
+        width: CANVAS_WIDTH,
+        height: CONFIRM_STRIP_HEIGHT,
+        borderWidth: 0,
+        paddingLength: PADDING,
+        containerID: CONTAINER_ID_CONFIRM,
+        containerName: CONTAINER_NAME_CONFIRM,
+        content: '',
+        isEventCapture: 0,
       }),
     ],
   }
@@ -399,26 +391,37 @@ const unsubscribe = bridge.onEvenHubEvent(event => {
     textType === OsEventTypeList.DOUBLE_CLICK_EVENT ||
     listType === OsEventTypeList.DOUBLE_CLICK_EVENT
 
-  // The leave prompt is a real ListContainerProperty (see confirmContainers),
-  // so scroll-to-highlight and its boundary bounce are entirely firmware's job.
-  // We only need to react when something is chosen. Both a plain click and a
-  // double-click on the list commit whatever is currently highlighted, which is
-  // why isTap is not enough here on its own; listType covers list clicks and
-  // catching DOUBLE_CLICK_EVENT here specifically is what stops an accidental
-  // double-tap from falling through to the exit branch below.
+  // The leave prompt. Content still owns capture (see toolContainers), so its
+  // events arrive as sysType/textType the same as any other tap or scroll on a
+  // tool page, not through listEvent. A tap or double-tap here commits whatever
+  // is currently marked, matching the earlier decision that a separate cancel
+  // gesture is redundant once No is a selectable, defaulted-to answer.
+  //
+  // Catching DOUBLE_CLICK_EVENT here, before the isDoubleTap branch below, is
+  // what stops an accidental double-tap while the prompt is open from falling
+  // through to the exit/back logic meant for when no prompt is showing.
+  //
+  // Scroll moves the marker. Both directions are absolute rather than a toggle:
+  // up always lands on No, down always lands on Yes, so a wearer unsure which
+  // way they scrolled can press one direction and know where they are.
   if (confirming && screen.kind === 'tool') {
-    if (listEvent && (listType === OsEventTypeList.CLICK_EVENT || listType === OsEventTypeList.DOUBLE_CLICK_EVENT)) {
-      const choice = listEvent.currentSelectItemIndex ?? CONFIRM_NO
-      if (choice === CONFIRM_YES) {
-        confirming = false
+    const toolName = TOOLS[screen.index].name
+
+    if (sysType === OsEventTypeList.CLICK_EVENT || textType === OsEventTypeList.CLICK_EVENT ||
+        sysType === OsEventTypeList.DOUBLE_CLICK_EVENT || textType === OsEventTypeList.DOUBLE_CLICK_EVENT) {
+      if (confirmChoice === CONFIRM_YES) {
         returnToMenu()
       } else {
-        cancelConfirm(screen.index)
+        cancelConfirm()
       }
+      return
     }
-    // Any other event while the prompt is open (scroll, an unrelated click) is
-    // swallowed here: firmware already handled scroll on the list itself, and
-    // nothing else should reach the tool underneath while a question is open.
+
+    if (textType === OsEventTypeList.SCROLL_TOP_EVENT) {
+      moveConfirm(CONFIRM_NO, toolName)
+    } else if (textType === OsEventTypeList.SCROLL_BOTTOM_EVENT) {
+      moveConfirm(CONFIRM_YES, toolName)
+    }
     return
   }
 
