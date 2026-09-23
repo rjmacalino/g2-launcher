@@ -144,6 +144,11 @@ function rearm() {
 
 export const gps: Tool = {
   name: 'GPS',
+  // A live subscription is running while this page is open. Leaving mid-track
+  // is exactly the "did you mean that" moment the leave prompt exists for,
+  // same reasoning as the teleprompter while actually reading: something is
+  // actively in progress, not just sitting there.
+  confirmOnExit: () => true,
   initialContent: () => ACQUIRING_TEXT,
   onOpen: () => {
     isOpen = true

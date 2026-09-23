@@ -58,6 +58,17 @@ export const CONTAINER_ID_STATUS_RIGHT = 3
 export const CONTAINER_ID_CONTENT = 4
 export const CONTAINER_NAME_CONTENT = 'tool'
 
+// The leave prompt is a title (this question, non-interactive) above a list
+// (the two answers). A list item's own text cannot carry a non-selectable
+// header row - every item in a list is uniformly tappable - so the question
+// needs its own small text container, separate from the two real choices.
+export const CONTAINER_ID_CONFIRM_TITLE = 5
+export const CONTAINER_NAME_CONFIRM_TITLE = 'confirm.title'
+
+export const CONFIRM_TITLE_HEIGHT = STATUS_BAR_HEIGHT
+export const CONFIRM_LIST_Y = CONTENT_Y + CONFIRM_TITLE_HEIGHT
+export const CONFIRM_LIST_HEIGHT = CONTENT_HEIGHT - CONFIRM_TITLE_HEIGHT
+
 // LEAVE-CONFIRM PROMPT: A RECORD OF WHAT DID NOT WORK, AND WHY THE SIXTH
 // ATTEMPT WAS WRONG TO REJECT THE FIFTH'S APPROACH.
 //

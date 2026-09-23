@@ -9,7 +9,12 @@ import {
 import { bridge, status } from './bridge'
 import {
   CANVAS_WIDTH,
+  CONFIRM_LIST_HEIGHT,
+  CONFIRM_LIST_Y,
+  CONFIRM_TITLE_HEIGHT,
+  CONTAINER_ID_CONFIRM_TITLE,
   CONTAINER_ID_CONTENT,
+  CONTAINER_NAME_CONFIRM_TITLE,
   CONTAINER_NAME_CONTENT,
   CONTENT_HEIGHT,
   CONTENT_Y,
@@ -66,14 +71,28 @@ const CONFIRM_YES = 1
 function confirmContainers(toolName: string) {
   const bar = statusBarContainers()
   return {
-    containerTotalNum: bar.length + 1,
-    textObject: bar,
-    listObject: [
-      new ListContainerProperty({
+    containerTotalNum: bar.length + 2,
+    textObject: [
+      ...bar,
+      new TextContainerProperty({
         xPosition: 0,
         yPosition: CONTENT_Y,
         width: CANVAS_WIDTH,
-        height: CONTENT_HEIGHT,
+        height: CONFIRM_TITLE_HEIGHT,
+        borderWidth: 0,
+        paddingLength: PADDING,
+        containerID: CONTAINER_ID_CONFIRM_TITLE,
+        containerName: CONTAINER_NAME_CONFIRM_TITLE,
+        content: `Leave ${toolName}?`,
+        isEventCapture: 0,
+      }),
+    ],
+    listObject: [
+      new ListContainerProperty({
+        xPosition: 0,
+        yPosition: CONFIRM_LIST_Y,
+        width: CANVAS_WIDTH,
+        height: CONFIRM_LIST_HEIGHT,
         borderWidth: 0,
         paddingLength: PADDING,
         containerID: CONTAINER_ID_CONTENT,
@@ -83,7 +102,7 @@ function confirmContainers(toolName: string) {
           itemCount: 2,
           itemWidth: LIST_ITEM_WIDTH,
           isItemSelectBorderEn: 1,
-          itemName: ['No', `Yes, leave ${toolName}`],
+          itemName: ['No', 'Yes'],
         }),
       }),
     ],
