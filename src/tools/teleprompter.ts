@@ -80,10 +80,13 @@ const SCRIPT = [
 // It also matches the documented figure that a full 576x288 text container holds
 // roughly 400 to 500 characters, which only works out at around 28px rows.
 //
-// Set to 28 rather than 27 deliberately: rounding up yields one fewer line, and a
-// clipped last line is worse than a slightly short one in a tool whose entire job
-// is being readable. If a 9th line turns out to fit cleanly, 27 is the better
-// value and this comment is the record of why it was not chosen first.
+// Measured at exactly 27 from a second screenshot: consecutive rendered lines sat
+// 27px apart, and a blank script line cost exactly 54, so the row height is 27
+// rather than approximately 27. 9 rows need 243px of the 248 available.
+//
+// This briefly sat at 28, rounded up on the theory that a clipped last line is
+// worse than a short one. With the real number in hand that caution cost a line
+// for nothing.
 //
 // The derivation from CONTENT_HEIGHT is kept rather than hardcoding the count, so
 // that changing STATUS_BAR_HEIGHT cannot silently leave the line count stale.
@@ -93,7 +96,7 @@ const SCRIPT = [
 // entries than this number claims. Note the script's blank lines each consume a
 // row too, which is why the screenshot showed only three lines of actual text out
 // of five slots. See #23 and #25.
-const APPROX_LINE_HEIGHT_PX = 28
+const APPROX_LINE_HEIGHT_PX = 27
 const LINES_PER_VIEW = Math.max(
   1,
   Math.floor((CONTENT_HEIGHT - PADDING * 2) / APPROX_LINE_HEIGHT_PX),
