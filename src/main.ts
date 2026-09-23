@@ -12,21 +12,10 @@ import {
   CONTAINER_ID_CONTENT,
   CONTAINER_NAME_CONTENT,
   CONTENT_HEIGHT,
-  BRIGHTNESS_DIMMED,
-  BRIGHTNESS_NORMAL,
-  CONTAINER_ID_MODAL,
-  CONTAINER_NAME_MODAL,
   CONTENT_ROWS,
   CONTENT_Y,
-  MODAL_HEIGHT,
-  MODAL_WIDTH,
-  MODAL_X,
-  MODAL_Y,
   PADDING,
-  Z_CONTENT,
-  Z_MODAL,
-  setContentBrightness,
-  setModalText,
+  setContent,
 } from './page'
 import { readWithTimeout } from './storage'
 import {
@@ -36,7 +25,7 @@ import {
   stopStatusBar,
 } from './statusbar'
 import { persistScreen, readStoredScreen, type Screen } from './screen'
-import { TOOLS, TOOL_NAMES } from './tools'
+import { TOOLS, TOOL_NAMES, type Tool } from './tools'
 
 // The shell. Owns which page is showing, builds pages, and routes input. It knows
 // tools only through the Tool interface, so adding one is a new file plus an entry
@@ -62,84 +51,57 @@ const CONFIRM_NO = 0
 const CONFIRM_YES = 1
 let confirmChoice: 0 | 1 = CONFIRM_NO
 
-// A marker you move beats a gesture you have to be told about.
+// Back to a single-container swap, per a direct decision after the two-container
+// dimmed-overlay attempt (#30) turned out to be undrawable: a text container has
+// no background fill, so zOrderIndex controls DRAW ORDER, not occlusion. Two text
+// containers sharing the same rows render both sets of glyphs interleaved, not
+// one hiding the other. That was visible on hardware as garbled overlapping text,
+// and it explained an earlier report that the marker only seemed to respond once
+// scrolled to the very end of the script: both texts were changing on every
+// scroll tick and unreadable until the script hit its bound and stopped moving,
+// leaving only the marker's own change visible.
 //
-// Labels are padded to a common width so the marker holds one column. Otherwise
-// it tracks the label length and appears to jump sideways as the selection
-// moves, which reads as the marker being unstable rather than the selection
-// changing.
+// This version writes the prompt directly into the tool's own content container,
+// replacing the script. One container, so there is nothing to overlap with.
 //
-// The modal container now covers the full content area rather than a small box,
-// per a direct request: no border was ever possible (TextContainerUpgrade has no
-// border fields, so anything drawn once stays drawn, which is what produced the
-// permanent empty rectangle in an earlier version), so the only way to make this
-// read as a dialog rather than loose text is to occupy the whole area itself and
-// separate it from the tool with dimming, not with a frame.
+// Known cost, accepted: this IS a content change, and every content change resets
+// the firmware's scroll. Cancelling returns to the top of the script rather than
+// to where the wearer was reading. That is the trade #29 first shipped and #30
+// spent three rounds trying to avoid; it is not being reopened here.
 //
-// Rule lines drawn as text stand in for the border that cannot exist. They
-// appear when the modal text is set and disappear when it is cleared, which a
-// real border could not do.
-//
-// Length is measured, not guessed. The status bar work established the font
-// averages about 10.5px per character (from "Wed 23 Sep" rendering near 105px),
-// so a rule matching the usable width is (CANVAS_WIDTH - PADDING * 2) / 10.5
-// characters. A dash count picked without this would either wrap, which breaks
-// the vertical centring math, or leave the rule visibly short of the edges.
-const AVG_CHAR_PX = 10.5
-const RULE = '-'.repeat(Math.floor((CANVAS_WIDTH - PADDING * 2) / AVG_CHAR_PX))
-
+// A marker you move beats a gesture you have to be told about. Labels are padded
+// to a common width so the marker holds one column, otherwise it tracks the label
+// length and appears to jump sideways as the selection moves.
 function confirmText(toolName: string): string {
   const row = (label: string, value: 0 | 1) =>
     `${label.padEnd(3)} ${confirmChoice === value ? '<' : ''}`.trimEnd()
 
-  const lines = [RULE, `End ${toolName}`, '', row('No', CONFIRM_NO), row('Yes', CONFIRM_YES), RULE]
+  const lines = [`End ${toolName}`, '', row('No', CONFIRM_NO), row('Yes', CONFIRM_YES)]
 
-  // Centred within the full content area now, not a small box, so the same
-  // vertical-centring approach from the earlier design still applies: pad with
-  // blank rows computed from how many actually fit.
+  // Vertically centred by padding with blank rows, computed from how many rows
+  // actually fit rather than a fixed guess.
   const padding = Math.max(0, Math.floor((CONTENT_ROWS - lines.length) / 2))
   return '\n'.repeat(padding) + lines.join('\n')
 }
 
-// Open the prompt.
-//
-// The tool's own container is never written to. It is dimmed instead, with a
-// brightness-only upgrade that carries no content, because any upgrade carrying
-// content resets the firmware's scroll and costs the wearer their place. Dimming
-// leaves the tool exactly where it was and gives the faded backdrop a modal
-// wants anyway.
-// Sequenced, not fired together. Two upgrades dispatched at once and one of them
-// is dropped: the first version did both concurrently and the brightness change
-// came back rejected, leaving the tool at full brightness behind the modal. The
-// docs warn about this for image sends ("no concurrent sends") and it holds for
-// text upgrades too.
-//
-// Dim first, then draw, so there is never a frame where the modal is up over an
-// undimmed tool.
 function enterConfirm(toolName: string) {
   confirming = true
   confirmChoice = CONFIRM_NO
-  setContentBrightness(BRIGHTNESS_DIMMED).then(() => {
-    setModalText(confirmText(toolName))
-  })
+  setContent(confirmText(toolName))
 }
 
 function moveConfirm(next: 0 | 1, toolName: string) {
   if (confirmChoice === next) return
   confirmChoice = next
-  setModalText(confirmText(toolName))
+  setContent(confirmText(toolName))
 }
 
-// Dismiss the prompt. Clearing the modal and restoring brightness, with the tool
-// untouched throughout, so the wearer is returned to exactly the line they were
-// reading rather than to the top.
-// Clear the modal first, then restore brightness, for the same sequencing reason
-// and so the tool is never briefly readable with the prompt still on top of it.
-function cancelConfirm() {
+// Put the tool's own content back. For the teleprompter this is the whole script
+// from the top, since G2-17 removed position tracking entirely; there is no
+// "line the wearer was on" to return to any more.
+function cancelConfirm(tool: Tool) {
   confirming = false
-  setModalText('').then(() => {
-    setContentBrightness(BRIGHTNESS_NORMAL)
-  })
+  setContent(tool.initialContent())
 }
 
 // Ceiling on the restore rebuild. Anything awaited between page creation and
@@ -171,7 +133,6 @@ const menuList = new ListContainerProperty({
   paddingLength: PADDING,
   containerID: CONTAINER_ID_CONTENT,
   containerName: 'menu',
-  zOrderIndex: Z_CONTENT,
   isEventCapture: 1,
   itemContainer: new ListItemContainerProperty({
     itemCount: TOOLS.length,
@@ -187,7 +148,7 @@ const menuList = new ListContainerProperty({
 function toolContainers(index: number) {
   const bar = statusBarContainers()
   return {
-    containerTotalNum: bar.length + 2,
+    containerTotalNum: bar.length + 1,
     textObject: [
       ...bar,
       new TextContainerProperty({
@@ -200,34 +161,7 @@ function toolContainers(index: number) {
         containerID: CONTAINER_ID_CONTENT,
         containerName: CONTAINER_NAME_CONTENT,
         content: TOOLS[index].initialContent(),
-        zOrderIndex: Z_CONTENT,
         isEventCapture: 1,
-      }),
-      // The modal, empty. It has to exist from page creation because adding a
-      // container later means a rebuild, and a rebuild resets scroll.
-      //
-      // NO BORDER, and that is not an aesthetic choice. A border draws whether or
-      // not the container has text, and TextContainerUpgrade carries no border
-      // fields, so a bordered container is bordered permanently. The first
-      // version of this had a 2px border and left an empty rectangle sitting over
-      // the script on every tool page.
-      //
-      // Only the text can be turned off, by writing an empty string. So the modal
-      // has to be made of text alone, and the separation from the tool behind it
-      // comes from brightness: the tool dims to 0, the modal draws at 4.
-      new TextContainerProperty({
-        xPosition: MODAL_X,
-        yPosition: MODAL_Y,
-        width: MODAL_WIDTH,
-        height: MODAL_HEIGHT,
-        borderWidth: 0,
-        paddingLength: 8,
-        textColor: BRIGHTNESS_NORMAL,
-        containerID: CONTAINER_ID_MODAL,
-        containerName: CONTAINER_NAME_MODAL,
-        content: '',
-        zOrderIndex: Z_MODAL,
-        isEventCapture: 0,
       }),
     ],
   }
@@ -427,7 +361,7 @@ const unsubscribe = bridge.onEvenHubEvent(event => {
       // Double tap means back, and from the prompt back is the tool you came
       // from. So the same gesture that raised the question also dismisses it.
       if (confirming) {
-        cancelConfirm()
+        cancelConfirm(tool)
         return
       }
       if (tool.confirmOnExit) {
@@ -492,7 +426,7 @@ const unsubscribe = bridge.onEvenHubEvent(event => {
       if (confirmChoice === CONFIRM_YES) {
         returnToMenu()
       } else {
-        cancelConfirm()
+        cancelConfirm(tool)
       }
       return
     }

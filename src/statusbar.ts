@@ -6,9 +6,6 @@ import {
   CONTAINER_ID_STATUS_RIGHT,
   PADDING,
   STATUS_BAR_HEIGHT,
-  Z_STATUS_CENTRE,
-  Z_STATUS_LEFT,
-  Z_STATUS_RIGHT,
 } from './page'
 import { STORAGE_KEY_STATUS_BAR, readJson, readWithTimeout } from './storage'
 
@@ -58,10 +55,6 @@ type Slot = {
   readonly x: number
   readonly width: number
   readonly field: keyof StatusBarConfig
-  // zOrderIndex is all or nothing per page: once any container sets it, every
-  // container must set a unique one. The bar never overlaps anything, so these
-  // exist only to satisfy that rule.
-  readonly z: number
   render(now: Date): string
 }
 
@@ -134,7 +127,6 @@ const SLOTS: readonly Slot[] = [
     x: 0,
     width: 180,
     field: 'date',
-    z: Z_STATUS_LEFT,
     render: formatDate,
   },
   {
@@ -143,7 +135,6 @@ const SLOTS: readonly Slot[] = [
     x: 210,
     width: 180,
     field: 'temperature',
-    z: Z_STATUS_CENTRE,
     render: renderWeather,
   },
   {
@@ -155,7 +146,6 @@ const SLOTS: readonly Slot[] = [
     x: 460,
     width: 116,
     field: 'time',
-    z: Z_STATUS_RIGHT,
     render: formatClock,
   },
 ]
@@ -215,7 +205,6 @@ export function statusBarContainers(): TextContainerProperty[] {
       containerID: slot.id,
       containerName: slot.name,
       content: text,
-      zOrderIndex: slot.z,
       // Never the capture container. Exactly one container per page receives
       // input and it is always the content, because the bar is not interactive
       // and taking capture would strand the wearer on every page at once.
