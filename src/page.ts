@@ -67,16 +67,41 @@ export const CONTAINER_NAME_CONFIRM_TITLE = 'confirm.title'
 
 // Sized to the measured single-row height (ROW_HEIGHT_PX), not
 // STATUS_BAR_HEIGHT, which is 5px taller because it was sized for the status
-// bar's own purpose, not for holding exactly one tight line of text here. The
-// two boxes already sit flush against each other (CONFIRM_LIST_Y starts the
-// instant this one ends, no gap between them), so the visible space reported
-// between the question and the list was slack inside this box, below the
-// top-aligned text. Tightening it to the real row height is the lever
-// available; the firmware's own internal spacing, if any, is not something we
-// control or can verify without hardware.
+// bar's own purpose, not for holding exactly one tight line of text here.
 export const CONFIRM_TITLE_HEIGHT = ROW_HEIGHT_PX
 export const CONFIRM_LIST_Y = CONTENT_Y + CONFIRM_TITLE_HEIGHT
-export const CONFIRM_LIST_HEIGHT = CONTENT_HEIGHT - CONFIRM_TITLE_HEIGHT
+
+// UNVERIFIED HYPOTHESIS, recorded because the previous attempt at this gap
+// was wrong and should not be repeated blind.
+//
+// Shrinking the title box did not close the gap seen on hardware: a large
+// visible space remained between the question and "No" even though the title
+// and list boxes are positioned flush, zero pixels apart. That rules out
+// container positioning as the cause.
+//
+// The working theory is that list items render vertically CENTRED within
+// their container, not top-aligned like text. CONFIRM_LIST_HEIGHT was
+// previously CONTENT_HEIGHT - CONFIRM_TITLE_HEIGHT, about 220px, to hold just
+// two items - if they centre in that much space, most of it is blank space
+// above them, which is exactly the symptom reported. The launcher menu likely
+// shows the same centring but with 4 items in a similarly sized box, leaving
+// comparatively little empty space per item, which would be why it never
+// looked wrong there.
+//
+// ITEM_HEIGHT_ESTIMATE is a guess, not a measurement: double the text row
+// height, on the reasoning that a list row needs to be a bigger touch target
+// than a line of text, and nothing more precise than that. Sized for exactly
+// CONFIRM_ITEM_COUNT items rather than the leftover content area, so there is
+// little box left for centring to hide space inside.
+//
+// If this does not close the gap, the theory is wrong and needs abandoning
+// rather than iterating on the same guess; the way to actually pin this down
+// is the numbered-items calibration this project has used before (render a
+// list of distinct known items, observe on hardware, measure directly)
+// rather than guessing a second time.
+const ITEM_HEIGHT_ESTIMATE = ROW_HEIGHT_PX * 2
+const CONFIRM_ITEM_COUNT = 2
+export const CONFIRM_LIST_HEIGHT = ITEM_HEIGHT_ESTIMATE * CONFIRM_ITEM_COUNT
 
 // LEAVE-CONFIRM PROMPT: A RECORD OF WHAT DID NOT WORK, AND WHY THE SIXTH
 // ATTEMPT WAS WRONG TO REJECT THE FIFTH'S APPROACH.
