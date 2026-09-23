@@ -1,8 +1,9 @@
 import { waitForEvenAppBridge } from '@evenrealities/even_hub_sdk'
 
-// The companion page is the only surface that can show startup problems, since a
-// failure here means nothing ever reaches the glasses.
-const statusEl = document.getElementById('app')
+// Diagnostics only, a thin strip separate from the companion UI in #companion.
+// Startup problems, and nothing else, need somewhere to show up when there is
+// no real UI to display them in yet.
+const statusEl = document.getElementById('status')
 
 export function status(line: string) {
   console.log(line)

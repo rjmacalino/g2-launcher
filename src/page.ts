@@ -28,18 +28,24 @@ export const CONTENT_GAP = 8
 export const CONTENT_Y = STATUS_BAR_HEIGHT + CONTENT_GAP
 export const CONTENT_HEIGHT = CANVAS_HEIGHT - CONTENT_Y
 
+// A list item's native selection border draws a rounded rectangle at the item's
+// own bounds. When itemWidth runs flush to the canvas edge (right edge at
+// x = CANVAS_WIDTH, same as the canvas itself), the border's right side has
+// nowhere left to render and gets clipped, while the left side, sitting a full
+// border-width inside x = 0, renders cleanly. Confirmed visually: the menu list's
+// highlight box was a clean rounded rect on the left and cut off flat on the
+// right.
+//
+// Inset by PADDING on the side that was clipping, so the box sits fully inside
+// canvas bounds and the border renders symmetrically, matching the left side
+// rather than the left side being the accidental exception.
+export const LIST_ITEM_WIDTH = CANVAS_WIDTH - PADDING
+
 // Measured rather than estimated: on the simulator consecutive rendered lines sat
 // exactly 27px apart, and a blank line cost exactly 54. The firmware owns text
 // metrics and does not report them, so this is the one number here that came from
 // looking at a screenshot rather than from the docs.
 export const ROW_HEIGHT_PX = 27
-
-// How many rows of text fit in the content area. Used for vertical centring,
-// which is the only kind of centring available: text containers are top-left
-// aligned with no alignment option, and a non-monospaced font makes horizontal
-// centring by space padding unreliable. Real horizontal centring needs a
-// container positioned for it.
-export const CONTENT_ROWS = Math.floor((CONTENT_HEIGHT - PADDING * 2) / ROW_HEIGHT_PX)
 
 // The bar occupies IDs 1 to 3, one per slot. Content is 4 on every page.
 //
@@ -52,44 +58,91 @@ export const CONTAINER_ID_STATUS_RIGHT = 3
 export const CONTAINER_ID_CONTENT = 4
 export const CONTAINER_NAME_CONTENT = 'tool'
 
-// The modal sits in its own container so the content container is never touched
-// while a prompt is open. That is the whole design: every content change resets
-// the firmware's scroll, so a modal that writes into the content container costs
-// the wearer their place in whatever they were reading.
+// The leave prompt is a title (this question, non-interactive) above a list
+// (the two answers). A list item's own text cannot carry a non-selectable
+// header row - every item in a list is uniformly tappable - so the question
+// needs its own small text container, separate from the two real choices.
+export const CONTAINER_ID_CONFIRM_TITLE = 5
+export const CONTAINER_NAME_CONFIRM_TITLE = 'confirm.title'
+
+// Sized to the measured single-row height (ROW_HEIGHT_PX), not
+// STATUS_BAR_HEIGHT, which is 5px taller because it was sized for the status
+// bar's own purpose, not for holding exactly one tight line of text here.
+export const CONFIRM_TITLE_HEIGHT = ROW_HEIGHT_PX
+
+// CONFIRMED: list items render vertically CENTRED within their container, not
+// top-aligned like text. A large gap remained between the title and "No" even
+// with the two boxes positioned flush, zero pixels apart, which ruled out
+// positioning as the cause; shrinking the list box to roughly fit its two
+// items (rather than the whole leftover content area) closed the gap. The
+// launcher menu likely centres the same way, just with 4 items in a similarly
+// sized box, leaving much less spare room per item to disappear into.
 //
-// It needs no off switch. Text containers have no background fill, so an empty
-// one draws nothing at all. This was not true of the image container we tried
-// first, which could be drawn but never cleared.
-export const CONTAINER_ID_MODAL = 5
-export const CONTAINER_NAME_MODAL = 'modal'
+// ITEM_HEIGHT_ESTIMATE is still a guess, not a measurement: double the text
+// row height, on the reasoning that a list row needs to be a bigger touch
+// target than a line of text. It got the gap-closing behaviour right even if
+// the exact number is approximate; the real value would need the
+// numbered-items calibration this project has used before (render distinct
+// known items, observe on hardware, measure directly).
+const ITEM_HEIGHT_ESTIMATE = ROW_HEIGHT_PX * 2
+const CONFIRM_ITEM_COUNT = 2
+export const CONFIRM_LIST_HEIGHT = ITEM_HEIGHT_ESTIMATE * CONFIRM_ITEM_COUNT
 
-// Covers the whole content area, but never the status bar. The clock stays
-// readable with a prompt open, which is the difference between a dialog inside
-// the app and one that takes over the glasses.
+// With the gap closed, the title+list block is a compact ~135px sitting
+// inside a 248px content area, top-anchored right under the status bar. That
+// left a large, unbalanced dead zone below it, reported directly. Centring
+// the WHOLE block vertically within the content area reads as an actual
+// dialog rather than a page that ran out of content, and moves it down (per
+// direct request) without touching the just-fixed relationship between the
+// title and the list, which stays exactly as measured above.
+const CONFIRM_BLOCK_HEIGHT = CONFIRM_TITLE_HEIGHT + CONFIRM_LIST_HEIGHT
+const CONFIRM_BLOCK_OFFSET = Math.floor((CONTENT_HEIGHT - CONFIRM_BLOCK_HEIGHT) / 2)
+
+export const CONFIRM_TITLE_Y = CONTENT_Y + CONFIRM_BLOCK_OFFSET
+export const CONFIRM_LIST_Y = CONFIRM_TITLE_Y + CONFIRM_TITLE_HEIGHT
+
+// LEAVE-CONFIRM PROMPT: A RECORD OF WHAT DID NOT WORK, AND WHY THE SIXTH
+// ATTEMPT WAS WRONG TO REJECT THE FIFTH'S APPROACH.
 //
-// Full area for a practical reason as well as a visual one. The content
-// container keeps input capture while the prompt is open, because capture is
-// fixed at page creation and moving it means a rebuild, which costs the scroll
-// position. So a scroll aimed at the marker also scrolls the tool behind. At full
-// area that movement is hidden rather than distracting.
-export const MODAL_WIDTH = CANVAS_WIDTH
-export const MODAL_HEIGHT = CONTENT_HEIGHT
-export const MODAL_X = 0
-export const MODAL_Y = CONTENT_Y
-
-// zOrderIndex is all or nothing per page: once any container sets it, every
-// container must set a unique one. Larger renders in front, so the modal sits
-// above the content it is drawn over.
-export const Z_STATUS_LEFT = 1
-export const Z_STATUS_CENTRE = 2
-export const Z_STATUS_RIGHT = 3
-export const Z_CONTENT = 4
-export const Z_MODAL = 5
-
-// Brightness levels, 0 to 4. Text drawn at 0 is dimmed rather than hidden, which
-// is what gives the faded backdrop behind an open modal.
-export const BRIGHTNESS_NORMAL = 4
-export const BRIGHTNESS_DIMMED = 0
+// An image container occludes reliably (every pixel value paints, none are
+// transparent) but cannot be cleared: a zero-length push returns sendFailed, and
+// the container must be declared at page creation, so a drawn image backdrop is
+// permanently visible.
+//
+// A second TEXT container layered over content with zOrderIndex does NOT
+// occlude. Text containers have no background fill, so zOrderIndex controls
+// draw order only. Two text containers sharing the same rows render both sets
+// of glyphs interleaved rather than one hiding the other, confirmed on hardware
+// as garbled overlapping text.
+//
+// A permanent reserved strip at the bottom of every tool page avoided a rebuild
+// (in-place upgrades only), but shrank the teleprompter's normal reading height
+// by half, ALL THE TIME, not only while a prompt was open. Reported directly as
+// "you broke the display": reserving space nobody is using yet is not free, it
+// is a visible, permanent hole in the one thing this app is for. It also kept
+// content holding capture, so a scroll aimed at the marker also scrolled the
+// still-overflowing script underneath, and its large movement drew attention
+// away from the marker. Reverted.
+//
+// A NATIVE ListContainerProperty was tried and reverted too early. The stated
+// reason at the time was that rebuilding to show a list resets the
+// teleprompter's scroll position, which is true, but the conclusion drawn from
+// it was wrong: a plain text swap via textContainerUpgrade ALSO resets scroll,
+// because any content-carrying update does, not only a full rebuild. Entering
+// the confirm prompt has never been free, in any version. The native list was
+// rejected for a cost that the text-swap version replacing it was already
+// paying, just less visibly, and the trade actually made was "keep the
+// hand-rolled bounce bug" in exchange for a cost that was not actually avoided.
+//
+// So the confirm prompt is a native list again (see confirmContainers in
+// main.ts): correct bounce at the real ends of No/Yes, for no additional cost
+// versus the text version it replaced.
+//
+// This also unlocked the actual fix for where "Yes" goes. Teleprompter now has
+// two levels of its own depth (script picker, then reading), and confirming
+// leave should step back one level, not necessarily out of the tool entirely -
+// the same "back" that double-tap already means everywhere else in this app.
+// See Tool.onConfirmedExit in tools/types.ts.
 
 // Replace the text in the content area, in place, with no page rebuild.
 //
@@ -97,47 +150,6 @@ export const BRIGHTNESS_DIMMED = 0
 // needs to know a container ID. A tool that guessed one wrong would write over the
 // status bar, and the whole reason the IDs are fixed is that nothing should be
 // relying on getting that right.
-// Change the content area's brightness WITHOUT touching its text.
-//
-// The omitted `content` field is the point, not an oversight. Every upgrade that
-// carries content resets the firmware's scroll position to the top. A
-// brightness-only upgrade does not, which was verified on hardware rather than
-// assumed: dimming a scrolled teleprompter and brightening it again left the
-// wearer exactly where they were reading.
-//
-// That is what makes a modal possible at all. Dim the tool, draw the prompt over
-// it, restore brightness afterwards, and the tool never knew anything happened.
-export function setContentBrightness(level: number): Promise<boolean> {
-  return bridge
-    .textContainerUpgrade(
-      new TextContainerUpgrade({
-        containerID: CONTAINER_ID_CONTENT,
-        containerName: CONTAINER_NAME_CONTENT,
-        textColor: level,
-      }),
-    )
-    .then(ok => {
-      if (!ok) status('Brightness change failed')
-      return ok
-    })
-}
-
-// Draw the modal, or clear it by passing an empty string.
-export function setModalText(text: string): Promise<boolean> {
-  return bridge
-    .textContainerUpgrade(
-      new TextContainerUpgrade({
-        containerID: CONTAINER_ID_MODAL,
-        containerName: CONTAINER_NAME_MODAL,
-        content: text,
-      }),
-    )
-    .then(ok => {
-      if (!ok) status('Modal update failed')
-      return ok
-    })
-}
-
 export function setContent(text: string): Promise<boolean> {
   return bridge
     .textContainerUpgrade(

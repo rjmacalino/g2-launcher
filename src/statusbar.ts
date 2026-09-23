@@ -6,9 +6,6 @@ import {
   CONTAINER_ID_STATUS_RIGHT,
   PADDING,
   STATUS_BAR_HEIGHT,
-  Z_STATUS_CENTRE,
-  Z_STATUS_LEFT,
-  Z_STATUS_RIGHT,
 } from './page'
 import { STORAGE_KEY_STATUS_BAR, readJson, readWithTimeout } from './storage'
 
@@ -27,12 +24,15 @@ export type StatusBarConfig = {
   temperature: boolean
 }
 
-// Temperature defaults off because there is nothing to show yet. Turning it on
-// before a proxy exists would mean a field that is always blank.
+// Temperature now defaults on. It used to default off because there was
+// nothing to show yet - true while Weather was a placeholder, no longer true
+// now that it fetches real conditions (see weather-service.ts). Leaving this
+// off by default would have meant the centre slot stayed silently blank on
+// every device forever, since nothing else ever flips it on.
 const DEFAULTS: StatusBarConfig = {
   time: true,
   date: true,
-  temperature: false,
+  temperature: true,
 }
 
 // The clock shows minutes, so a one-second timer would be 59 wasted host round
@@ -58,10 +58,6 @@ type Slot = {
   readonly x: number
   readonly width: number
   readonly field: keyof StatusBarConfig
-  // zOrderIndex is all or nothing per page: once any container sets it, every
-  // container must set a unique one. The bar never overlaps anything, so these
-  // exist only to satisfy that rule.
-  readonly z: number
   render(now: Date): string
 }
 
@@ -88,8 +84,10 @@ function formatDate(now: Date): string {
   return `${DAY_NAMES[now.getDay()]} ${now.getDate()} ${MONTH_NAMES[now.getMonth()]}`
 }
 
-// What the weather slot shows. Null until a proxy exists, because an API key
-// cannot ship inside an extractable package.
+// What the weather slot shows. Populated by Weather (tools/weather.ts via
+// weather-service.ts), which now fetches from Open-Meteo - the old "null
+// until a proxy exists" blocker turned out to only apply to APIs that need a
+// key; Open-Meteo does not, so no proxy was ever actually required.
 //
 // ICONS ARE NOT YET POSSIBLE TO CONFIRM. The requested design is a sun or
 // umbrella glyph next to the temperature. Three things stand in the way:
@@ -107,18 +105,70 @@ function formatDate(now: Date): string {
 // Testing a glyph is cheap and safe despite this repo being ASCII only: a '\uXXXX'
 // escape keeps the source file pure ASCII while emitting the codepoint at runtime,
 // which sidesteps the encoding corruption that damaged the README in #16.
-type WeatherCondition = 'clear' | 'rain'
+//
+// Six buckets, not one per WMO weather code: Open-Meteo defines dozens of
+// codes (drizzle, freezing rain, snow grains, and so on) that this small
+// ASCII display has no room to distinguish usefully. weather-api.ts collapses
+// all of them into whichever of these a wearer would actually act on
+// differently.
+export type WeatherCondition = 'clear' | 'cloudy' | 'fog' | 'rain' | 'snow' | 'storm'
 
-const CONDITION_LABELS: Record<WeatherCondition, string> = {
-  clear: 'Clear',
-  rain: 'Rain',
+export const CONDITION_LABELS: Record<WeatherCondition, string> = {
+  clear: 'Sunny',
+  cloudy: 'Cloudy',
+  fog: 'Fog',
+  rain: 'Rainy',
+  snow: 'Snow',
+  storm: 'Storm',
 }
 
-let weather: { condition: WeatherCondition; celsius: number } | null = null
+// RESULT: tried on hardware in Weather's hourly view and failed. Not the
+// placeholder-box failure the simulator notes predicted (see the comment
+// above) - the glyph rendered as nothing at all, zero width, like the
+// character was silently dropped somewhere between here and the display
+// rather than drawn as an unknown codepoint. The " | " divider and the words
+// on either side of the gap rendered fine, so this is specific to the glyph
+// character itself, not a problem with the row generally.
+//
+// Kept, unused, as the record of that result rather than deleted: the next
+// idea for an icon on this display (a raw image container instead of a text
+// glyph, see the exploration note in G2-26's commit message) starts from
+// knowing this path is closed, not from re-discovering it. Nothing in this
+// codebase currently imports CONDITION_GLYPHS.
+//
+// No glyph for fog - nothing in this symbol block reads as fog rather than
+// generic cloud, and a wrong-looking icon is worse than the word.
+export const CONDITION_GLYPHS: Record<WeatherCondition, string> = {
+  clear: '\u2600', // sun
+  cloudy: '\u2601', // cloud
+  fog: 'Fog',
+  rain: '\u2614', // umbrella with rain drops
+  snow: '\u2744', // snowflake
+  storm: '\u26a1', // high voltage (lightning bolt)
+}
+
+// Shown whenever there is no current reading: before the very first refresh
+// completes at startup, and whenever weather-service.ts calls setWeather(null)
+// after a failed refresh (no location fix, or the forecast request itself
+// failing). A blank slot looked like the field was simply off; naming the gap
+// is more honest about what the wearer is looking at, per direct request.
+const NO_DATA_TEXT = 'N/A'
+
+let weather: { condition: WeatherCondition; celsius: number; isDay: boolean } | null = null
+
+// "Sunny" is a daytime-only word; WMO code 0 ("clear sky") is equally
+// correct at night, when there is no sun to name. weather-api.ts's is_day
+// flag catches that case here, for this single point-in-time reading only -
+// see the comment on ForecastResult.current there for why the daily/hourly
+// rows do not need the same check.
+function conditionWord(w: { condition: WeatherCondition; isDay: boolean }): string {
+  if (w.condition === 'clear' && !w.isDay) return 'Clear'
+  return CONDITION_LABELS[w.condition]
+}
 
 function renderWeather(): string {
-  if (!weather) return ''
-  return `${CONDITION_LABELS[weather.condition]} ${Math.round(weather.celsius)}C`
+  if (!weather) return NO_DATA_TEXT
+  return `${conditionWord(weather)} ${Math.round(weather.celsius)}C`
 }
 
 // Date on the left, weather in the middle, time on the right.
@@ -134,7 +184,6 @@ const SLOTS: readonly Slot[] = [
     x: 0,
     width: 180,
     field: 'date',
-    z: Z_STATUS_LEFT,
     render: formatDate,
   },
   {
@@ -143,7 +192,6 @@ const SLOTS: readonly Slot[] = [
     x: 210,
     width: 180,
     field: 'temperature',
-    z: Z_STATUS_CENTRE,
     render: renderWeather,
   },
   {
@@ -155,7 +203,6 @@ const SLOTS: readonly Slot[] = [
     x: 460,
     width: 116,
     field: 'time',
-    z: Z_STATUS_RIGHT,
     render: formatClock,
   },
 ]
@@ -197,6 +244,23 @@ export async function hydrate(): Promise<void> {
   config = await readWithTimeout(readConfig(), { ...DEFAULTS })
 }
 
+// RESOLVED. Two thin vertical tick marks near the status bar edges turned out
+// to be a real, fixable thing: placing sibling text containers edge to edge
+// on the same row draws a boundary mark, confirmed by collapsing the three
+// slots into one and watching two of three ticks disappear. A third tick, at
+// the far right where any status bar layout touches the canvas edge, survived
+// even when nothing we drew reached that corner (tested by insetting content
+// 26px from the edge and checking real hardware) - confirmed OS-owned chrome,
+// not something we draw, not something to keep chasing.
+//
+// Net decision: keep the three-slot layout. It positions date, weather and
+// time apart from each other, which is the actual reason this file exists
+// (see the comment on SLOTS below); collapsing to one container removes the
+// two fixable ticks but reintroduces the left-clustered text problem the
+// three-slot design was built to solve in the first place, which is the
+// worse trade. The remaining corner tick is unaffected either way, so there
+// is nothing left to gain by giving up the readable layout for it.
+
 // The bar's containers. Every page builder spreads these in, which is what makes a
 // page without a bar impossible to construct. They record what they drew so the
 // tick can dedupe against it.
@@ -215,7 +279,6 @@ export function statusBarContainers(): TextContainerProperty[] {
       containerID: slot.id,
       containerName: slot.name,
       content: text,
-      zOrderIndex: slot.z,
       // Never the capture container. Exactly one container per page receives
       // input and it is always the content, because the bar is not interactive
       // and taking capture would strand the wearer on every page at once.
@@ -248,13 +311,15 @@ function refresh() {
   }
 }
 
-// Set the weather shown in the centre slot. Nothing calls this yet; weather needs
-// a proxy. Exported so the slot has a defined way in rather than a placeholder
-// whoever builds weather has to go hunting for.
+// Set the weather shown in the centre slot. Called from weather-service.ts
+// after every refresh, success or failure (null clears the slot to the N/A
+// placeholder - see NO_DATA_TEXT).
 //
 // Takes Celsius as a number rather than a preformatted string, so the display
 // format stays a decision this file owns and the weather tool cannot drift from it.
-export function setWeather(next: { condition: WeatherCondition; celsius: number } | null) {
+export function setWeather(
+  next: { condition: WeatherCondition; celsius: number; isDay: boolean } | null,
+) {
   weather = next
   refresh()
 }

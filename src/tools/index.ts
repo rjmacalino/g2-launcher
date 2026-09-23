@@ -1,27 +1,19 @@
 import type { Tool } from './types'
-import { gps } from './gps'
+import { notesTool } from './notes'
 import { teleprompter } from './teleprompter'
+import { weatherTool } from './weather'
 
 export type { Tool } from './types'
-
-// A tool with no behaviour yet. Named rather than inlined so that it is obvious
-// from the TOOLS array below which entries are real and which are stubs.
-function placeholder(name: string): Tool {
-  return { name, initialContent: () => name }
-}
 
 // Order is the index. The firmware reports the highlighted list row back as
 // currentSelectItemIndex, and that index is what gets persisted in ui.screen, so
 // reordering this array changes what a stored screen restores to.
 //
-// Weather and Notes are placeholders. Weather needs a proxy, because an API key
-// cannot ship inside an extractable package. Notes needs a decision about where
-// text comes from on a device with no keyboard.
-export const TOOLS: readonly Tool[] = [
-  placeholder('Weather'),
-  gps,
-  placeholder('Notes'),
-  teleprompter,
-]
+// No standalone GPS entry. It used to be here as its own tool; per direct
+// request it was cut, since nobody used a raw lat/lon readout on its own.
+// What GPS actually gave this app - a location fix - still exists, just as
+// plumbing Weather calls internally (see location.ts) rather than a page a
+// wearer opens on purpose.
+export const TOOLS: readonly Tool[] = [weatherTool, notesTool, teleprompter]
 
 export const TOOL_NAMES: readonly string[] = TOOLS.map(t => t.name)

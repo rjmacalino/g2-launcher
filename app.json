@@ -8,7 +8,7 @@
   "permissions": [
     {
       "name": "location",
-      "desc": "Shows your latitude and longitude on the glasses while the GPS tool is open. Used only when you open that tool."
+      "desc": "Used to look up the weather forecast for where you are. A single location fix is taken in the background; your coordinates are never shown on screen."
     }
   ],
   "supported_languages": ["en"]

@@ -9,24 +9,18 @@ import {
 import { bridge, status } from './bridge'
 import {
   CANVAS_WIDTH,
+  CONFIRM_LIST_HEIGHT,
+  CONFIRM_LIST_Y,
+  CONFIRM_TITLE_HEIGHT,
+  CONFIRM_TITLE_Y,
+  CONTAINER_ID_CONFIRM_TITLE,
   CONTAINER_ID_CONTENT,
+  CONTAINER_NAME_CONFIRM_TITLE,
   CONTAINER_NAME_CONTENT,
   CONTENT_HEIGHT,
-  BRIGHTNESS_DIMMED,
-  BRIGHTNESS_NORMAL,
-  CONTAINER_ID_MODAL,
-  CONTAINER_NAME_MODAL,
-  CONTENT_ROWS,
   CONTENT_Y,
-  MODAL_HEIGHT,
-  MODAL_WIDTH,
-  MODAL_X,
-  MODAL_Y,
+  LIST_ITEM_WIDTH,
   PADDING,
-  Z_CONTENT,
-  Z_MODAL,
-  setContentBrightness,
-  setModalText,
 } from './page'
 import { readWithTimeout } from './storage'
 import {
@@ -35,8 +29,10 @@ import {
   statusBarContainers,
   stopStatusBar,
 } from './statusbar'
+import { registerRebuildHandler } from './rebuild'
 import { persistScreen, readStoredScreen, type Screen } from './screen'
-import { TOOLS, TOOL_NAMES } from './tools'
+import { TOOLS, TOOL_NAMES, type Tool } from './tools'
+import { start as startWeather, stop as stopWeather } from './weather-service'
 
 // The shell. Owns which page is showing, builds pages, and routes input. It knows
 // tools only through the Tool interface, so adding one is a new file plus an entry
@@ -48,97 +44,119 @@ function activeTool() {
   return screen.kind === 'tool' ? TOOLS[screen.index] : null
 }
 
-// Whether the active tool is currently asking whether to leave, and which answer
-// is selected.
+// Whether the active tool is currently asking whether to leave.
 //
 // Not part of Screen, and deliberately not persisted. A cold start should never
 // restore the wearer into a half-answered question about a page they cannot
 // remember opening.
 let confirming = false
 
-// 0 is No, 1 is Yes. Defaults to No every time the prompt opens, so the dangerous
-// answer is never the one already selected when a wearer taps without reading.
+// A native list, the same widget the launcher menu and the Teleprompter picker
+// already use. Firmware owns highlight, scroll and boundary bounce, so it
+// bounces correctly only at the real ends of No/Yes, unlike the hand-drawn "<"
+// marker this replaces, which had to fake selection by re-pushing text on every
+// scroll tick and bounced on every single move because that text never
+// overflowed its own container.
+//
+// This is not a new position-loss cost. Entering confirm already replaced the
+// content container regardless of representation - a plain text swap resets
+// the firmware's scroll exactly as a rebuild does, both being a content
+// change - so a native list costs nothing beyond what showing any confirm
+// prompt already cost. The only thing that changes here is which widget draws
+// it and whether its bounce behaviour is real.
+//
+// No is index 0, Yes is index 1. Firmware defaults a fresh list's highlight to
+// index 0, so the dangerous answer is never pre-selected without any code
+// having to arrange it.
 const CONFIRM_NO = 0
 const CONFIRM_YES = 1
-let confirmChoice: 0 | 1 = CONFIRM_NO
 
-// A marker you move beats a gesture you have to be told about.
-//
-// Labels are padded to a common width so the marker holds one column. Otherwise
-// it tracks the label length and appears to jump sideways as the selection
-// moves, which reads as the marker being unstable rather than the selection
-// changing.
-//
-// The modal container now covers the full content area rather than a small box,
-// per a direct request: no border was ever possible (TextContainerUpgrade has no
-// border fields, so anything drawn once stays drawn, which is what produced the
-// permanent empty rectangle in an earlier version), so the only way to make this
-// read as a dialog rather than loose text is to occupy the whole area itself and
-// separate it from the tool with dimming, not with a frame.
-//
-// Rule lines drawn as text stand in for the border that cannot exist. They
-// appear when the modal text is set and disappear when it is cleared, which a
-// real border could not do.
-//
-// Length is measured, not guessed. The status bar work established the font
-// averages about 10.5px per character (from "Wed 23 Sep" rendering near 105px),
-// so a rule matching the usable width is (CANVAS_WIDTH - PADDING * 2) / 10.5
-// characters. A dash count picked without this would either wrap, which breaks
-// the vertical centring math, or leave the rule visibly short of the edges.
-const AVG_CHAR_PX = 10.5
-const RULE = '-'.repeat(Math.floor((CANVAS_WIDTH - PADDING * 2) / AVG_CHAR_PX))
-
-function confirmText(toolName: string): string {
-  const row = (label: string, value: 0 | 1) =>
-    `${label.padEnd(3)} ${confirmChoice === value ? '<' : ''}`.trimEnd()
-
-  const lines = [RULE, `End ${toolName}`, '', row('No', CONFIRM_NO), row('Yes', CONFIRM_YES), RULE]
-
-  // Centred within the full content area now, not a small box, so the same
-  // vertical-centring approach from the earlier design still applies: pad with
-  // blank rows computed from how many actually fit.
-  const padding = Math.max(0, Math.floor((CONTENT_ROWS - lines.length) / 2))
-  return '\n'.repeat(padding) + lines.join('\n')
+function confirmContainers(tool: Tool) {
+  const bar = statusBarContainers()
+  return {
+    containerTotalNum: bar.length + 2,
+    textObject: [
+      ...bar,
+      new TextContainerProperty({
+        xPosition: 0,
+        yPosition: CONFIRM_TITLE_Y,
+        width: CANVAS_WIDTH,
+        height: CONFIRM_TITLE_HEIGHT,
+        borderWidth: 0,
+        // No padding: the box is already sized to exactly one row, so any
+        // internal padding on top of that just re-adds the gap the height
+        // change was meant to remove.
+        paddingLength: 0,
+        containerID: CONTAINER_ID_CONFIRM_TITLE,
+        containerName: CONTAINER_NAME_CONFIRM_TITLE,
+        content: tool.confirmPrompt?.() ?? `Leave ${tool.name}?`,
+        isEventCapture: 0,
+      }),
+    ],
+    listObject: [
+      new ListContainerProperty({
+        xPosition: 0,
+        yPosition: CONFIRM_LIST_Y,
+        width: CANVAS_WIDTH,
+        height: CONFIRM_LIST_HEIGHT,
+        borderWidth: 0,
+        // Same reasoning: no top padding to add back space right where the
+        // title was just tightened to remove it.
+        paddingLength: 0,
+        containerID: CONTAINER_ID_CONTENT,
+        containerName: CONTAINER_NAME_CONTENT,
+        isEventCapture: 1,
+        itemContainer: new ListItemContainerProperty({
+          itemCount: 2,
+          itemWidth: LIST_ITEM_WIDTH,
+          isItemSelectBorderEn: 1,
+          itemName: ['No', 'Yes'],
+        }),
+      }),
+    ],
+  }
 }
 
-// Open the prompt.
-//
-// The tool's own container is never written to. It is dimmed instead, with a
-// brightness-only upgrade that carries no content, because any upgrade carrying
-// content resets the firmware's scroll and costs the wearer their place. Dimming
-// leaves the tool exactly where it was and gives the faded backdrop a modal
-// wants anyway.
-// Sequenced, not fired together. Two upgrades dispatched at once and one of them
-// is dropped: the first version did both concurrently and the brightness change
-// came back rejected, leaving the tool at full brightness behind the modal. The
-// docs warn about this for image sends ("no concurrent sends") and it holds for
-// text upgrades too.
-//
-// Dim first, then draw, so there is never a frame where the modal is up over an
-// undimmed tool.
-function enterConfirm(toolName: string) {
-  confirming = true
-  confirmChoice = CONFIRM_NO
-  setContentBrightness(BRIGHTNESS_DIMMED).then(() => {
-    setModalText(confirmText(toolName))
+function enterConfirm(tool: Tool) {
+  bridge.rebuildPageContainer(new RebuildPageContainer(confirmContainers(tool))).then(ok => {
+    if (ok) {
+      confirming = true
+    } else {
+      status('Failed to open leave prompt')
+    }
   })
 }
 
-function moveConfirm(next: 0 | 1, toolName: string) {
-  if (confirmChoice === next) return
-  confirmChoice = next
-  setModalText(confirmText(toolName))
+// No: rebuild back to the tool exactly as it was, unchanged since entering
+// confirm never touched its internal state.
+function cancelConfirm(index: number) {
+  bridge.rebuildPageContainer(new RebuildPageContainer(toolContainers(index))).then(ok => {
+    if (ok) {
+      confirming = false
+    } else {
+      requestExit()
+    }
+  })
 }
 
-// Dismiss the prompt. Clearing the modal and restoring brightness, with the tool
-// untouched throughout, so the wearer is returned to exactly the line they were
-// reading rather than to the top.
-// Clear the modal first, then restore brightness, for the same sequencing reason
-// and so the tool is never briefly readable with the prompt still on top of it.
-function cancelConfirm() {
+// Yes: ask the tool where "leaving" actually goes. Most tools have no answer
+// for this and default to the menu; Teleprompter uses it to step back to its
+// own picker instead of exiting itself entirely (see onConfirmedExit in
+// types.ts). Either way the tool's own onConfirmedExit runs first, so its
+// internal state is already updated by the time the rebuild reads it.
+function confirmExit(tool: Tool, index: number) {
   confirming = false
-  setModalText('').then(() => {
-    setContentBrightness(BRIGHTNESS_NORMAL)
+  const destination = tool.onConfirmedExit?.() ?? 'menu'
+  if (destination === 'menu') {
+    returnToMenu()
+    return
+  }
+  bridge.rebuildPageContainer(new RebuildPageContainer(toolContainers(index))).then(ok => {
+    if (ok) {
+      status(`Tool: ${tool.name}`)
+    } else {
+      status(`Failed to update ${tool.name}`)
+    }
   })
 }
 
@@ -171,11 +189,10 @@ const menuList = new ListContainerProperty({
   paddingLength: PADDING,
   containerID: CONTAINER_ID_CONTENT,
   containerName: 'menu',
-  zOrderIndex: Z_CONTENT,
   isEventCapture: 1,
   itemContainer: new ListItemContainerProperty({
     itemCount: TOOLS.length,
-    itemWidth: CANVAS_WIDTH,
+    itemWidth: LIST_ITEM_WIDTH,
     isItemSelectBorderEn: 1,
     itemName: [...TOOL_NAMES],
   }),
@@ -183,55 +200,81 @@ const menuList = new ListContainerProperty({
 
 // The content container MUST set isEventCapture: 1. A page with no capture
 // container has no way out, and it is also the container the firmware scrolls and
-// the one every tool's setContent targets.
+// the one every tool's setContent targets. Full CONTENT_HEIGHT, no reserved
+// space: see page.ts for why a permanently smaller reading area was tried and
+// reverted.
+//
+// A tool can ask for its content slot as a list instead of text (see
+// Tool.contentKind in types.ts). Only Teleprompter uses this today, for its
+// script picker, and it is the same ListContainerProperty shape as the menu:
+// firmware owns highlight and scroll, we only react to a click.
+function toolListContent(tool: Tool): ListContainerProperty {
+  const items = tool.listItems?.() ?? []
+  return new ListContainerProperty({
+    xPosition: 0,
+    yPosition: CONTENT_Y,
+    width: CANVAS_WIDTH,
+    height: CONTENT_HEIGHT,
+    borderWidth: 0,
+    paddingLength: PADDING,
+    containerID: CONTAINER_ID_CONTENT,
+    containerName: CONTAINER_NAME_CONTENT,
+    isEventCapture: 1,
+    itemContainer: new ListItemContainerProperty({
+      itemCount: items.length,
+      itemWidth: LIST_ITEM_WIDTH,
+      isItemSelectBorderEn: 1,
+      itemName: items,
+    }),
+  })
+}
+
+function toolTextContent(tool: Tool): TextContainerProperty {
+  return new TextContainerProperty({
+    xPosition: 0,
+    yPosition: CONTENT_Y,
+    width: CANVAS_WIDTH,
+    height: CONTENT_HEIGHT,
+    borderWidth: 0,
+    paddingLength: PADDING,
+    containerID: CONTAINER_ID_CONTENT,
+    containerName: CONTAINER_NAME_CONTENT,
+    content: tool.initialContent(),
+    isEventCapture: 1,
+  })
+}
+
 function toolContainers(index: number) {
+  const tool = TOOLS[index]
   const bar = statusBarContainers()
+
+  if ((tool.contentKind?.() ?? 'text') === 'list') {
+    return {
+      containerTotalNum: bar.length + 1,
+      textObject: bar,
+      listObject: [toolListContent(tool)],
+    }
+  }
+
   return {
-    containerTotalNum: bar.length + 2,
-    textObject: [
-      ...bar,
-      new TextContainerProperty({
-        xPosition: 0,
-        yPosition: CONTENT_Y,
-        width: CANVAS_WIDTH,
-        height: CONTENT_HEIGHT,
-        borderWidth: 0,
-        paddingLength: PADDING,
-        containerID: CONTAINER_ID_CONTENT,
-        containerName: CONTAINER_NAME_CONTENT,
-        content: TOOLS[index].initialContent(),
-        zOrderIndex: Z_CONTENT,
-        isEventCapture: 1,
-      }),
-      // The modal, empty. It has to exist from page creation because adding a
-      // container later means a rebuild, and a rebuild resets scroll.
-      //
-      // NO BORDER, and that is not an aesthetic choice. A border draws whether or
-      // not the container has text, and TextContainerUpgrade carries no border
-      // fields, so a bordered container is bordered permanently. The first
-      // version of this had a 2px border and left an empty rectangle sitting over
-      // the script on every tool page.
-      //
-      // Only the text can be turned off, by writing an empty string. So the modal
-      // has to be made of text alone, and the separation from the tool behind it
-      // comes from brightness: the tool dims to 0, the modal draws at 4.
-      new TextContainerProperty({
-        xPosition: MODAL_X,
-        yPosition: MODAL_Y,
-        width: MODAL_WIDTH,
-        height: MODAL_HEIGHT,
-        borderWidth: 0,
-        paddingLength: 8,
-        textColor: BRIGHTNESS_NORMAL,
-        containerID: CONTAINER_ID_MODAL,
-        containerName: CONTAINER_NAME_MODAL,
-        content: '',
-        zOrderIndex: Z_MODAL,
-        isEventCapture: 0,
-      }),
-    ],
+    containerTotalNum: bar.length + 1,
+    textObject: [...bar, toolTextContent(tool)],
   }
 }
+
+// A tool's data changed out from under it (see rebuild.ts) and wants its own
+// page redrawn. Verified here, not trusted from the caller: only rebuild if
+// the given tool is actually the one on screen right now, and not while a
+// leave prompt is open, so a background data update can never clobber
+// whatever the wearer is currently looking at or answering.
+registerRebuildHandler(tool => {
+  if (confirming) return
+  if (screen.kind !== 'tool') return
+  if (TOOLS[screen.index] !== tool) return
+  bridge.rebuildPageContainer(new RebuildPageContainer(toolContainers(screen.index))).then(ok => {
+    if (!ok) status(`Failed to update ${tool.name}`)
+  })
+})
 
 function menuContainers() {
   const bar = statusBarContainers()
@@ -244,7 +287,7 @@ function menuContainers() {
 
 // --- Navigation -----------------------------------------------------------
 
-function openTool(index: number) {
+async function openTool(index: number) {
   if (index < 0 || index >= TOOLS.length) return
   // Any navigation clears the prompt. Cheaper to reset unconditionally here than
   // to reason about every path that could reach a new page with a stale flag set.
@@ -252,6 +295,12 @@ function openTool(index: number) {
   // there is nothing left over to clear.
   confirming = false
   const tool = TOOLS[index]
+
+  // Awaited before the page is built, so contentKind/listItems/initialContent
+  // (all synchronous, see types.ts) have current data the instant they run.
+  // Teleprompter uses this to read the latest saved scripts for its picker.
+  await tool.beforeOpen?.()
+
   bridge
     .rebuildPageContainer(new RebuildPageContainer(toolContainers(index)))
     .then(ok => {
@@ -350,6 +399,10 @@ const restoredScreen = await storedScreenPromise
 // never blocking the first frame on a storage read.
 if (restoredScreen && restoredScreen.kind === 'tool') {
   const tool = TOOLS[restoredScreen.index]
+  // Same reason as openTool: contentKind/listItems/initialContent need fresh
+  // data before toolContainers reads them, and this is the other place that
+  // reads them.
+  await tool.beforeOpen?.()
   const ok = await Promise.race([
     bridge.rebuildPageContainer(
       new RebuildPageContainer(toolContainers(restoredScreen.index)),
@@ -379,6 +432,12 @@ persistScreen(screen)
 // corrects the bar from defaults to the stored config.
 startStatusBar()
 
+// Same lifecycle as the clock: runs for as long as the app is foregrounded,
+// independent of which tool is on screen, because the status bar's weather
+// slot needs current conditions on every page, not only while Weather itself
+// is open.
+startWeather()
+
 // --- Input ----------------------------------------------------------------
 
 // Reads the event type out of one envelope.
@@ -400,38 +459,70 @@ function eventTypeOf(envelope?: { eventType?: OsEventTypeList }): OsEventTypeLis
 //   - textEvent -> scroll gestures and clicks on text containers
 //   - listEvent -> list item events (highlight, click)
 //
-//   1. Double-tap -> back. On a tool page that means the menu; on the menu there
-//      is nowhere further back, so it means exit. Must be first so nothing below
-//      can swallow the one gesture that guarantees the wearer can leave.
-//   2. Foreground enter and exit -> resume and suspend the active tool and the
+//   1. The leave prompt, if open, intercepts EVERYTHING, including double-tap.
+//      This has to come before the double-tap-exits check below, not after:
+//      while the prompt is showing, tap and double-tap both mean "take the
+//      highlighted answer", not "go back" or "exit". No is on the list, so
+//      selecting it and tapping already cancels; a separate cancel gesture
+//      would be redundant and would make double-tap behave inconsistently
+//      depending on whether a prompt happens to be open.
+//   2. Double-tap -> back. On a tool page that means the menu; on the menu
+//      there is nowhere further back, so it means exit. Must be first among
+//      the remaining checks so nothing below can swallow the one gesture that
+//      guarantees the wearer can leave.
+//   3. Foreground enter and exit -> resume and suspend the active tool and the
 //      clock.
-//   3. listEvent click on the menu -> open the highlighted tool.
-//   4. Scroll on a tool page -> the tool's onScroll, if it has one.
-//   5. Exit events -> close the active tool, unsubscribe.
+//   4. listEvent click on the menu -> open the highlighted tool.
+//   5. listEvent click inside a tool's own list content -> the tool's
+//      onListSelect, if it has one.
+//   6. Long press on a tool page -> the tool's onLongPress, if it has one.
+//   7. Scroll on a tool page -> the tool's onScroll, if it has one.
+//   8. Exit events -> close the active tool, unsubscribe.
 //
-// Tap on a tool page reaches the tool only through onScroll today. Tap is defined
-// as "forward" in the gesture rules and is free for a tool to claim.
+// Tap on a tool page reaches the tool only through onListSelect (list content)
+// or onScroll (text content) today. Tap is defined as "forward" in the gesture
+// rules and is free for a tool to claim either way.
 const unsubscribe = bridge.onEvenHubEvent(event => {
   const sysType = eventTypeOf(event.sysEvent)
   const textType = eventTypeOf(event.textEvent)
   const listType = eventTypeOf(event.listEvent)
+  const listEvent = event.listEvent
 
   const isDoubleTap =
     sysType === OsEventTypeList.DOUBLE_CLICK_EVENT ||
     textType === OsEventTypeList.DOUBLE_CLICK_EVENT ||
     listType === OsEventTypeList.DOUBLE_CLICK_EVENT
 
+  // The leave prompt. A native list (see confirmContainers), so scroll and
+  // highlight are entirely firmware's job; we only react once something is
+  // chosen. A plain click and a double-click both commit whatever is
+  // currently highlighted, matching the earlier decision that a separate
+  // cancel gesture is redundant once No is a selectable, defaulted-to answer.
+  //
+  // Catching DOUBLE_CLICK_EVENT here, before the isDoubleTap branch below, is
+  // what stops an accidental double-tap while the prompt is open from falling
+  // through to the exit/back logic meant for when no prompt is showing.
+  if (confirming && screen.kind === 'tool') {
+    if (listEvent && (listType === OsEventTypeList.CLICK_EVENT || listType === OsEventTypeList.DOUBLE_CLICK_EVENT)) {
+      const tool = TOOLS[screen.index]
+      const choice = listEvent.currentSelectItemIndex ?? CONFIRM_NO
+      if (choice === CONFIRM_YES) {
+        confirmExit(tool, screen.index)
+      } else {
+        cancelConfirm(screen.index)
+      }
+    }
+    // Anything else while the prompt is open (scroll, an unrelated event) is
+    // swallowed here: firmware already handles scroll on the list itself, and
+    // nothing else should reach the tool underneath while a question is open.
+    return
+  }
+
   if (isDoubleTap) {
     if (screen.kind === 'tool') {
       const tool = TOOLS[screen.index]
-      // Double tap means back, and from the prompt back is the tool you came
-      // from. So the same gesture that raised the question also dismisses it.
-      if (confirming) {
-        cancelConfirm()
-        return
-      }
-      if (tool.confirmOnExit) {
-        enterConfirm(tool.name)
+      if (tool.confirmOnExit?.()) {
+        enterConfirm(tool)
         return
       }
       returnToMenu()
@@ -451,6 +542,7 @@ const unsubscribe = bridge.onEvenHubEvent(event => {
   // had a subscription stopped under it by the OS.
   if (sysType === OsEventTypeList.FOREGROUND_ENTER_EVENT) {
     startStatusBar()
+    startWeather()
     activeTool()?.onResume?.()
     return
   }
@@ -459,6 +551,7 @@ const unsubscribe = bridge.onEvenHubEvent(event => {
   if (sysType === OsEventTypeList.FOREGROUND_EXIT_EVENT) {
     activeTool()?.onSuspend?.()
     stopStatusBar()
+    stopWeather()
     return
   }
 
@@ -466,46 +559,40 @@ const unsubscribe = bridge.onEvenHubEvent(event => {
   // values, so tapping the first row can arrive as `undefined`. Resolve the
   // default INSIDE the branch where we already know listEvent exists and the
   // event is a click.
-  const listEvent = event.listEvent
   if (listEvent && listType === OsEventTypeList.CLICK_EVENT && screen.kind === 'menu') {
     openTool(listEvent.currentSelectItemIndex ?? 0)
     return
   }
 
-  // The leave prompt. Scroll moves the marker, tap takes the selected answer,
-  // which is the same vocabulary as the launcher menu rather than a special case
-  // the wearer has to be taught.
+  // A list click inside a tool's own content area (not the launcher menu).
+  // Only reachable when that tool's contentKind() is 'list', since that is the
+  // only way a tool page ever gets a list container in the first place.
   //
-  // Everything here is swallowed, including gestures that mean nothing, so no
-  // input reaches the tool behind the prompt while a question is open.
-  if (confirming) {
-    const tool = activeTool()
-    if (!tool) {
-      // Cannot happen: confirming is only ever set on a tool page and every
-      // navigation clears it. Bail rather than trap the wearer behind a prompt
-      // with nothing to answer for.
-      confirming = false
+  // The tool updates its own internal state in onListSelect, then the shell
+  // rebuilds the SAME tool slot so the page reflects whatever contentKind,
+  // listItems or initialContent now return. This is a fresh page the wearer
+  // has not started reading yet, not a scrolled document, so a rebuild here
+  // costs nothing the way it would inside an open teleprompter.
+  if (listEvent && listType === OsEventTypeList.CLICK_EVENT && screen.kind === 'tool') {
+    const tool = TOOLS[screen.index]
+    if ((tool.contentKind?.() ?? 'text') === 'list') {
+      const index = listEvent.currentSelectItemIndex ?? 0
+      tool.onListSelect?.(index)
+      bridge
+        .rebuildPageContainer(new RebuildPageContainer(toolContainers(screen.index)))
+        .then(ok => {
+          if (!ok) status(`Failed to update ${tool.name}`)
+        })
       return
     }
+  }
 
-    if (sysType === OsEventTypeList.CLICK_EVENT || textType === OsEventTypeList.CLICK_EVENT) {
-      if (confirmChoice === CONFIRM_YES) {
-        returnToMenu()
-      } else {
-        cancelConfirm()
-      }
-      return
-    }
-
-    // Two options, so up is always No and down is always Yes. Absolute rather
-    // than a toggle: scrolling up twice should leave you on No, not flip you
-    // back to Yes, and a wearer who is not sure which way they scrolled can
-    // press up and know where they landed.
-    if (textType === OsEventTypeList.SCROLL_TOP_EVENT) {
-      moveConfirm(CONFIRM_NO, tool.name)
-    } else if (textType === OsEventTypeList.SCROLL_BOTTOM_EVENT) {
-      moveConfirm(CONFIRM_YES, tool.name)
-    }
+  // Long press on a tool page. Free for a tool to claim (see the gesture
+  // rules): neither forward nor back, so it is where an action that is
+  // genuinely neither belongs. LONG_PRESS_EVENT is 9, non-zero, so the
+  // zero-elision trap does not apply here either.
+  if (sysType === OsEventTypeList.LONG_PRESS_EVENT) {
+    activeTool()?.onLongPress?.()
     return
   }
 
