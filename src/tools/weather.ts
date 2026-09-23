@@ -1,5 +1,5 @@
 import { getDaily, getState, onUpdate, refresh } from '../weather-service'
-import { CONDITION_LABELS } from '../statusbar'
+import { CONDITION_GLYPHS, CONDITION_LABELS } from '../statusbar'
 import { requestRebuild } from '../rebuild'
 import type { DailyForecast, HourlyForecast } from '../weather-api'
 import type { Tool } from './types'
@@ -24,12 +24,17 @@ const DAY_NAMES = ['Sun', 'Mon', 'Tue', 'Wed', 'Thu', 'Fri', 'Sat']
 
 // The canvas is 576px wide and a list item can carry up to 64 characters
 // (see page.ts / data.ts's platform-limit comments) - far more than one
-// short "6am 15C Cloudy" reading needs. Packing several hours into a single
-// row uses that width instead of leaving it empty and forcing a scroll for
-// what would otherwise be one reading per line. Three fits comfortably
-// under the 64-character cap with room to spare; going wider risks crowding
-// once real column widths are seen on hardware.
+// short reading needs. Packing several hours into a single row uses that
+// width instead of leaving it empty and forcing a scroll for what would
+// otherwise be one reading per line.
 const HOURS_PER_ROW = 3
+
+// Fixed-width columns plus a visible divider between hours, instead of the
+// first version's plain double-space, which read as one run-on line rather
+// than separate readings - direct feedback after seeing it on hardware.
+const HOUR_TIME_WIDTH = 4
+const HOUR_TEMP_WIDTH = 4
+const HOUR_SEPARATOR = ' | '
 
 type Depth = 'days' | 'hours'
 let depth: Depth = 'days'
@@ -70,14 +75,22 @@ function dayRow(day: DailyForecast, index: number): string {
   return `${label} ${shortDate(day.date)}: ${hi}/${lo}C ${CONDITION_LABELS[day.condition]}`.slice(0, 64)
 }
 
+// A glyph where one is trusted to render (see CONDITION_GLYPHS - this is the
+// hardware trial for it), the word where it is not (fog has none). Column
+// widths are fixed regardless of which one lands, so a row of three hours
+// lines up the same either way.
 function hourCell(hour: HourlyForecast): string {
-  return `${hourLabel(hour.hour)} ${Math.round(hour.celsius)}C ${CONDITION_LABELS[hour.condition]}`
+  const time = hourLabel(hour.hour).padEnd(HOUR_TIME_WIDTH)
+  const temp = `${Math.round(hour.celsius)}C`.padStart(HOUR_TEMP_WIDTH)
+  const glyph = CONDITION_GLYPHS[hour.condition]
+  return `${time}${temp} ${glyph}`
 }
 
 // Several hours per row instead of one, using the canvas's horizontal room
 // (see HOURS_PER_ROW) so a 13-hour day takes about 5 rows to read instead of
 // 13 - most of it visible without scrolling instead of nearly all of it
-// requiring it.
+// requiring it. HOUR_SEPARATOR between cells is the actual divider asked
+// for, so three readings on one line read as three things, not a run-on.
 function hourRows(hours: HourlyForecast[]): string[] {
   const rows: string[] = []
   for (let i = 0; i < hours.length; i += HOURS_PER_ROW) {
@@ -85,7 +98,7 @@ function hourRows(hours: HourlyForecast[]): string[] {
       hours
         .slice(i, i + HOURS_PER_ROW)
         .map(hourCell)
-        .join('  ')
+        .join(HOUR_SEPARATOR)
         .slice(0, 64),
     )
   }

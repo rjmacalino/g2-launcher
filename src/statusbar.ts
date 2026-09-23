@@ -119,6 +119,30 @@ export const CONDITION_LABELS: Record<WeatherCondition, string> = {
   storm: 'Storm',
 }
 
+// EXPERIMENTAL, UNVERIFIED ON HARDWARE. Single-codepoint glyphs from the
+// Miscellaneous Symbols block (BMP, no surrogate pair) for the best odds of
+// firmware coverage - still no proof this font contains them, per the
+// comment above. \uXXXX escapes keep this source file ASCII while emitting
+// the real codepoint at runtime.
+//
+// Used only by Weather's hourly detail view (tools/weather.ts) for now, not
+// the status bar, which every page shows: a bad result there (placeholder
+// boxes) has the smallest possible blast radius while this gets tried for
+// real. If it renders cleanly on hardware, it is the evidence needed to use
+// it more widely; if it draws boxes, tools/weather.ts falls back to
+// CONDITION_LABELS with a one-line change.
+//
+// No glyph for fog - nothing in this symbol block reads as fog rather than
+// generic cloud, and a wrong-looking icon is worse than the word.
+export const CONDITION_GLYPHS: Record<WeatherCondition, string> = {
+  clear: '\u2600', // sun
+  cloudy: '\u2601', // cloud
+  fog: 'Fog',
+  rain: '\u2614', // umbrella with rain drops
+  snow: '\u2744', // snowflake
+  storm: '\u26a1', // high voltage (lightning bolt)
+}
+
 let weather: { condition: WeatherCondition; celsius: number } | null = null
 
 function renderWeather(): string {
