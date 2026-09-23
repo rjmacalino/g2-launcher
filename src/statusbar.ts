@@ -154,11 +154,21 @@ export const CONDITION_GLYPHS: Record<WeatherCondition, string> = {
 // is more honest about what the wearer is looking at, per direct request.
 const NO_DATA_TEXT = 'N/A'
 
-let weather: { condition: WeatherCondition; celsius: number } | null = null
+let weather: { condition: WeatherCondition; celsius: number; isDay: boolean } | null = null
+
+// "Sunny" is a daytime-only word; WMO code 0 ("clear sky") is equally
+// correct at night, when there is no sun to name. weather-api.ts's is_day
+// flag catches that case here, for this single point-in-time reading only -
+// see the comment on ForecastResult.current there for why the daily/hourly
+// rows do not need the same check.
+function conditionWord(w: { condition: WeatherCondition; isDay: boolean }): string {
+  if (w.condition === 'clear' && !w.isDay) return 'Clear'
+  return CONDITION_LABELS[w.condition]
+}
 
 function renderWeather(): string {
   if (!weather) return NO_DATA_TEXT
-  return `${CONDITION_LABELS[weather.condition]} ${Math.round(weather.celsius)}C`
+  return `${conditionWord(weather)} ${Math.round(weather.celsius)}C`
 }
 
 // Date on the left, weather in the middle, time on the right.
@@ -301,13 +311,15 @@ function refresh() {
   }
 }
 
-// Set the weather shown in the centre slot. Nothing calls this yet; weather needs
-// a proxy. Exported so the slot has a defined way in rather than a placeholder
-// whoever builds weather has to go hunting for.
+// Set the weather shown in the centre slot. Called from weather-service.ts
+// after every refresh, success or failure (null clears the slot to the N/A
+// placeholder - see NO_DATA_TEXT).
 //
 // Takes Celsius as a number rather than a preformatted string, so the display
 // format stays a decision this file owns and the weather tool cannot drift from it.
-export function setWeather(next: { condition: WeatherCondition; celsius: number } | null) {
+export function setWeather(
+  next: { condition: WeatherCondition; celsius: number; isDay: boolean } | null,
+) {
   weather = next
   refresh()
 }

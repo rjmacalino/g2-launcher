@@ -39,7 +39,7 @@ export type DailyForecast = {
 }
 
 export type ForecastResult = {
-  current: { condition: WeatherCondition; celsius: number }
+  current: { condition: WeatherCondition; celsius: number; isDay: boolean }
   daily: DailyForecast[]
 }
 
@@ -59,7 +59,7 @@ function conditionFromCode(code: number): WeatherCondition {
 }
 
 type OpenMeteoResponse = {
-  current: { temperature_2m: number; weather_code: number }
+  current: { temperature_2m: number; weather_code: number; is_day: number }
   daily: {
     time: string[]
     weather_code: number[]
@@ -83,6 +83,7 @@ function isOpenMeteoResponse(x: unknown): x is OpenMeteoResponse {
     !!current &&
     typeof current.temperature_2m === 'number' &&
     typeof current.weather_code === 'number' &&
+    typeof current.is_day === 'number' &&
     !!daily &&
     Array.isArray(daily.time) &&
     Array.isArray(daily.weather_code) &&
@@ -119,7 +120,7 @@ export async function fetchForecast(latitude: number, longitude: number): Promis
   const url = new URL(FORECAST_URL)
   url.searchParams.set('latitude', latitude.toFixed(4))
   url.searchParams.set('longitude', longitude.toFixed(4))
-  url.searchParams.set('current', 'temperature_2m,weather_code')
+  url.searchParams.set('current', 'temperature_2m,weather_code,is_day')
   url.searchParams.set('daily', 'weather_code,temperature_2m_max,temperature_2m_min')
   url.searchParams.set('hourly', 'temperature_2m,weather_code')
   url.searchParams.set('forecast_days', String(FORECAST_DAYS))
@@ -131,9 +132,18 @@ export async function fetchForecast(latitude: number, longitude: number): Promis
   const body: unknown = await res.json()
   if (!isOpenMeteoResponse(body)) throw new Error('Weather API returned an unexpected shape')
 
+  // is_day only matters for the current reading, not the daily/hourly rows.
+  // WMO code 0 ("clear sky") is correct at night too - a clear sky after
+  // dark has no sun in it - but CONDITION_LABELS' word for it is "Sunny",
+  // which is wrong once the sun is down. statusbar.ts uses this flag to say
+  // "Clear" instead of "Sunny" for the single point-in-time reading it
+  // shows; the daily/hourly rows stay as-is, since "Sunny" describing a
+  // whole day (or an hour inside the 6am-18:00 window this app already
+  // restricts hourly rows to) is accurate regardless.
   const current = {
     condition: conditionFromCode(body.current.weather_code),
     celsius: body.current.temperature_2m,
+    isDay: body.current.is_day === 1,
   }
 
   const daily: DailyForecast[] = body.daily.time.map((date, i) => ({
