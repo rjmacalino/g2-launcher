@@ -9,6 +9,7 @@ import {
 } from '../platform/page'
 import { STORAGE_KEY_STATUS_BAR, readJson, readWithTimeout } from '../platform/storage'
 import { currentConditionWord, type CurrentWeather } from '../features/weather/conditions'
+import { getTextWidth } from '../platform/text'
 
 // Information that stays on screen regardless of which tool is open. A bar that
 // only appears on some pages is worse than no bar, because glancing at it stops
@@ -103,10 +104,17 @@ function renderWeather(): string {
 
 // Date on the left, weather in the middle, time on the right.
 //
-// Widths come from a measurement rather than a guess: on the simulator "Wed 23
-// Sep" rendered about 105px wide, so the font averages near 10.5px per character.
-// The longest values here are "Wed 23 Sep" at 10 characters and a time like
-// "12:30AM" at 7, which is what the x positions are spaced around.
+// Widths were a screenshot-measured guess ("Wed 23 Sep" at roughly 105px, so
+// ~10.5px per character); @evenrealities/pretext now gives the real number
+// for whichever string actually renders, computed below rather than assumed.
+// The 180/180/116 slot widths keep the same generous margin over the
+// measured worst case they always had - not tightened here, since the
+// current 3-slot spacing was already tuned against real hardware (see the
+// status bar tick marks investigation below) and narrowing it needs its own
+// hardware check, not a drive-by change alongside a measurement library swap.
+const WIDEST_DATE_PX = Math.max(...DAY_NAMES.map((_, i) => getTextWidth(`${DAY_NAMES[i]} 30 Sep`)))
+const WIDEST_TIME_PX = getTextWidth('12:30 PM')
+
 const SLOTS: readonly Slot[] = [
   {
     id: CONTAINER_ID_STATUS_LEFT,
@@ -136,6 +144,18 @@ const SLOTS: readonly Slot[] = [
     render: formatClock,
   },
 ]
+
+// Catches a slot becoming too narrow for its own worst-case content - a
+// silent clip, not a crash, so nothing else would surface it. Runs once at
+// module load, not on a hot path.
+const dateSlot = SLOTS.find(s => s.field === 'date')
+const timeSlot = SLOTS.find(s => s.field === 'time')
+if (dateSlot && WIDEST_DATE_PX > dateSlot.width - 2 * PADDING) {
+  status(`Status bar date slot may be too narrow: ${WIDEST_DATE_PX}px content in ${dateSlot.width}px`)
+}
+if (timeSlot && WIDEST_TIME_PX > timeSlot.width - 2 * PADDING) {
+  status(`Status bar time slot may be too narrow: ${WIDEST_TIME_PX}px content in ${timeSlot.width}px`)
+}
 
 let config: StatusBarConfig = { ...DEFAULTS }
 

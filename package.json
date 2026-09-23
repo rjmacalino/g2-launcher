@@ -12,7 +12,8 @@
     "qr": "node scripts/qr.mjs"
   },
   "dependencies": {
-    "@evenrealities/even_hub_sdk": "^0.0.15"
+    "@evenrealities/even_hub_sdk": "^0.0.15",
+    "@evenrealities/pretext": "^0.1.4"
   },
   "devDependencies": {
     "@evenrealities/evenhub-cli": "^0.1.14",
