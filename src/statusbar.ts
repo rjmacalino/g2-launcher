@@ -187,67 +187,28 @@ export async function hydrate(): Promise<void> {
   config = await readWithTimeout(readConfig(), { ...DEFAULTS })
 }
 
-// DIAGNOSTIC, temporary. Confirmed on real hardware (not the simulator, which
-// was checked and ruled out first): thin vertical tick marks appear in the
-// status bar row, aligned with the boundaries between the three slot
-// containers. No code anywhere sets a border, no character resembling one is
-// in any rendered string, and no zOrderIndex remains in this codebase - two
-// searches of the source have found no explanation.
+// RESOLVED. Two thin vertical tick marks near the status bar edges turned out
+// to be a real, fixable thing: placing sibling text containers edge to edge
+// on the same row draws a boundary mark, confirmed by collapsing the three
+// slots into one and watching two of three ticks disappear. A third tick, at
+// the far right where any status bar layout touches the canvas edge, survived
+// even when nothing we drew reached that corner (tested by insetting content
+// 26px from the edge and checking real hardware) - confirmed OS-owned chrome,
+// not something we draw, not something to keep chasing.
 //
-// ROUND ONE, answered: collapsing to a single container removed two of the
-// three ticks, confirming those two were genuinely caused by placing sibling
-// text containers edge to edge on the same row. That theory is confirmed, not
-// hypothesis, for those two.
-//
-// ROUND TWO, this one. One tick remained, at the far right, exactly where the
-// single remaining container touches the canvas edge at x=576. Checked
-// directly: no similar tick appears anywhere else on screen where a container
-// also reaches x=576 (the content area, the confirm list), which rules out
-// "any container touching the canvas edge gets one" as too broad an
-// explanation - it is specific to the status bar row.
-//
-// New theory: this could be OS-owned chrome, not ours at all. Wearable
-// displays commonly reserve a fixed corner (battery, connectivity) regardless
-// of what the app draws under it, which would explain both why it survived
-// changing our own container structure (it was never ours to begin with) and
-// why it only ever appears in the status bar row (apps do not get to draw
-// over system chrome elsewhere).
-//
-// STATUS_BAR_RIGHT_INSET_TEST pulls our content back from the right edge, so
-// nothing we draw touches that corner. If the tick is STILL there, in space
-// that is now genuinely ours to leave blank, that confirms it is not ours: a
-// fixed system element, not a bug, and not something to keep chasing. If it
-// disappears, this theory is wrong too, and the cause is still unknown.
-const STATUS_BAR_SINGLE_CONTAINER_TEST = true
-const STATUS_BAR_RIGHT_INSET_TEST = 26
+// Net decision: keep the three-slot layout. It positions date, weather and
+// time apart from each other, which is the actual reason this file exists
+// (see the comment on SLOTS below); collapsing to one container removes the
+// two fixable ticks but reintroduces the left-clustered text problem the
+// three-slot design was built to solve in the first place, which is the
+// worse trade. The remaining corner tick is unaffected either way, so there
+// is nothing left to gain by giving up the readable layout for it.
 
 // The bar's containers. Every page builder spreads these in, which is what makes a
 // page without a bar impossible to construct. They record what they drew so the
 // tick can dedupe against it.
 export function statusBarContainers(): TextContainerProperty[] {
   const now = new Date()
-
-  if (STATUS_BAR_SINGLE_CONTAINER_TEST) {
-    const text = SLOTS.map(slot => renderSlot(slot, now))
-      .filter(s => s.length > 0)
-      .join('   ')
-    lastText.set(CONTAINER_ID_STATUS_LEFT, text)
-    return [
-      new TextContainerProperty({
-        xPosition: 0,
-        yPosition: 0,
-        width: 576 - STATUS_BAR_RIGHT_INSET_TEST,
-        height: STATUS_BAR_HEIGHT,
-        borderWidth: 0,
-        paddingLength: PADDING,
-        containerID: CONTAINER_ID_STATUS_LEFT,
-        containerName: 'status.combined',
-        content: text,
-        isEventCapture: 0,
-      }),
-    ]
-  }
-
   return SLOTS.map(slot => {
     const text = renderSlot(slot, now)
     lastText.set(slot.id, text)
@@ -275,27 +236,6 @@ export function statusBarContainers(): TextContainerProperty[] {
 
 function refresh() {
   const now = new Date()
-
-  if (STATUS_BAR_SINGLE_CONTAINER_TEST) {
-    const text = SLOTS.map(slot => renderSlot(slot, now))
-      .filter(s => s.length > 0)
-      .join('   ')
-    if (lastText.get(CONTAINER_ID_STATUS_LEFT) === text) return
-    lastText.set(CONTAINER_ID_STATUS_LEFT, text)
-    bridge
-      .textContainerUpgrade(
-        new TextContainerUpgrade({
-          containerID: CONTAINER_ID_STATUS_LEFT,
-          containerName: 'status.combined',
-          content: text,
-        }),
-      )
-      .then(ok => {
-        if (!ok) status('Status bar update failed')
-      })
-    return
-  }
-
   for (const slot of SLOTS) {
     const text = renderSlot(slot, now)
     if (lastText.get(slot.id) === text) continue
