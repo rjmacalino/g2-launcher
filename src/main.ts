@@ -12,10 +12,20 @@ import {
   CONTAINER_ID_CONTENT,
   CONTAINER_NAME_CONTENT,
   CONTENT_HEIGHT,
-  CONTENT_ROWS,
+  BRIGHTNESS_DIMMED,
+  BRIGHTNESS_NORMAL,
+  CONTAINER_ID_MODAL,
+  CONTAINER_NAME_MODAL,
   CONTENT_Y,
+  MODAL_HEIGHT,
+  MODAL_WIDTH,
+  MODAL_X,
+  MODAL_Y,
   PADDING,
-  setContent,
+  Z_CONTENT,
+  Z_MODAL,
+  setContentBrightness,
+  setModalText,
 } from './page'
 import { readWithTimeout } from './storage'
 import {
@@ -25,7 +35,7 @@ import {
   stopStatusBar,
 } from './statusbar'
 import { persistScreen, readStoredScreen, type Screen } from './screen'
-import { TOOLS, TOOL_NAMES, type Tool } from './tools'
+import { TOOLS, TOOL_NAMES } from './tools'
 
 // The shell. Owns which page is showing, builds pages, and routes input. It knows
 // tools only through the Tool interface, so adding one is a new file plus an entry
@@ -51,47 +61,48 @@ const CONFIRM_NO = 0
 const CONFIRM_YES = 1
 let confirmChoice: 0 | 1 = CONFIRM_NO
 
-// A marker you move beats a gesture you have to be told about. The previous
-// version asked the wearer to remember that tap meant leave and double tap meant
-// stay, which is fine once you know it and unguessable before.
+// A marker you move beats a gesture you have to be told about.
 //
-// Labels are padded to a common width so the marker sits in one column. Without
-// it the marker tracks the label length and appears to jump sideways as the
-// selection moves, which reads as the marker being unstable rather than the
-// selection changing.
+// Labels are padded to a common width so the marker holds one column. Otherwise
+// it tracks the label length and appears to jump sideways as the selection
+// moves, which reads as the marker being unstable rather than the selection
+// changing.
 function confirmText(toolName: string): string {
   const row = (label: string, value: 0 | 1) =>
     `${label.padEnd(3)} ${confirmChoice === value ? '<' : ''}`.trimEnd()
+  return `End ${toolName}
 
-  const lines = [`End ${toolName}`, '', row('No', CONFIRM_NO), row('Yes', CONFIRM_YES)]
-
-  // Vertically centred by padding with blank rows, which is the only centring
-  // available. Text containers are top-left aligned with no alignment option, and
-  // the font is not monospaced, so padding with spaces to centre horizontally
-  // would not line up. Real horizontal centring needs its own container
-  // positioned for it, which would mean declaring one on every tool page.
-  const padding = Math.max(0, Math.floor((CONTENT_ROWS - lines.length) / 2))
-  return '\n'.repeat(padding) + lines.join('\n')
+${row('No', CONFIRM_NO)}
+${row('Yes', CONFIRM_YES)}`
 }
 
+// Open the prompt.
+//
+// The tool's own container is never written to. It is dimmed instead, with a
+// brightness-only upgrade that carries no content, because any upgrade carrying
+// content resets the firmware's scroll and costs the wearer their place. Dimming
+// leaves the tool exactly where it was and gives the faded backdrop a modal
+// wants anyway.
 function enterConfirm(toolName: string) {
   confirming = true
   confirmChoice = CONFIRM_NO
-  setContent(confirmText(toolName))
+  setContentBrightness(BRIGHTNESS_DIMMED)
+  setModalText(confirmText(toolName))
 }
 
 function moveConfirm(next: 0 | 1, toolName: string) {
   if (confirmChoice === next) return
   confirmChoice = next
-  setContent(confirmText(toolName))
+  setModalText(confirmText(toolName))
 }
 
-// Put the tool's own content back. initialContent reflects current tool state
-// rather than a fixed starting value, so the teleprompter returns to the line the
-// wearer was reading rather than to the top.
-function cancelConfirm(tool: Tool) {
+// Dismiss the prompt. Clearing the modal and restoring brightness, with the tool
+// untouched throughout, so the wearer is returned to exactly the line they were
+// reading rather than to the top.
+function cancelConfirm() {
   confirming = false
-  setContent(tool.initialContent())
+  setModalText('')
+  setContentBrightness(BRIGHTNESS_NORMAL)
 }
 
 // Ceiling on the restore rebuild. Anything awaited between page creation and
@@ -123,6 +134,7 @@ const menuList = new ListContainerProperty({
   paddingLength: PADDING,
   containerID: CONTAINER_ID_CONTENT,
   containerName: 'menu',
+  zOrderIndex: Z_CONTENT,
   isEventCapture: 1,
   itemContainer: new ListItemContainerProperty({
     itemCount: TOOLS.length,
@@ -138,7 +150,7 @@ const menuList = new ListContainerProperty({
 function toolContainers(index: number) {
   const bar = statusBarContainers()
   return {
-    containerTotalNum: bar.length + 1,
+    containerTotalNum: bar.length + 2,
     textObject: [
       ...bar,
       new TextContainerProperty({
@@ -151,7 +163,30 @@ function toolContainers(index: number) {
         containerID: CONTAINER_ID_CONTENT,
         containerName: CONTAINER_NAME_CONTENT,
         content: TOOLS[index].initialContent(),
+        zOrderIndex: Z_CONTENT,
         isEventCapture: 1,
+      }),
+      // The modal, empty. It has to exist from page creation because adding a
+      // container later means a rebuild, and a rebuild resets scroll. Empty
+      // costs nothing: a text container has no background fill, so an empty one
+      // draws nothing at all.
+      new TextContainerProperty({
+        xPosition: MODAL_X,
+        yPosition: MODAL_Y,
+        width: MODAL_WIDTH,
+        height: MODAL_HEIGHT,
+        // The border is what makes this read as a box sitting over the tool
+        // rather than text floating on top of other text. It is also the only
+        // visual decoration available, since there is no background or fill.
+        borderWidth: 2,
+        borderColor: 12,
+        borderRadius: 8,
+        paddingLength: 8,
+        containerID: CONTAINER_ID_MODAL,
+        containerName: CONTAINER_NAME_MODAL,
+        content: '',
+        zOrderIndex: Z_MODAL,
+        isEventCapture: 0,
       }),
     ],
   }
@@ -172,6 +207,8 @@ function openTool(index: number) {
   if (index < 0 || index >= TOOLS.length) return
   // Any navigation clears the prompt. Cheaper to reset unconditionally here than
   // to reason about every path that could reach a new page with a stale flag set.
+  // The page is rebuilt below, which draws a fresh empty modal container, so
+  // there is nothing left over to clear.
   confirming = false
   const tool = TOOLS[index]
   bridge
@@ -349,7 +386,7 @@ const unsubscribe = bridge.onEvenHubEvent(event => {
       // Double tap means back, and from the prompt back is the tool you came
       // from. So the same gesture that raised the question also dismisses it.
       if (confirming) {
-        cancelConfirm(tool)
+        cancelConfirm()
         return
       }
       if (tool.confirmOnExit) {
@@ -414,7 +451,7 @@ const unsubscribe = bridge.onEvenHubEvent(event => {
       if (confirmChoice === CONFIRM_YES) {
         returnToMenu()
       } else {
-        cancelConfirm(tool)
+        cancelConfirm()
       }
       return
     }
