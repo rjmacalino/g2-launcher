@@ -16,12 +16,14 @@ progress, `[x]` done, `[?]` waiting on a decision.
 
 ## Phase 0: foundations (no user-visible features)
 
-- [ ] 0.2 `app.json`: add the `network` permission with
-      `https://api.open-meteo.com` in the whitelist (currently missing, a likely
-      cause of weather failures), raise `min_sdk_version` to `0.0.15`
+- [x] 0.2 `app.json`: added the `network` permission with
+      `https://api.open-meteo.com` in the whitelist (was missing, the likely
+      cause of weather failures). `min_sdk_version` was already `0.0.15`
 - [ ] 0.3 Adopt `@evenrealities/pretext`; replace hand-estimated sizes
       (the confirm list assumes 54 px per item, the documented value is 40 px)
-- [ ] 0.4 Restructure `src/` into the layout below
+- [x] 0.4 Restructured `src/` into the layout below. Verified with a real
+      simulator session: menu, tool open/close, the confirm dialog and
+      navigation all still fire correctly, and the build output is unchanged
 - [ ] 0.5 Tooling: ESLint, Prettier, Vitest for pure logic, GitHub Actions CI
       running typecheck, lint, test and build on every pull request
 
