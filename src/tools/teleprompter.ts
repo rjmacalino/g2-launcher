@@ -76,6 +76,11 @@ export const teleprompter: Tool = {
   // loaded yet, so nothing to lose), but "did you mean that" turned out to
   // matter more than "is there data at risk" here.
   confirmOnExit: () => true,
+  // Matches onConfirmedExit's own logic exactly, since one describes what
+  // pressing Yes says and the other is what it does: from reading, Yes stays
+  // inside Teleprompter, so the question is about the script, not the tool.
+  // From the picker, Yes really does leave, so it names the tool.
+  confirmPrompt: () => (mode === 'text' ? 'Leave this script?' : 'Leave Teleprompter?'),
   beforeOpen: refresh,
   contentKind: () => mode,
   listItems: () =>

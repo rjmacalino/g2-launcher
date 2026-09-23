@@ -69,7 +69,7 @@ let confirming = false
 const CONFIRM_NO = 0
 const CONFIRM_YES = 1
 
-function confirmContainers(toolName: string) {
+function confirmContainers(tool: Tool) {
   const bar = statusBarContainers()
   return {
     containerTotalNum: bar.length + 2,
@@ -87,7 +87,7 @@ function confirmContainers(toolName: string) {
         paddingLength: 0,
         containerID: CONTAINER_ID_CONFIRM_TITLE,
         containerName: CONTAINER_NAME_CONFIRM_TITLE,
-        content: `Leave ${toolName}?`,
+        content: tool.confirmPrompt?.() ?? `Leave ${tool.name}?`,
         isEventCapture: 0,
       }),
     ],
@@ -115,8 +115,8 @@ function confirmContainers(toolName: string) {
   }
 }
 
-function enterConfirm(toolName: string) {
-  bridge.rebuildPageContainer(new RebuildPageContainer(confirmContainers(toolName))).then(ok => {
+function enterConfirm(tool: Tool) {
+  bridge.rebuildPageContainer(new RebuildPageContainer(confirmContainers(tool))).then(ok => {
     if (ok) {
       confirming = true
     } else {
@@ -496,7 +496,7 @@ const unsubscribe = bridge.onEvenHubEvent(event => {
     if (screen.kind === 'tool') {
       const tool = TOOLS[screen.index]
       if (tool.confirmOnExit?.()) {
-        enterConfirm(tool.name)
+        enterConfirm(tool)
         return
       }
       returnToMenu()

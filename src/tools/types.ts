@@ -28,6 +28,18 @@ export type Tool = {
   // Opt in, not universal. A confirmation on a placeholder protects nothing.
   confirmOnExit?(): boolean
 
+  // The question shown on the leave prompt. Omitted defaults to
+  // `Leave ${name}?`, correct for a tool with one level of depth.
+  //
+  // A function, same reasoning as confirmOnExit: what leaving actually means
+  // can depend on internal state. Teleprompter's reading mode does not leave
+  // the tool at all, it backs up to the script picker (see onConfirmedExit),
+  // so its default question would be actively wrong there - claiming to leave
+  // Teleprompter when Yes keeps you inside it. Asking the tool for its own
+  // wording keeps the dialog honest about what pressing Yes actually does,
+  // rather than the shell guessing from the tool's name alone.
+  confirmPrompt?(): string
+
   // What the content area shows the moment the page is built, before any async
   // work has had a chance to produce something better. Must be synchronous: it is
   // called while assembling the container payload.
