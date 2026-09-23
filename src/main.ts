@@ -80,7 +80,10 @@ function confirmContainers(toolName: string) {
         width: CANVAS_WIDTH,
         height: CONFIRM_TITLE_HEIGHT,
         borderWidth: 0,
-        paddingLength: PADDING,
+        // No padding: the box is already sized to exactly one row, so any
+        // internal padding on top of that just re-adds the gap the height
+        // change was meant to remove.
+        paddingLength: 0,
         containerID: CONTAINER_ID_CONFIRM_TITLE,
         containerName: CONTAINER_NAME_CONFIRM_TITLE,
         content: `Leave ${toolName}?`,
@@ -94,7 +97,9 @@ function confirmContainers(toolName: string) {
         width: CANVAS_WIDTH,
         height: CONFIRM_LIST_HEIGHT,
         borderWidth: 0,
-        paddingLength: PADDING,
+        // Same reasoning: no top padding to add back space right where the
+        // title was just tightened to remove it.
+        paddingLength: 0,
         containerID: CONTAINER_ID_CONTENT,
         containerName: CONTAINER_NAME_CONTENT,
         isEventCapture: 1,

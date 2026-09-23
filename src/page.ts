@@ -65,7 +65,16 @@ export const CONTAINER_NAME_CONTENT = 'tool'
 export const CONTAINER_ID_CONFIRM_TITLE = 5
 export const CONTAINER_NAME_CONFIRM_TITLE = 'confirm.title'
 
-export const CONFIRM_TITLE_HEIGHT = STATUS_BAR_HEIGHT
+// Sized to the measured single-row height (ROW_HEIGHT_PX), not
+// STATUS_BAR_HEIGHT, which is 5px taller because it was sized for the status
+// bar's own purpose, not for holding exactly one tight line of text here. The
+// two boxes already sit flush against each other (CONFIRM_LIST_Y starts the
+// instant this one ends, no gap between them), so the visible space reported
+// between the question and the list was slack inside this box, below the
+// top-aligned text. Tightening it to the real row height is the lever
+// available; the firmware's own internal spacing, if any, is not something we
+// control or can verify without hardware.
+export const CONFIRM_TITLE_HEIGHT = ROW_HEIGHT_PX
 export const CONFIRM_LIST_Y = CONTENT_Y + CONFIRM_TITLE_HEIGHT
 export const CONFIRM_LIST_HEIGHT = CONTENT_HEIGHT - CONFIRM_TITLE_HEIGHT
 

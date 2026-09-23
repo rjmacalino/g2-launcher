@@ -70,9 +70,12 @@ export function clearActiveScriptIfCurrent(id: string) {
 
 export const teleprompter: Tool = {
   name: 'Teleprompter',
-  // Only while actually reading. Browsing the picker has nothing to lose, so
-  // a confirmation there would be friction with nothing behind it.
-  confirmOnExit: () => mode === 'text',
+  // Always, in both the picker and while reading, per direct request: an
+  // accidental double-tap should be double-checked no matter which of the
+  // two screens it happens on. Originally the picker was exempt (nothing
+  // loaded yet, so nothing to lose), but "did you mean that" turned out to
+  // matter more than "is there data at risk" here.
+  confirmOnExit: () => true,
   beforeOpen: refresh,
   contentKind: () => mode,
   listItems: () =>
@@ -83,14 +86,20 @@ export const teleprompter: Tool = {
     // a real script; a tap on that placeholder correctly does nothing.
     if (item) pickScript(item)
   },
-  // Confirming "leave" backs up to the picker, not out of the tool entirely.
-  // "Back" already means one level up everywhere else in this app (double tap
-  // on a tool returns to the menu, on the menu it exits); a script is one
-  // level deeper than the picker, so leaving it should land on the picker, the
-  // same as leaving the menu lands you outside the app rather than nowhere.
+  // Confirming "leave" backs up exactly one level, matching what "back" means
+  // everywhere else in this app: from reading, that is the picker; from the
+  // picker itself, there is nowhere shallower left inside this tool, so it
+  // means leaving Teleprompter entirely, same as double-tap on the menu.
+  //
+  // Reads mode AS IT WAS when the double-tap happened, not after: confirming
+  // never touches Teleprompter's own state until this fires, so mode still
+  // reflects whichever screen the wearer was actually looking at.
   onConfirmedExit: () => {
-    mode = 'list'
-    return 'tool'
+    if (mode === 'text') {
+      mode = 'list'
+      return 'tool'
+    }
+    return 'menu'
   },
   initialContent: () => currentScript,
 }
