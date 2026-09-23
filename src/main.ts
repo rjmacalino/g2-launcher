@@ -9,19 +9,14 @@ import {
 import { bridge, status } from './bridge'
 import {
   CANVAS_WIDTH,
-  CONFIRM_STRIP_Y,
-  CONFIRM_STRIP_HEIGHT,
-  CONFIRM_STRIP_ROWS,
-  CONTAINER_ID_CONFIRM,
   CONTAINER_ID_CONTENT,
-  CONTAINER_NAME_CONFIRM,
   CONTAINER_NAME_CONTENT,
   CONTENT_HEIGHT,
+  CONTENT_ROWS,
   CONTENT_Y,
   LIST_ITEM_WIDTH,
   PADDING,
-  TOOL_CONTENT_HEIGHT,
-  setConfirmStrip,
+  setContent,
 } from './page'
 import { readWithTimeout } from './storage'
 import {
@@ -31,7 +26,7 @@ import {
   stopStatusBar,
 } from './statusbar'
 import { persistScreen, readStoredScreen, type Screen } from './screen'
-import { TOOLS, TOOL_NAMES } from './tools'
+import { TOOLS, TOOL_NAMES, type Tool } from './tools'
 
 // The shell. Owns which page is showing, builds pages, and routes input. It knows
 // tools only through the Tool interface, so adding one is a new file plus an entry
@@ -58,59 +53,45 @@ const CONFIRM_NO = 0
 const CONFIRM_YES = 1
 let confirmChoice: 0 | 1 = CONFIRM_NO
 
-// HAND-DRAWN TEXT AGAIN, not the native list this ticket started with. The list
-// was correct about bounce behaviour and wrong about the one thing that actually
-// matters: it can only be shown or updated through rebuildPageContainer, and
-// rebuilding was confirmed on hardware to reset the teleprompter's scroll
-// position regardless of what the content container's own text says. See
-// page.ts for the full chain of four attempts.
+// Replaces content's own text temporarily. Five other approaches were tried and
+// all five failed on this platform for structural reasons, not implementation
+// bugs: see the long note in page.ts before touching this again. The short
+// version is that nothing here can BOTH avoid a rebuild AND avoid permanently
+// costing display space, and a rebuild always resets the teleprompter's scroll.
+// This is the least-bad option that was actually available.
 //
-// This writes ONLY to the reserved confirm strip (CONTAINER_ID_CONFIRM),
-// declared once when the tool opens and never rebuilt while a prompt is shown
-// or dismissed. Content itself is never touched, so its scroll position is
-// physically incapable of resetting: not "unlikely to reset", not "restored
-// afterwards", but never written to in the first place.
-//
-// Known, accepted cost: because content still owns capture (moving capture to
-// the strip would itself require a rebuild), a scroll gesture aimed at the
-// marker also reaches the tool underneath. For the teleprompter, still
-// overflowing and still natively scrolled, that means the visible script can
-// drift by roughly the number of marker moves made. Selecting No without
-// scrolling, the common case for an accidental double-tap, drifts by nothing.
-//
-// Also accepted: the strip is small and fixed-size, so re-pushing it on every
-// scroll tick means the firmware has nothing to scroll and plays its boundary
-// bounce on every move rather than only at the real ends of No/Yes. That
-// regression was deliberately reopened in favour of the position guarantee,
-// which is the higher priority between the two.
+// Known, accepted cost: cancelling replaces content with the tool's own
+// initialContent(), which for the teleprompter is the whole script from the
+// top (G2-17 removed position tracking entirely), so cancelling loses the
+// reading position. Scroll-selecting the marker also bounces on every move,
+// since the short prompt text never overflows the container.
 function confirmText(toolName: string): string {
   const row = (label: string, value: 0 | 1) =>
     `${label.padEnd(3)} ${confirmChoice === value ? '<' : ''}`.trimEnd()
 
   const lines = [`End ${toolName}`, '', row('No', CONFIRM_NO), row('Yes', CONFIRM_YES)]
 
-  const padding = Math.max(0, Math.floor((CONFIRM_STRIP_ROWS - lines.length) / 2))
+  const padding = Math.max(0, Math.floor((CONTENT_ROWS - lines.length) / 2))
   return '\n'.repeat(padding) + lines.join('\n')
 }
 
 function enterConfirm(toolName: string) {
   confirming = true
   confirmChoice = CONFIRM_NO
-  setConfirmStrip(confirmText(toolName))
+  setContent(confirmText(toolName))
 }
 
 function moveConfirm(next: 0 | 1, toolName: string) {
   if (confirmChoice === next) return
   confirmChoice = next
-  setConfirmStrip(confirmText(toolName))
+  setContent(confirmText(toolName))
 }
 
-// Clear the strip. Content was never touched, so there is nothing to restore on
-// it; the wearer sees exactly the script position they left, because it never
-// moved from underneath them.
-function cancelConfirm() {
+// Put the tool's own content back. For the teleprompter this is the whole
+// script from the top; there is no saved position to return to.
+function cancelConfirm(tool: Tool) {
   confirming = false
-  setConfirmStrip('')
+  setContent(tool.initialContent())
 }
 
 // Ceiling on the restore rebuild. Anything awaited between page creation and
@@ -153,42 +134,26 @@ const menuList = new ListContainerProperty({
 
 // The content container MUST set isEventCapture: 1. A page with no capture
 // container has no way out, and it is also the container the firmware scrolls and
-// the one every tool's setContent targets.
-//
-// Every tool page also carries the confirm strip, empty, declared here at open
-// time and never added or removed afterwards. That permanence is the entire
-// point: showing or clearing the leave prompt is then just a textContainerUpgrade
-// on this one extra container, and never has to rebuild the page, which is the
-// one operation confirmed to reset the teleprompter's scroll.
+// the one every tool's setContent targets. Full CONTENT_HEIGHT, no reserved
+// space: see page.ts for why a permanently smaller reading area was tried and
+// reverted.
 function toolContainers(index: number) {
   const bar = statusBarContainers()
   return {
-    containerTotalNum: bar.length + 2,
+    containerTotalNum: bar.length + 1,
     textObject: [
       ...bar,
       new TextContainerProperty({
         xPosition: 0,
         yPosition: CONTENT_Y,
         width: CANVAS_WIDTH,
-        height: TOOL_CONTENT_HEIGHT,
+        height: CONTENT_HEIGHT,
         borderWidth: 0,
         paddingLength: PADDING,
         containerID: CONTAINER_ID_CONTENT,
         containerName: CONTAINER_NAME_CONTENT,
         content: TOOLS[index].initialContent(),
         isEventCapture: 1,
-      }),
-      new TextContainerProperty({
-        xPosition: 0,
-        yPosition: CONFIRM_STRIP_Y,
-        width: CANVAS_WIDTH,
-        height: CONFIRM_STRIP_HEIGHT,
-        borderWidth: 0,
-        paddingLength: PADDING,
-        containerID: CONTAINER_ID_CONFIRM,
-        containerName: CONTAINER_NAME_CONFIRM,
-        content: '',
-        isEventCapture: 0,
       }),
     ],
   }
@@ -405,22 +370,22 @@ const unsubscribe = bridge.onEvenHubEvent(event => {
   // up always lands on No, down always lands on Yes, so a wearer unsure which
   // way they scrolled can press one direction and know where they are.
   if (confirming && screen.kind === 'tool') {
-    const toolName = TOOLS[screen.index].name
+    const tool = TOOLS[screen.index]
 
     if (sysType === OsEventTypeList.CLICK_EVENT || textType === OsEventTypeList.CLICK_EVENT ||
         sysType === OsEventTypeList.DOUBLE_CLICK_EVENT || textType === OsEventTypeList.DOUBLE_CLICK_EVENT) {
       if (confirmChoice === CONFIRM_YES) {
         returnToMenu()
       } else {
-        cancelConfirm()
+        cancelConfirm(tool)
       }
       return
     }
 
     if (textType === OsEventTypeList.SCROLL_TOP_EVENT) {
-      moveConfirm(CONFIRM_NO, toolName)
+      moveConfirm(CONFIRM_NO, tool.name)
     } else if (textType === OsEventTypeList.SCROLL_BOTTOM_EVENT) {
-      moveConfirm(CONFIRM_YES, toolName)
+      moveConfirm(CONFIRM_YES, tool.name)
     }
     return
   }
