@@ -12,11 +12,9 @@ import {
   CONTAINER_ID_CONTENT,
   CONTAINER_NAME_CONTENT,
   CONTENT_HEIGHT,
-  CONTENT_ROWS,
   CONTENT_Y,
   LIST_ITEM_WIDTH,
   PADDING,
-  setContent,
 } from './page'
 import { readWithTimeout } from './storage'
 import {
@@ -38,60 +36,101 @@ function activeTool() {
   return screen.kind === 'tool' ? TOOLS[screen.index] : null
 }
 
-// Whether the active tool is currently asking whether to leave, and which
-// answer is currently marked.
+// Whether the active tool is currently asking whether to leave.
 //
 // Not part of Screen, and deliberately not persisted. A cold start should never
 // restore the wearer into a half-answered question about a page they cannot
 // remember opening.
 let confirming = false
 
-// 0 is No, 1 is Yes. Defaults to No every time the prompt opens, so the
-// dangerous answer is never the one already marked when a wearer taps without
-// reading.
+// A native list, the same widget the launcher menu and the Teleprompter picker
+// already use. Firmware owns highlight, scroll and boundary bounce, so it
+// bounces correctly only at the real ends of No/Yes, unlike the hand-drawn "<"
+// marker this replaces, which had to fake selection by re-pushing text on every
+// scroll tick and bounced on every single move because that text never
+// overflowed its own container.
+//
+// This is not a new position-loss cost. Entering confirm already replaced the
+// content container regardless of representation - a plain text swap resets
+// the firmware's scroll exactly as a rebuild does, both being a content
+// change - so a native list costs nothing beyond what showing any confirm
+// prompt already cost. The only thing that changes here is which widget draws
+// it and whether its bounce behaviour is real.
+//
+// No is index 0, Yes is index 1. Firmware defaults a fresh list's highlight to
+// index 0, so the dangerous answer is never pre-selected without any code
+// having to arrange it.
 const CONFIRM_NO = 0
 const CONFIRM_YES = 1
-let confirmChoice: 0 | 1 = CONFIRM_NO
 
-// Replaces content's own text temporarily. Five other approaches were tried and
-// all five failed on this platform for structural reasons, not implementation
-// bugs: see the long note in page.ts before touching this again. The short
-// version is that nothing here can BOTH avoid a rebuild AND avoid permanently
-// costing display space, and a rebuild always resets the teleprompter's scroll.
-// This is the least-bad option that was actually available.
-//
-// Known, accepted cost: cancelling replaces content with the tool's own
-// initialContent(), which for the teleprompter is the whole script from the
-// top (G2-17 removed position tracking entirely), so cancelling loses the
-// reading position. Scroll-selecting the marker also bounces on every move,
-// since the short prompt text never overflows the container.
-function confirmText(toolName: string): string {
-  const row = (label: string, value: 0 | 1) =>
-    `${label.padEnd(3)} ${confirmChoice === value ? '<' : ''}`.trimEnd()
-
-  const lines = [`End ${toolName}`, '', row('No', CONFIRM_NO), row('Yes', CONFIRM_YES)]
-
-  const padding = Math.max(0, Math.floor((CONTENT_ROWS - lines.length) / 2))
-  return '\n'.repeat(padding) + lines.join('\n')
+function confirmContainers(toolName: string) {
+  const bar = statusBarContainers()
+  return {
+    containerTotalNum: bar.length + 1,
+    textObject: bar,
+    listObject: [
+      new ListContainerProperty({
+        xPosition: 0,
+        yPosition: CONTENT_Y,
+        width: CANVAS_WIDTH,
+        height: CONTENT_HEIGHT,
+        borderWidth: 0,
+        paddingLength: PADDING,
+        containerID: CONTAINER_ID_CONTENT,
+        containerName: CONTAINER_NAME_CONTENT,
+        isEventCapture: 1,
+        itemContainer: new ListItemContainerProperty({
+          itemCount: 2,
+          itemWidth: LIST_ITEM_WIDTH,
+          isItemSelectBorderEn: 1,
+          itemName: ['No', `Yes, leave ${toolName}`],
+        }),
+      }),
+    ],
+  }
 }
 
 function enterConfirm(toolName: string) {
-  confirming = true
-  confirmChoice = CONFIRM_NO
-  setContent(confirmText(toolName))
+  bridge.rebuildPageContainer(new RebuildPageContainer(confirmContainers(toolName))).then(ok => {
+    if (ok) {
+      confirming = true
+    } else {
+      status('Failed to open leave prompt')
+    }
+  })
 }
 
-function moveConfirm(next: 0 | 1, toolName: string) {
-  if (confirmChoice === next) return
-  confirmChoice = next
-  setContent(confirmText(toolName))
+// No: rebuild back to the tool exactly as it was, unchanged since entering
+// confirm never touched its internal state.
+function cancelConfirm(index: number) {
+  bridge.rebuildPageContainer(new RebuildPageContainer(toolContainers(index))).then(ok => {
+    if (ok) {
+      confirming = false
+    } else {
+      requestExit()
+    }
+  })
 }
 
-// Put the tool's own content back. For the teleprompter this is the whole
-// script from the top; there is no saved position to return to.
-function cancelConfirm(tool: Tool) {
+// Yes: ask the tool where "leaving" actually goes. Most tools have no answer
+// for this and default to the menu; Teleprompter uses it to step back to its
+// own picker instead of exiting itself entirely (see onConfirmedExit in
+// types.ts). Either way the tool's own onConfirmedExit runs first, so its
+// internal state is already updated by the time the rebuild reads it.
+function confirmExit(tool: Tool, index: number) {
   confirming = false
-  setContent(tool.initialContent())
+  const destination = tool.onConfirmedExit?.() ?? 'menu'
+  if (destination === 'menu') {
+    returnToMenu()
+    return
+  }
+  bridge.rebuildPageContainer(new RebuildPageContainer(toolContainers(index))).then(ok => {
+    if (ok) {
+      status(`Tool: ${tool.name}`)
+    } else {
+      status(`Failed to update ${tool.name}`)
+    }
+  })
 }
 
 // Ceiling on the restore rebuild. Anything awaited between page creation and
@@ -403,37 +442,28 @@ const unsubscribe = bridge.onEvenHubEvent(event => {
     textType === OsEventTypeList.DOUBLE_CLICK_EVENT ||
     listType === OsEventTypeList.DOUBLE_CLICK_EVENT
 
-  // The leave prompt. Content still owns capture (see toolContainers), so its
-  // events arrive as sysType/textType the same as any other tap or scroll on a
-  // tool page, not through listEvent. A tap or double-tap here commits whatever
-  // is currently marked, matching the earlier decision that a separate cancel
-  // gesture is redundant once No is a selectable, defaulted-to answer.
+  // The leave prompt. A native list (see confirmContainers), so scroll and
+  // highlight are entirely firmware's job; we only react once something is
+  // chosen. A plain click and a double-click both commit whatever is
+  // currently highlighted, matching the earlier decision that a separate
+  // cancel gesture is redundant once No is a selectable, defaulted-to answer.
   //
   // Catching DOUBLE_CLICK_EVENT here, before the isDoubleTap branch below, is
   // what stops an accidental double-tap while the prompt is open from falling
   // through to the exit/back logic meant for when no prompt is showing.
-  //
-  // Scroll moves the marker. Both directions are absolute rather than a toggle:
-  // up always lands on No, down always lands on Yes, so a wearer unsure which
-  // way they scrolled can press one direction and know where they are.
   if (confirming && screen.kind === 'tool') {
-    const tool = TOOLS[screen.index]
-
-    if (sysType === OsEventTypeList.CLICK_EVENT || textType === OsEventTypeList.CLICK_EVENT ||
-        sysType === OsEventTypeList.DOUBLE_CLICK_EVENT || textType === OsEventTypeList.DOUBLE_CLICK_EVENT) {
-      if (confirmChoice === CONFIRM_YES) {
-        returnToMenu()
+    if (listEvent && (listType === OsEventTypeList.CLICK_EVENT || listType === OsEventTypeList.DOUBLE_CLICK_EVENT)) {
+      const tool = TOOLS[screen.index]
+      const choice = listEvent.currentSelectItemIndex ?? CONFIRM_NO
+      if (choice === CONFIRM_YES) {
+        confirmExit(tool, screen.index)
       } else {
-        cancelConfirm(tool)
+        cancelConfirm(screen.index)
       }
-      return
     }
-
-    if (textType === OsEventTypeList.SCROLL_TOP_EVENT) {
-      moveConfirm(CONFIRM_NO, tool.name)
-    } else if (textType === OsEventTypeList.SCROLL_BOTTOM_EVENT) {
-      moveConfirm(CONFIRM_YES, tool.name)
-    }
+    // Anything else while the prompt is open (scroll, an unrelated event) is
+    // swallowed here: firmware already handles scroll on the list itself, and
+    // nothing else should reach the tool underneath while a question is open.
     return
   }
 

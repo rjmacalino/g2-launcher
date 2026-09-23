@@ -83,5 +83,14 @@ export const teleprompter: Tool = {
     // a real script; a tap on that placeholder correctly does nothing.
     if (item) pickScript(item)
   },
+  // Confirming "leave" backs up to the picker, not out of the tool entirely.
+  // "Back" already means one level up everywhere else in this app (double tap
+  // on a tool returns to the menu, on the menu it exits); a script is one
+  // level deeper than the picker, so leaving it should land on the picker, the
+  // same as leaving the menu lands you outside the app rather than nowhere.
+  onConfirmedExit: () => {
+    mode = 'list'
+    return 'tool'
+  },
   initialContent: () => currentScript,
 }

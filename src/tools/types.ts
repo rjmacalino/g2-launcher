@@ -62,6 +62,20 @@ export type Tool = {
   // and initialContent will read on the rebuild this triggers.
   onListSelect?(index: number): void
 
+  // The wearer confirmed leaving (chose Yes on the leave prompt). Return
+  // 'tool' to rebuild this same tool again rather than exiting to the
+  // launcher menu, which only makes sense for a tool that has its own
+  // internal depth to step back through first: Teleprompter uses this to
+  // return to its own script picker rather than leaving itself entirely, so
+  // double-tap from a script backs up one level, matching what "back" means
+  // everywhere else in this app. Called BEFORE the shell rebuilds, same as
+  // onListSelect, so the tool should update its own state first (Teleprompter
+  // resets its mode to 'list' here).
+  //
+  // Omitted, or returning 'menu', means what every tool before this one did:
+  // leave to the launcher.
+  onConfirmedExit?(): 'menu' | 'tool'
+
   // The page is now on screen. Start subscriptions and timers here rather than in
   // initialContent, because anything that updates the content area needs the
   // container to exist first.
