@@ -70,25 +70,30 @@ const SCRIPT = [
 // The formula is not evidence. It is calibration from a guess, and the division
 // lends it a precision nothing has earned.
 //
-// The docs say a full 576x288 text container holds roughly 400 to 500 characters,
-// which implies something nearer 28px per row than 48, so this is likely close to
-// double the real value and the teleprompter is using about half the height it
-// could. Observed independently in the simulator. Still not measured.
+// NOW MEASURED, from a simulator screenshot rather than from arithmetic.
 //
-// TO CALIBRATE PROPERLY: temporarily replace SCRIPT with numbered lines ('1',
-// '2', '3' ... '14'), open the teleprompter, and count how many are fully
-// visible. That count IS lines-per-view at the current geometry, measured rather
-// than computed. Then set APPROX_LINE_HEIGHT_PX to
-// (CONTENT_HEIGHT - PADDING * 2) / <that count>.
+// Two consecutive rendered lines sat about 27px apart on a canvas rendering at
+// roughly 1:1. So the real row height is near 27, and the old 48 was close to
+// double it. That is why the teleprompter was showing 5 lines and leaving the
+// bottom half of the display empty.
 //
-// The derivation is kept rather than hardcoding a measured count, so that
-// changing STATUS_BAR_HEIGHT cannot silently leave the line count stale.
+// It also matches the documented figure that a full 576x288 text container holds
+// roughly 400 to 500 characters, which only works out at around 28px rows.
+//
+// Set to 28 rather than 27 deliberately: rounding up yields one fewer line, and a
+// clipped last line is worse than a slightly short one in a tool whose entire job
+// is being readable. If a 9th line turns out to fit cleanly, 27 is the better
+// value and this comment is the record of why it was not chosen first.
+//
+// The derivation from CONTENT_HEIGHT is kept rather than hardcoding the count, so
+// that changing STATUS_BAR_HEIGHT cannot silently leave the line count stale.
 //
 // Separately, and still true: this assumes one script line occupies one display
 // row. A line long enough to wrap costs two rows, and the view then shows fewer
-// entries than this number claims. See #23, which proposes dropping hardcoded
-// line breaks entirely so the full width gets used too.
-const APPROX_LINE_HEIGHT_PX = 48
+// entries than this number claims. Note the script's blank lines each consume a
+// row too, which is why the screenshot showed only three lines of actual text out
+// of five slots. See #23 and #25.
+const APPROX_LINE_HEIGHT_PX = 28
 const LINES_PER_VIEW = Math.max(
   1,
   Math.floor((CONTENT_HEIGHT - PADDING * 2) / APPROX_LINE_HEIGHT_PX),
