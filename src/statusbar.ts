@@ -81,8 +81,10 @@ function formatDate(now: Date): string {
   return `${DAY_NAMES[now.getDay()]} ${now.getDate()} ${MONTH_NAMES[now.getMonth()]}`
 }
 
-// What the weather slot shows. Null until a proxy exists, because an API key
-// cannot ship inside an extractable package.
+// What the weather slot shows. Populated by Weather (tools/weather.ts via
+// weather-service.ts), which now fetches from Open-Meteo - the old "null
+// until a proxy exists" blocker turned out to only apply to APIs that need a
+// key; Open-Meteo does not, so no proxy was ever actually required.
 //
 // ICONS ARE NOT YET POSSIBLE TO CONFIRM. The requested design is a sun or
 // umbrella glyph next to the temperature. Three things stand in the way:
@@ -100,11 +102,21 @@ function formatDate(now: Date): string {
 // Testing a glyph is cheap and safe despite this repo being ASCII only: a '\uXXXX'
 // escape keeps the source file pure ASCII while emitting the codepoint at runtime,
 // which sidesteps the encoding corruption that damaged the README in #16.
-type WeatherCondition = 'clear' | 'rain'
+//
+// Six buckets, not one per WMO weather code: Open-Meteo defines dozens of
+// codes (drizzle, freezing rain, snow grains, and so on) that this small
+// ASCII display has no room to distinguish usefully. weather-api.ts collapses
+// all of them into whichever of these a wearer would actually act on
+// differently.
+export type WeatherCondition = 'clear' | 'cloudy' | 'fog' | 'rain' | 'snow' | 'storm'
 
-const CONDITION_LABELS: Record<WeatherCondition, string> = {
+export const CONDITION_LABELS: Record<WeatherCondition, string> = {
   clear: 'Clear',
+  cloudy: 'Cloudy',
+  fog: 'Fog',
   rain: 'Rain',
+  snow: 'Snow',
+  storm: 'Storm',
 }
 
 let weather: { condition: WeatherCondition; celsius: number } | null = null

@@ -94,7 +94,7 @@ function renderMenu() {
   })
 }
 
-// --- Stub (Weather, GPS: nothing to configure yet) -------------------------
+// --- Stub (any tool with nothing to configure on the phone) ----------------
 
 function renderStub(label: string) {
   if (!root) return

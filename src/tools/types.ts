@@ -10,9 +10,9 @@
 // this would have scattered those branches across more files rather than removing
 // them, which is renaming a problem rather than fixing it.
 //
-// Every hook is optional on purpose. Weather and Notes are still placeholders and
-// implement nothing but a name and their initial content. A tool pays only for the
-// lifecycle it actually uses.
+// Every hook is optional on purpose. A tool pays only for the lifecycle it
+// actually uses - Weather, for instance, has no onScroll or onListSelect at
+// all, since nothing in a forecast is tappable or scrollable content.
 export type Tool = {
   // Shown in the launcher list. Order in the TOOLS array is the index the
   // firmware reports back as currentSelectItemIndex.

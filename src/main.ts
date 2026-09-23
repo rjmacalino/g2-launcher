@@ -31,6 +31,7 @@ import {
 } from './statusbar'
 import { persistScreen, readStoredScreen, type Screen } from './screen'
 import { TOOLS, TOOL_NAMES, type Tool } from './tools'
+import { start as startWeather, stop as stopWeather } from './weather-service'
 
 // The shell. Owns which page is showing, builds pages, and routes input. It knows
 // tools only through the Tool interface, so adding one is a new file plus an entry
@@ -416,6 +417,12 @@ persistScreen(screen)
 // corrects the bar from defaults to the stored config.
 startStatusBar()
 
+// Same lifecycle as the clock: runs for as long as the app is foregrounded,
+// independent of which tool is on screen, because the status bar's weather
+// slot needs current conditions on every page, not only while Weather itself
+// is open.
+startWeather()
+
 // --- Input ----------------------------------------------------------------
 
 // Reads the event type out of one envelope.
@@ -520,6 +527,7 @@ const unsubscribe = bridge.onEvenHubEvent(event => {
   // had a subscription stopped under it by the OS.
   if (sysType === OsEventTypeList.FOREGROUND_ENTER_EVENT) {
     startStatusBar()
+    startWeather()
     activeTool()?.onResume?.()
     return
   }
@@ -528,6 +536,7 @@ const unsubscribe = bridge.onEvenHubEvent(event => {
   if (sysType === OsEventTypeList.FOREGROUND_EXIT_EVENT) {
     activeTool()?.onSuspend?.()
     stopStatusBar()
+    stopWeather()
     return
   }
 
