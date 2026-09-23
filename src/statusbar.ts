@@ -147,10 +147,17 @@ export const CONDITION_GLYPHS: Record<WeatherCondition, string> = {
   storm: '\u26a1', // high voltage (lightning bolt)
 }
 
+// Shown whenever there is no current reading: before the very first refresh
+// completes at startup, and whenever weather-service.ts calls setWeather(null)
+// after a failed refresh (no location fix, or the forecast request itself
+// failing). A blank slot looked like the field was simply off; naming the gap
+// is more honest about what the wearer is looking at, per direct request.
+const NO_DATA_TEXT = 'N/A'
+
 let weather: { condition: WeatherCondition; celsius: number } | null = null
 
 function renderWeather(): string {
-  if (!weather) return ''
+  if (!weather) return NO_DATA_TEXT
   return `${CONDITION_LABELS[weather.condition]} ${Math.round(weather.celsius)}C`
 }
 

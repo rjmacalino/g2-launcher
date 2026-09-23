@@ -48,6 +48,12 @@ export function refresh(): Promise<void> {
     const loc = await getCurrentLocation()
     if (!loc) {
       state = 'unavailable'
+      // Clears the status bar's slot rather than leaving a stale reading
+      // parked there from the last successful fetch - once this refresh has
+      // confirmed we do not currently have real data, showing an old number
+      // silently is worse than showing the "no data" placeholder (see
+      // renderWeather in statusbar.ts).
+      setWeather(null)
       // Distinguishes "never got a location fix" from a forecast fetch
       // failing below - both used to collapse into the same silent
       // "unavailable", which made this undiagnosable from the status strip
@@ -65,6 +71,7 @@ export function refresh(): Promise<void> {
       setWeather(result.current)
     } catch (e) {
       state = 'unavailable'
+      setWeather(null)
       status(`Weather update failed: ${e instanceof Error ? e.message : String(e)}`)
     }
   })().finally(() => {
