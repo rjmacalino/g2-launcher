@@ -74,7 +74,7 @@ function formatClock(now: Date): string {
   const h24 = now.getHours()
   const h12 = h24 % 12 === 0 ? 12 : h24 % 12
   const m = String(now.getMinutes()).padStart(2, '0')
-  return `${h12}:${m}${h24 < 12 ? 'AM' : 'PM'}`
+  return `${h12}:${m} ${h24 < 12 ? 'AM' : 'PM'}`
 }
 
 function formatDate(now: Date): string {

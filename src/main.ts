@@ -304,17 +304,6 @@ function eventTypeOf(envelope?: { eventType?: OsEventTypeList }): OsEventTypeLis
 // Tap on a tool page reaches the tool only through onScroll today. Tap is defined
 // as "forward" in the gesture rules and is free for a tool to claim.
 const unsubscribe = bridge.onEvenHubEvent(event => {
-  // TEMPORARY PROBE for #25. Revert once answered.
-  //
-  // The typed Text_ItemEvent carries only containerID, containerName and
-  // eventType, which is why we believe scroll position cannot be read. But
-  // EvenHubEvent also carries jsonData, documented as the raw host payload, and
-  // the typed models may be dropping fields the host actually sends. If an offset
-  // is in there, the teleprompter can let the firmware scroll AND keep position.
-  if (event.textEvent) {
-    status(`RAW textEvent: ${JSON.stringify(event.jsonData ?? null)}`)
-  }
-
   const sysType = eventTypeOf(event.sysEvent)
   const textType = eventTypeOf(event.textEvent)
   const listType = eventTypeOf(event.listEvent)

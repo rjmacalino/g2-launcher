@@ -1,10 +1,3 @@
-import { CONTENT_HEIGHT, PADDING, setContent } from '../page'
-import {
-  STORAGE_KEY_TELEPROMPTER,
-  readWithTimeout,
-  writeKey,
-} from '../storage'
-import { bridge, status } from '../bridge'
 import type { Tool } from './types'
 
 // Hardcoded per the G2-3 out-of-scope list ("Loading the script from anywhere").
@@ -12,6 +5,12 @@ import type { Tool } from './types'
 // The last stanza describes the shipped gesture model. It has to stay in sync
 // with the event handler; it is the only place the wearer is told how to leave
 // this page.
+//
+// Line breaks here are deliberate and are not wasted width. A teleprompter script
+// is broken where the speaker should breathe, so controlling where lines end is
+// the point rather than a limitation. That is worth remembering against #23,
+// which proposes letting the firmware wrap prose to fill the full width: right
+// for a document, wrong for something being read aloud.
 const SCRIPT = [
   'Good morning everyone.',
   '',
@@ -29,14 +28,6 @@ const SCRIPT = [
   'a full redraw flickers,',
   'and a teleprompter',
   'that flickers is useless.',
-  '',
-  'Every line here',
-  'arrives through a single',
-  'in-place update.',
-  '',
-  'No page rebuild,',
-  'no visible flash,',
-  'just the words moving.',
   '',
   'When you reach the end,',
   'scrolling further',
@@ -56,117 +47,45 @@ const SCRIPT = [
   'Thank you.',
 ]
 
-// How many script lines fit on one screen.
+// The whole script goes into the container at once, and the firmware scrolls it.
 //
-// PROVENANCE, because this number looks more rigorous than it is.
+// This replaces a paging implementation that maintained a line index, sliced the
+// script, persisted the position, and estimated how many lines fit on screen.
+// All of that is gone. The reason it existed was that we were scrolling the
+// document ourselves; we were also fighting the firmware to do it.
 //
-// The original was `LINES_PER_VIEW = 6`, introduced in G2-3 with the note
-// "roughly enough for six comfortable lines; adjust after looking at the
-// simulator". Nobody ever adjusted it. APPROX_LINE_HEIGHT_PX below was then
-// back-solved from that 6: (288 - 8) / 6 = 46.7, rounded up to 48 because
-// rounding up yields fewer lines, and a clipped line is the worse failure.
+// From the display docs: "If content overflows and the container has
+// isEventCapture: 1, the firmware scrolls it." The content container has capture,
+// because every page needs exactly one and it is the only candidate. But the old
+// implementation filled it with exactly the lines that fit, so it never
+// overflowed, the firmware found nothing to scroll, and it played its
+// end-of-content animation on every single gesture. That was the bounce: the
+// firmware telling the truth about a container that fits, while the wearer asked
+// a question about a document that does not.
 //
-// So this constant is an unverified estimate with arithmetic wrapped around it.
-// The formula is not evidence. It is calibration from a guess, and the division
-// lends it a precision nothing has earned.
+// Overflowing the container on purpose hands scrolling back to the firmware,
+// which is smooth, needs no line-height estimate, and only signals an end at a
+// real one.
 //
-// NOW MEASURED, from a simulator screenshot rather than from arithmetic.
+// WHAT THIS COST: the firmware does not report scroll position. Probed directly
+// rather than assumed, and the raw host payload for a scroll is exactly
+// {"containerID":4,"containerName":"tool","eventType":2}. No offset, nothing the
+// SDK was hiding. So we cannot know where the wearer scrolled to, and the
+// persisted position from G2-7 is gone. Reopening starts at the top.
 //
-// Two consecutive rendered lines sat about 27px apart on a canvas rendering at
-// roughly 1:1. So the real row height is near 27, and the old 48 was close to
-// double it. That is why the teleprompter was showing 5 lines and leaving the
-// bottom half of the display empty.
+// That trade got cheaper than it looked, because the exit confirmation now guards
+// the common way a position was lost. What remains is the OS reclaiming the app,
+// which is rarer and usually means starting over anyway.
 //
-// It also matches the documented figure that a full 576x288 text container holds
-// roughly 400 to 500 characters, which only works out at around 28px rows.
-//
-// Measured at exactly 27 from a second screenshot: consecutive rendered lines sat
-// 27px apart, and a blank script line cost exactly 54, so the row height is 27
-// rather than approximately 27. 9 rows need 243px of the 248 available.
-//
-// This briefly sat at 28, rounded up on the theory that a clipped last line is
-// worse than a short one. With the real number in hand that caution cost a line
-// for nothing.
-//
-// The derivation from CONTENT_HEIGHT is kept rather than hardcoding the count, so
-// that changing STATUS_BAR_HEIGHT cannot silently leave the line count stale.
-//
-// Separately, and still true: this assumes one script line occupies one display
-// row. A line long enough to wrap costs two rows, and the view then shows fewer
-// entries than this number claims. Note the script's blank lines each consume a
-// row too, which is why the screenshot showed only three lines of actual text out
-// of five slots. See #23 and #25.
-const APPROX_LINE_HEIGHT_PX = 27
-const LINES_PER_VIEW = Math.max(
-  1,
-  Math.floor((CONTENT_HEIGHT - PADDING * 2) / APPROX_LINE_HEIGHT_PX),
-)
-
-// Highest valid starting line. If the script is shorter than one view, this
-// clamps to 0 so scrolling never advances past the only page.
-const MAX_START = Math.max(0, SCRIPT.length - LINES_PER_VIEW)
-
-// Current starting line. Assigned from storage at startup; updated on every
-// successful scroll. Not reset on open; the whole point of G2-7 is that
-// reopening resumes where the wearer left off.
-let line = 0
-
-function slice(startLine: number): string {
-  return SCRIPT.slice(startLine, startLine + LINES_PER_VIEW).join('\n')
-}
-
-// Read the persisted line number and clamp it to the current script.
-//
-// Any failure resolves to 0: starting at the top is the safe default, and every
-// plausible representation of "no stored value" (empty string, the literal
-// 'null', 'undefined') parses to NaN, which the finite check catches. We do not
-// need to know which one the host returns.
-async function readStoredLine(): Promise<number> {
-  try {
-    const raw = await bridge.getLocalStorage(STORAGE_KEY_TELEPROMPTER)
-    const parsed = parseInt(raw, 10)
-    if (!Number.isFinite(parsed) || parsed < 0) return 0
-    return Math.min(parsed, MAX_START)
-  } catch {
-    return 0
-  }
-}
-
-// Move the viewport by one line and redraw in place.
-//
-// Bounds-checked before any state change, and `line` is only committed when the
-// upgrade resolves true, so a failure leaves the line number matching what is on
-// screen rather than one ahead.
-//
-// The write to storage is fired after the in-memory commit and does not block
-// further input. Fast scrolling may queue writes that race at the host. This
-// assumes the SDK delivers messages in order, so the last write wins. That is an
-// assumption, not something verified, and the project has been burned before by
-// treating a plausible guarantee as a known one.
-function scroll(delta: 1 | -1) {
-  const target = line + delta
-  if (target < 0 || target > MAX_START) return
-  setContent(slice(target)).then(ok => {
-    if (ok) {
-      line = target
-      writeKey(STORAGE_KEY_TELEPROMPTER, String(target), 'Failed to persist position')
-    } else {
-      status('Scroll failed')
-    }
-  })
-}
-
+// LIMITS: 1000 characters at page creation, 2000 on an in-place update. This
+// script is 633. A user-supplied script will not reliably fit, so whichever
+// ticket makes the script loadable has to solve windowing, probably with
+// contentOffset, which G2-3 established does window into content.
 export const teleprompter: Tool = {
   name: 'Teleprompter',
   // Losing your place mid-speech to a mistimed double tap is the failure this
-  // guards. Position now survives the exit (G2-7), so the cost is smaller than it
-  // was, but recovering still means navigating back through a menu that always
-  // reopens on the first tool, which is not something to do in front of an
-  // audience.
+  // guards, and it matters more now that position is not saved: leaving means
+  // scrolling back by hand rather than reopening where you were.
   confirmOnExit: true,
-  initialContent: () => slice(line),
-  hydrate: async () => {
-    line = await readWithTimeout(readStoredLine(), 0)
-  },
-  onScroll: scroll,
+  initialContent: () => SCRIPT.join('\n'),
 }
