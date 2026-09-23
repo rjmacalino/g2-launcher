@@ -9,13 +9,17 @@ import {
 import { bridge, status } from './bridge'
 import {
   CANVAS_WIDTH,
+  CONFIRM_LIST_HEIGHT,
+  CONFIRM_LIST_Y,
+  CONFIRM_TITLE_HEIGHT,
+  CONTAINER_ID_CONFIRM_TITLE,
   CONTAINER_ID_CONTENT,
+  CONTAINER_NAME_CONFIRM_TITLE,
   CONTAINER_NAME_CONTENT,
   CONTENT_HEIGHT,
-  CONTENT_ROWS,
   CONTENT_Y,
+  LIST_ITEM_WIDTH,
   PADDING,
-  setContent,
 } from './page'
 import { readWithTimeout } from './storage'
 import {
@@ -25,7 +29,7 @@ import {
   stopStatusBar,
 } from './statusbar'
 import { persistScreen, readStoredScreen, type Screen } from './screen'
-import { TOOLS, TOOL_NAMES, type Tool } from './tools'
+import { TOOLS, TOOL_NAMES } from './tools'
 
 // The shell. Owns which page is showing, builds pages, and routes input. It knows
 // tools only through the Tool interface, so adding one is a new file plus an entry
@@ -37,71 +41,102 @@ function activeTool() {
   return screen.kind === 'tool' ? TOOLS[screen.index] : null
 }
 
-// Whether the active tool is currently asking whether to leave, and which answer
-// is selected.
+// Whether the active tool is currently asking whether to leave.
 //
 // Not part of Screen, and deliberately not persisted. A cold start should never
 // restore the wearer into a half-answered question about a page they cannot
 // remember opening.
 let confirming = false
 
-// 0 is No, 1 is Yes. Defaults to No every time the prompt opens, so the dangerous
-// answer is never the one already selected when a wearer taps without reading.
+// No is index 0, Yes is index 1. Firmware defaults a fresh list's highlight to
+// index 0, which conveniently means the dangerous answer is never pre-selected
+// without any code having to arrange it.
 const CONFIRM_NO = 0
 const CONFIRM_YES = 1
-let confirmChoice: 0 | 1 = CONFIRM_NO
 
-// Back to a single-container swap, per a direct decision after the two-container
-// dimmed-overlay attempt (#30) turned out to be undrawable: a text container has
-// no background fill, so zOrderIndex controls DRAW ORDER, not occlusion. Two text
-// containers sharing the same rows render both sets of glyphs interleaved, not
-// one hiding the other. That was visible on hardware as garbled overlapping text,
-// and it explained an earlier report that the marker only seemed to respond once
-// scrolled to the very end of the script: both texts were changing on every
-// scroll tick and unreadable until the script hit its bound and stopped moving,
-// leaving only the marker's own change visible.
+// A NATIVE LIST, not hand-drawn text. Two things forced this, both discovered on
+// hardware rather than anticipated (see page.ts for the full account):
 //
-// This version writes the prompt directly into the tool's own content container,
-// replacing the script. One container, so there is nothing to overlap with.
+//   - two overlapping text containers do not occlude, they interleave glyphs
+//   - a single re-pushed text container never overflows, so every scroll gesture
+//     looks identical to the firmware and it bounces on every move rather than
+//     only at the real ends of the No/Yes choice
 //
-// Known cost, accepted: this IS a content change, and every content change resets
-// the firmware's scroll. Cancelling returns to the top of the script rather than
-// to where the wearer was reading. That is the trade #29 first shipped and #30
-// spent three rounds trying to avoid; it is not being reopened here.
+// A list container sidesteps both: it is the SAME widget the launcher menu
+// already uses, firmware owns highlight and scroll, and it bounces correctly at
+// its own genuine boundaries because the firmware's own selection state IS the
+// boundary, not something we are faking with padded text.
 //
-// A marker you move beats a gesture you have to be told about. Labels are padded
-// to a common width so the marker holds one column, otherwise it tracks the label
-// length and appears to jump sideways as the selection moves.
-function confirmText(toolName: string): string {
-  const row = (label: string, value: 0 | 1) =>
-    `${label.padEnd(3)} ${confirmChoice === value ? '<' : ''}`.trimEnd()
-
-  const lines = [`End ${toolName}`, '', row('No', CONFIRM_NO), row('Yes', CONFIRM_YES)]
-
-  // Vertically centred by padding with blank rows, computed from how many rows
-  // actually fit rather than a fixed guess.
-  const padding = Math.max(0, Math.floor((CONTENT_ROWS - lines.length) / 2))
-  return '\n'.repeat(padding) + lines.join('\n')
+// This costs a rebuild to enter and a rebuild to exit, rather than the
+// flicker-free upgrade the earlier text-based attempts used. Accepted: a rebuild
+// already resets the tool's scroll position, which was already an accepted cost
+// of showing this prompt at all (see toolContainers / cancelConfirm below), so
+// switching to a list adds no NEW loss, only the existing one plus a visible
+// redraw.
+function confirmContainers(toolName: string) {
+  const bar = statusBarContainers()
+  return {
+    containerTotalNum: bar.length + 2,
+    textObject: [
+      ...bar,
+      new TextContainerProperty({
+        xPosition: 0,
+        yPosition: CONTENT_Y,
+        width: CANVAS_WIDTH,
+        height: CONFIRM_TITLE_HEIGHT,
+        borderWidth: 0,
+        paddingLength: PADDING,
+        containerID: CONTAINER_ID_CONFIRM_TITLE,
+        containerName: CONTAINER_NAME_CONFIRM_TITLE,
+        content: `End ${toolName}`,
+        isEventCapture: 0,
+      }),
+    ],
+    listObject: [
+      new ListContainerProperty({
+        xPosition: 0,
+        yPosition: CONFIRM_LIST_Y,
+        width: CANVAS_WIDTH,
+        height: CONFIRM_LIST_HEIGHT,
+        borderWidth: 0,
+        paddingLength: PADDING,
+        containerID: CONTAINER_ID_CONTENT,
+        containerName: CONTAINER_NAME_CONTENT,
+        isEventCapture: 1,
+        itemContainer: new ListItemContainerProperty({
+          itemCount: 2,
+          itemWidth: LIST_ITEM_WIDTH,
+          isItemSelectBorderEn: 1,
+          itemName: ['No', 'Yes'],
+        }),
+      }),
+    ],
+  }
 }
 
 function enterConfirm(toolName: string) {
-  confirming = true
-  confirmChoice = CONFIRM_NO
-  setContent(confirmText(toolName))
+  bridge.rebuildPageContainer(new RebuildPageContainer(confirmContainers(toolName))).then(ok => {
+    if (ok) {
+      confirming = true
+    } else {
+      status('Failed to open leave prompt')
+    }
+  })
 }
 
-function moveConfirm(next: 0 | 1, toolName: string) {
-  if (confirmChoice === next) return
-  confirmChoice = next
-  setContent(confirmText(toolName))
-}
-
-// Put the tool's own content back. For the teleprompter this is the whole script
-// from the top, since G2-17 removed position tracking entirely; there is no
-// "line the wearer was on" to return to any more.
-function cancelConfirm(tool: Tool) {
-  confirming = false
-  setContent(tool.initialContent())
+// Rebuild back to the tool's own containers. For the teleprompter this shows the
+// whole script from the top, since G2-17 removed position tracking entirely;
+// there is no "line the wearer was on" to return to any more.
+function cancelConfirm(index: number) {
+  bridge.rebuildPageContainer(new RebuildPageContainer(toolContainers(index))).then(ok => {
+    if (ok) {
+      confirming = false
+    } else {
+      // Stuck between two container layouts is worse than exiting. Same
+      // fail-toward-exit reasoning as requestExit elsewhere in this file.
+      requestExit()
+    }
+  })
 }
 
 // Ceiling on the restore rebuild. Anything awaited between page creation and
@@ -136,7 +171,7 @@ const menuList = new ListContainerProperty({
   isEventCapture: 1,
   itemContainer: new ListItemContainerProperty({
     itemCount: TOOLS.length,
-    itemWidth: CANVAS_WIDTH,
+    itemWidth: LIST_ITEM_WIDTH,
     isItemSelectBorderEn: 1,
     itemName: [...TOOL_NAMES],
   }),
@@ -334,14 +369,22 @@ function eventTypeOf(envelope?: { eventType?: OsEventTypeList }): OsEventTypeLis
 //   - textEvent -> scroll gestures and clicks on text containers
 //   - listEvent -> list item events (highlight, click)
 //
-//   1. Double-tap -> back. On a tool page that means the menu; on the menu there
-//      is nowhere further back, so it means exit. Must be first so nothing below
-//      can swallow the one gesture that guarantees the wearer can leave.
-//   2. Foreground enter and exit -> resume and suspend the active tool and the
+//   1. The leave prompt, if open, intercepts EVERYTHING, including double-tap.
+//      This has to come before the double-tap-exits check below, not after:
+//      while the prompt is showing, tap and double-tap both mean "take the
+//      highlighted answer", not "go back" or "exit". No is on the list, so
+//      selecting it and tapping already cancels; a separate cancel gesture
+//      would be redundant and would make double-tap behave inconsistently
+//      depending on whether a prompt happens to be open.
+//   2. Double-tap -> back. On a tool page that means the menu; on the menu
+//      there is nowhere further back, so it means exit. Must be first among
+//      the remaining checks so nothing below can swallow the one gesture that
+//      guarantees the wearer can leave.
+//   3. Foreground enter and exit -> resume and suspend the active tool and the
 //      clock.
-//   3. listEvent click on the menu -> open the highlighted tool.
-//   4. Scroll on a tool page -> the tool's onScroll, if it has one.
-//   5. Exit events -> close the active tool, unsubscribe.
+//   4. listEvent click on the menu -> open the highlighted tool.
+//   5. Scroll on a tool page -> the tool's onScroll, if it has one.
+//   6. Exit events -> close the active tool, unsubscribe.
 //
 // Tap on a tool page reaches the tool only through onScroll today. Tap is defined
 // as "forward" in the gesture rules and is free for a tool to claim.
@@ -349,21 +392,39 @@ const unsubscribe = bridge.onEvenHubEvent(event => {
   const sysType = eventTypeOf(event.sysEvent)
   const textType = eventTypeOf(event.textEvent)
   const listType = eventTypeOf(event.listEvent)
+  const listEvent = event.listEvent
 
   const isDoubleTap =
     sysType === OsEventTypeList.DOUBLE_CLICK_EVENT ||
     textType === OsEventTypeList.DOUBLE_CLICK_EVENT ||
     listType === OsEventTypeList.DOUBLE_CLICK_EVENT
 
+  // The leave prompt is a real ListContainerProperty (see confirmContainers),
+  // so scroll-to-highlight and its boundary bounce are entirely firmware's job.
+  // We only need to react when something is chosen. Both a plain click and a
+  // double-click on the list commit whatever is currently highlighted, which is
+  // why isTap is not enough here on its own; listType covers list clicks and
+  // catching DOUBLE_CLICK_EVENT here specifically is what stops an accidental
+  // double-tap from falling through to the exit branch below.
+  if (confirming && screen.kind === 'tool') {
+    if (listEvent && (listType === OsEventTypeList.CLICK_EVENT || listType === OsEventTypeList.DOUBLE_CLICK_EVENT)) {
+      const choice = listEvent.currentSelectItemIndex ?? CONFIRM_NO
+      if (choice === CONFIRM_YES) {
+        confirming = false
+        returnToMenu()
+      } else {
+        cancelConfirm(screen.index)
+      }
+    }
+    // Any other event while the prompt is open (scroll, an unrelated click) is
+    // swallowed here: firmware already handled scroll on the list itself, and
+    // nothing else should reach the tool underneath while a question is open.
+    return
+  }
+
   if (isDoubleTap) {
     if (screen.kind === 'tool') {
       const tool = TOOLS[screen.index]
-      // Double tap means back, and from the prompt back is the tool you came
-      // from. So the same gesture that raised the question also dismisses it.
-      if (confirming) {
-        cancelConfirm(tool)
-        return
-      }
       if (tool.confirmOnExit) {
         enterConfirm(tool.name)
         return
@@ -400,46 +461,8 @@ const unsubscribe = bridge.onEvenHubEvent(event => {
   // values, so tapping the first row can arrive as `undefined`. Resolve the
   // default INSIDE the branch where we already know listEvent exists and the
   // event is a click.
-  const listEvent = event.listEvent
   if (listEvent && listType === OsEventTypeList.CLICK_EVENT && screen.kind === 'menu') {
     openTool(listEvent.currentSelectItemIndex ?? 0)
-    return
-  }
-
-  // The leave prompt. Scroll moves the marker, tap takes the selected answer,
-  // which is the same vocabulary as the launcher menu rather than a special case
-  // the wearer has to be taught.
-  //
-  // Everything here is swallowed, including gestures that mean nothing, so no
-  // input reaches the tool behind the prompt while a question is open.
-  if (confirming) {
-    const tool = activeTool()
-    if (!tool) {
-      // Cannot happen: confirming is only ever set on a tool page and every
-      // navigation clears it. Bail rather than trap the wearer behind a prompt
-      // with nothing to answer for.
-      confirming = false
-      return
-    }
-
-    if (sysType === OsEventTypeList.CLICK_EVENT || textType === OsEventTypeList.CLICK_EVENT) {
-      if (confirmChoice === CONFIRM_YES) {
-        returnToMenu()
-      } else {
-        cancelConfirm(tool)
-      }
-      return
-    }
-
-    // Two options, so up is always No and down is always Yes. Absolute rather
-    // than a toggle: scrolling up twice should leave you on No, not flip you
-    // back to Yes, and a wearer who is not sure which way they scrolled can
-    // press up and know where they landed.
-    if (textType === OsEventTypeList.SCROLL_TOP_EVENT) {
-      moveConfirm(CONFIRM_NO, tool.name)
-    } else if (textType === OsEventTypeList.SCROLL_BOTTOM_EVENT) {
-      moveConfirm(CONFIRM_YES, tool.name)
-    }
     return
   }
 

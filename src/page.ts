@@ -28,6 +28,19 @@ export const CONTENT_GAP = 8
 export const CONTENT_Y = STATUS_BAR_HEIGHT + CONTENT_GAP
 export const CONTENT_HEIGHT = CANVAS_HEIGHT - CONTENT_Y
 
+// A list item's native selection border draws a rounded rectangle at the item's
+// own bounds. When itemWidth runs flush to the canvas edge (right edge at
+// x = CANVAS_WIDTH, same as the canvas itself), the border's right side has
+// nowhere left to render and gets clipped, while the left side, sitting a full
+// border-width inside x = 0, renders cleanly. Confirmed visually: the menu list's
+// highlight box was a clean rounded rect on the left and cut off flat on the
+// right.
+//
+// Inset by PADDING on the side that was clipping, so the box sits fully inside
+// canvas bounds and the border renders symmetrically, matching the left side
+// rather than the left side being the accidental exception.
+export const LIST_ITEM_WIDTH = CANVAS_WIDTH - PADDING
+
 // Measured rather than estimated: on the simulator consecutive rendered lines sat
 // exactly 27px apart, and a blank line cost exactly 54. The firmware owns text
 // metrics and does not report them, so this is the one number here that came from
@@ -52,9 +65,22 @@ export const CONTAINER_ID_STATUS_RIGHT = 3
 export const CONTAINER_ID_CONTENT = 4
 export const CONTAINER_NAME_CONTENT = 'tool'
 
-// GEOMETRY-LEVEL DEAD END, kept as a note rather than deleted quietly: a second
-// container layered over content (a "modal") was tried twice and both routes
-// failed for platform reasons rather than implementation bugs.
+// The leave-confirm prompt is a native list, not hand-drawn text. See the note
+// below for why. It occupies the SAME content slot (rebuilding replaces whatever
+// is at CONTAINER_ID_CONTENT), plus a small title strip above it at a distinct ID.
+// Title and list sit at different y-ranges, so unlike the dead-end below there is
+// nothing here for two containers to fight over.
+export const CONTAINER_ID_CONFIRM_TITLE = 5
+export const CONTAINER_NAME_CONFIRM_TITLE = 'confirm.title'
+
+export const CONFIRM_TITLE_HEIGHT = STATUS_BAR_HEIGHT
+export const CONFIRM_LIST_Y = CONTENT_Y + CONFIRM_TITLE_HEIGHT
+export const CONFIRM_LIST_HEIGHT = CONTENT_HEIGHT - CONFIRM_TITLE_HEIGHT
+
+// GEOMETRY-LEVEL DEAD ENDS, kept as notes rather than deleted quietly.
+//
+// A second container layered over content (a "modal") was tried twice and both
+// routes failed for platform reasons rather than implementation bugs.
 //
 // An image container occludes reliably (every pixel value paints, none are
 // transparent) but cannot be cleared: a zero-length push returns sendFailed, and
@@ -67,11 +93,20 @@ export const CONTAINER_NAME_CONTENT = 'tool'
 // interleaved rather than one hiding the other, confirmed on hardware as garbled
 // overlapping text.
 //
-// So a prompt has to replace the content container's own text. See setContent
-// below and its callers in main.ts for the accepted cost: any content change
-// resets the firmware's scroll, so showing a prompt this way loses the reading
-// position. That trade was made directly after seeing the overlap failure rather
-// than being an oversight.
+// A THIRD attempt replaced the content container's own text with hand-drawn
+// prompt lines and a "<" marker, re-sent on every scroll tick. That avoided the
+// overlap, but it bounced on every single move rather than only at the genuine
+// ends of the No/Yes choice. The reason: a container that is re-pushed small and
+// non-overflowing on every tick never gives the firmware anything to scroll, so
+// every gesture looks identical to the firmware regardless of direction or
+// position, and it plays the boundary animation every time. Getting a bounce
+// only at real edges needs the firmware to own genuine scroll state, which a
+// repush-per-tick design cannot provide.
+//
+// The fix is CONFIRM_LIST below: a native ListContainerProperty, exactly the
+// widget the launcher menu already uses. Firmware owns highlight, scroll, and
+// boundary bounce, and reports the chosen index back on click. No hand-rolled
+// marker, no re-push per tick, correct bounce behaviour for free.
 
 // Replace the text in the content area, in place, with no page rebuild.
 //
