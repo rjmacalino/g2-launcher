@@ -451,11 +451,15 @@ function eventTypeOf(envelope?: { eventType?: OsEventTypeList }): OsEventTypeLis
 //   3. Foreground enter and exit -> resume and suspend the active tool and the
 //      clock.
 //   4. listEvent click on the menu -> open the highlighted tool.
-//   5. Scroll on a tool page -> the tool's onScroll, if it has one.
-//   6. Exit events -> close the active tool, unsubscribe.
+//   5. listEvent click inside a tool's own list content -> the tool's
+//      onListSelect, if it has one.
+//   6. Long press on a tool page -> the tool's onLongPress, if it has one.
+//   7. Scroll on a tool page -> the tool's onScroll, if it has one.
+//   8. Exit events -> close the active tool, unsubscribe.
 //
-// Tap on a tool page reaches the tool only through onScroll today. Tap is defined
-// as "forward" in the gesture rules and is free for a tool to claim.
+// Tap on a tool page reaches the tool only through onListSelect (list content)
+// or onScroll (text content) today. Tap is defined as "forward" in the gesture
+// rules and is free for a tool to claim either way.
 const unsubscribe = bridge.onEvenHubEvent(event => {
   const sysType = eventTypeOf(event.sysEvent)
   const textType = eventTypeOf(event.textEvent)
@@ -557,6 +561,15 @@ const unsubscribe = bridge.onEvenHubEvent(event => {
         })
       return
     }
+  }
+
+  // Long press on a tool page. Free for a tool to claim (see the gesture
+  // rules): neither forward nor back, so it is where an action that is
+  // genuinely neither belongs. LONG_PRESS_EVENT is 9, non-zero, so the
+  // zero-elision trap does not apply here either.
+  if (sysType === OsEventTypeList.LONG_PRESS_EVENT) {
+    activeTool()?.onLongPress?.()
+    return
   }
 
   // Scroll on a tool page. SCROLL_TOP_EVENT and SCROLL_BOTTOM_EVENT are 1 and 2,

@@ -1,5 +1,6 @@
 import type { Tool } from './types'
 import { gps } from './gps'
+import { notesTool } from './notes'
 import { teleprompter } from './teleprompter'
 
 export type { Tool } from './types'
@@ -22,13 +23,14 @@ function placeholder(name: string): Tool {
 // currentSelectItemIndex, and that index is what gets persisted in ui.screen, so
 // reordering this array changes what a stored screen restores to.
 //
-// Weather and Notes are placeholders. Weather needs a proxy, because an API key
-// cannot ship inside an extractable package. Notes needs a decision about where
-// text comes from on a device with no keyboard.
+// Weather is still a placeholder; it needs a proxy, because an API key cannot
+// ship inside an extractable package. Notes is real: authoring happens on the
+// companion page (no keyboard on the glasses), and the glasses side is a
+// checklist tool (see ./notes).
 export const TOOLS: readonly Tool[] = [
   placeholder('Weather'),
   gps,
-  placeholder('Notes'),
+  notesTool,
   teleprompter,
 ]
 

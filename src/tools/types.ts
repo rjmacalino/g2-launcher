@@ -108,4 +108,11 @@ export type Tool = {
   // Scroll gesture while this tool is showing. Only called for the active tool,
   // which is why no tool needs to check whether it is the one on screen.
   onScroll?(delta: 1 | -1): void
+
+  // Long press while this tool is showing. Free for a tool to claim: per the
+  // gesture rules, tap is always forward and double tap is always back, so
+  // long press is the one gesture left for an action that is neither -
+  // Notes uses it to reset a checklist's done state, which is not navigation
+  // in either direction. Unassigned until a tool needs it; most never will.
+  onLongPress?(): void
 }
