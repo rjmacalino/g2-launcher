@@ -52,12 +52,92 @@ export const CONTAINER_ID_STATUS_RIGHT = 3
 export const CONTAINER_ID_CONTENT = 4
 export const CONTAINER_NAME_CONTENT = 'tool'
 
+// The modal sits in its own container so the content container is never touched
+// while a prompt is open. That is the whole design: every content change resets
+// the firmware's scroll, so a modal that writes into the content container costs
+// the wearer their place in whatever they were reading.
+//
+// It needs no off switch. Text containers have no background fill, so an empty
+// one draws nothing at all. This was not true of the image container we tried
+// first, which could be drawn but never cleared.
+export const CONTAINER_ID_MODAL = 5
+export const CONTAINER_NAME_MODAL = 'modal'
+
+// Covers the whole content area, but never the status bar. The clock stays
+// readable with a prompt open, which is the difference between a dialog inside
+// the app and one that takes over the glasses.
+//
+// Full area for a practical reason as well as a visual one. The content
+// container keeps input capture while the prompt is open, because capture is
+// fixed at page creation and moving it means a rebuild, which costs the scroll
+// position. So a scroll aimed at the marker also scrolls the tool behind. At full
+// area that movement is hidden rather than distracting.
+export const MODAL_WIDTH = CANVAS_WIDTH
+export const MODAL_HEIGHT = CONTENT_HEIGHT
+export const MODAL_X = 0
+export const MODAL_Y = CONTENT_Y
+
+// zOrderIndex is all or nothing per page: once any container sets it, every
+// container must set a unique one. Larger renders in front, so the modal sits
+// above the content it is drawn over.
+export const Z_STATUS_LEFT = 1
+export const Z_STATUS_CENTRE = 2
+export const Z_STATUS_RIGHT = 3
+export const Z_CONTENT = 4
+export const Z_MODAL = 5
+
+// Brightness levels, 0 to 4. Text drawn at 0 is dimmed rather than hidden, which
+// is what gives the faded backdrop behind an open modal.
+export const BRIGHTNESS_NORMAL = 4
+export const BRIGHTNESS_DIMMED = 0
+
 // Replace the text in the content area, in place, with no page rebuild.
 //
 // Tools call this rather than building their own TextContainerUpgrade, so no tool
 // needs to know a container ID. A tool that guessed one wrong would write over the
 // status bar, and the whole reason the IDs are fixed is that nothing should be
 // relying on getting that right.
+// Change the content area's brightness WITHOUT touching its text.
+//
+// The omitted `content` field is the point, not an oversight. Every upgrade that
+// carries content resets the firmware's scroll position to the top. A
+// brightness-only upgrade does not, which was verified on hardware rather than
+// assumed: dimming a scrolled teleprompter and brightening it again left the
+// wearer exactly where they were reading.
+//
+// That is what makes a modal possible at all. Dim the tool, draw the prompt over
+// it, restore brightness afterwards, and the tool never knew anything happened.
+export function setContentBrightness(level: number): Promise<boolean> {
+  return bridge
+    .textContainerUpgrade(
+      new TextContainerUpgrade({
+        containerID: CONTAINER_ID_CONTENT,
+        containerName: CONTAINER_NAME_CONTENT,
+        textColor: level,
+      }),
+    )
+    .then(ok => {
+      if (!ok) status('Brightness change failed')
+      return ok
+    })
+}
+
+// Draw the modal, or clear it by passing an empty string.
+export function setModalText(text: string): Promise<boolean> {
+  return bridge
+    .textContainerUpgrade(
+      new TextContainerUpgrade({
+        containerID: CONTAINER_ID_MODAL,
+        containerName: CONTAINER_NAME_MODAL,
+        content: text,
+      }),
+    )
+    .then(ok => {
+      if (!ok) status('Modal update failed')
+      return ok
+    })
+}
+
 export function setContent(text: string): Promise<boolean> {
   return bridge
     .textContainerUpgrade(
