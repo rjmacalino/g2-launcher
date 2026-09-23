@@ -48,6 +48,13 @@ export function refresh(): Promise<void> {
     const loc = await getCurrentLocation()
     if (!loc) {
       state = 'unavailable'
+      // Distinguishes "never got a location fix" from a forecast fetch
+      // failing below - both used to collapse into the same silent
+      // "unavailable", which made this undiagnosable from the status strip
+      // alone. A denied/unavailable permission and a request that simply
+      // timed out still look the same from here (see location.ts), but at
+      // least which STAGE failed is now visible.
+      status('Weather: no location fix (permission denied, or no fix in time)')
       return
     }
 
@@ -56,9 +63,9 @@ export function refresh(): Promise<void> {
       daily = result.daily
       state = 'ready'
       setWeather(result.current)
-    } catch {
+    } catch (e) {
       state = 'unavailable'
-      status('Weather update failed')
+      status(`Weather update failed: ${e instanceof Error ? e.message : String(e)}`)
     }
   })().finally(() => {
     inFlight = null
