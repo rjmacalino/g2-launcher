@@ -187,11 +187,50 @@ export async function hydrate(): Promise<void> {
   config = await readWithTimeout(readConfig(), { ...DEFAULTS })
 }
 
+// DIAGNOSTIC, temporary. Confirmed on real hardware (not the simulator, which
+// was checked and ruled out first): thin vertical tick marks appear in the
+// status bar row, aligned with the boundaries between the three slot
+// containers. No code anywhere sets a border, no character resembling one is
+// in any rendered string, and no zOrderIndex remains in this codebase - two
+// searches of the source have found no explanation.
+//
+// The one thing not yet tested: whether this is a firmware behaviour tied
+// specifically to placing multiple sibling text containers edge to edge on
+// the same row, something the docs do not mention and cannot be verified
+// without hardware. STATUS_BAR_SINGLE_CONTAINER_TEST, when true, collapses
+// the three slots into one combined container to test exactly that: if the
+// ticks disappear, adjacent containers are the cause; if they do not, this
+// theory is wrong too and needs abandoning like the last one, not iterating
+// on again blind. Revert once answered either way.
+const STATUS_BAR_SINGLE_CONTAINER_TEST = true
+
 // The bar's containers. Every page builder spreads these in, which is what makes a
 // page without a bar impossible to construct. They record what they drew so the
 // tick can dedupe against it.
 export function statusBarContainers(): TextContainerProperty[] {
   const now = new Date()
+
+  if (STATUS_BAR_SINGLE_CONTAINER_TEST) {
+    const text = SLOTS.map(slot => renderSlot(slot, now))
+      .filter(s => s.length > 0)
+      .join('   ')
+    lastText.set(CONTAINER_ID_STATUS_LEFT, text)
+    return [
+      new TextContainerProperty({
+        xPosition: 0,
+        yPosition: 0,
+        width: 576,
+        height: STATUS_BAR_HEIGHT,
+        borderWidth: 0,
+        paddingLength: PADDING,
+        containerID: CONTAINER_ID_STATUS_LEFT,
+        containerName: 'status.combined',
+        content: text,
+        isEventCapture: 0,
+      }),
+    ]
+  }
+
   return SLOTS.map(slot => {
     const text = renderSlot(slot, now)
     lastText.set(slot.id, text)
@@ -219,6 +258,27 @@ export function statusBarContainers(): TextContainerProperty[] {
 
 function refresh() {
   const now = new Date()
+
+  if (STATUS_BAR_SINGLE_CONTAINER_TEST) {
+    const text = SLOTS.map(slot => renderSlot(slot, now))
+      .filter(s => s.length > 0)
+      .join('   ')
+    if (lastText.get(CONTAINER_ID_STATUS_LEFT) === text) return
+    lastText.set(CONTAINER_ID_STATUS_LEFT, text)
+    bridge
+      .textContainerUpgrade(
+        new TextContainerUpgrade({
+          containerID: CONTAINER_ID_STATUS_LEFT,
+          containerName: 'status.combined',
+          content: text,
+        }),
+      )
+      .then(ok => {
+        if (!ok) status('Status bar update failed')
+      })
+    return
+  }
+
   for (const slot of SLOTS) {
     const text = renderSlot(slot, now)
     if (lastText.get(slot.id) === text) continue
