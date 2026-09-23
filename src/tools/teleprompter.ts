@@ -1,55 +1,87 @@
-import { getActiveScriptId, scripts } from '../data'
+import { scripts, setActiveScriptId, type Item } from '../data'
 import type { Tool } from './types'
 
-// The script used to be a hardcoded array in this file. It is now whatever the
-// wearer wrote on the phone companion page and marked active, per direct
-// request. Line breaks are no longer ours to choose: since G2-19 the firmware
-// scrolls the whole body natively, so a user-supplied script wraps to the full
-// width on its own.
-const FALLBACK_SCRIPT = 'No script loaded.\n\nAdd one on your phone,\nthen mark it active.'
+// The script used to be a hardcoded array in this file, then whatever was
+// marked "active" on the phone. Per direct request, the glasses themselves now
+// have their own picker: open Teleprompter, see the saved scripts, tap one to
+// load it. Authoring stays phone-only (typing on the glasses is out of scope,
+// by choice); choosing which one to read does not have to be.
+const FALLBACK_SCRIPT = 'No script loaded.\n\nAdd one on your phone,\nor pick one here.'
+const EMPTY_LIST_ITEM = 'No scripts yet. Add one on your phone.'
 
-// The single source of truth while the app is running. Reading storage on
-// every open would mean an async gap between the page existing and content
-// being correct; keeping this in memory means initialContent (which must be
-// synchronous, see types.ts) always has the right answer immediately.
-//
-// The companion editor updates this directly, in the same running JS
-// instance, whenever the active script is created, edited, or reassigned. See
-// setActiveScriptContent below.
+// 'list' is the picker, 'text' is reading. Names match Tool.contentKind's own
+// vocabulary directly rather than a separate picker/reading enum that would
+// just need translating at the boundary.
+type Mode = 'list' | 'text'
+let mode: Mode = 'list'
+
+// Cached for the CURRENT open only, refreshed in beforeOpen (awaited by the
+// shell before the page is built, see types.ts) so contentKind, listItems and
+// initialContent - all synchronous - have correct data the instant they run.
+let pickerScripts: Item[] = []
+
 let currentScript = FALLBACK_SCRIPT
+let currentScriptId: string | null = null
 
-async function loadActiveScript(): Promise<void> {
-  const id = await getActiveScriptId()
-  if (!id) {
-    currentScript = FALLBACK_SCRIPT
-    return
-  }
-  const all = await scripts.readAll()
-  const found = all.find(s => s.id === id)
-  currentScript = found && found.body.trim().length > 0 ? found.body : FALLBACK_SCRIPT
+async function refresh(): Promise<void> {
+  pickerScripts = (await scripts.readAll()).sort((a, b) => b.updatedAt - a.updatedAt)
+  // Always reopens to the picker. There is no way to pre-select a specific row
+  // in a native list (the firmware itself always defaults highlight to index
+  // 0, the same limitation #7 found for the launcher menu), so remembering
+  // "the last one" would not even be visible as a highlight, and silently
+  // auto-loading straight into reading would contradict the reason the picker
+  // exists: choosing is supposed to be a deliberate step, every time.
+  mode = 'list'
 }
 
-// Called by the companion page, not by anything on the glasses side. Keeps the
-// in-memory script correct the instant the wearer changes it, rather than
-// waiting for the next app restart to pick up a fresh hydrate().
+function pickScript(item: Item) {
+  currentScriptId = item.id
+  currentScript = item.body.trim().length > 0 ? item.body : FALLBACK_SCRIPT
+  mode = 'text'
+  // Keeps the phone's "Active" badge pointing at whichever script the wearer
+  // most recently chose, from either surface. A single shared notion of
+  // "active" rather than two that could quietly disagree.
+  setActiveScriptId(item.id)
+}
+
+// Live-sync entry points for the companion page. Both are guarded by the id
+// actually being the one currently on screen, so an edit or delete elsewhere
+// in the wearer's library has no visible effect until the tool is reopened.
 //
-// KNOWN LIMITATION: if the active script is edited or deleted while the
-// teleprompter is already open and scrolled, the glasses keep showing whatever
-// the firmware already rendered. Nothing pushes a mid-read update, on purpose:
-// the only way to change displayed content is textContainerUpgrade, and any
-// content change resets scroll position, which is the exact failure the leave
-// prompt spent five attempts avoiding. The new script takes effect next time
-// the tool is opened.
-export function setActiveScriptContent(body: string) {
-  currentScript = body.trim().length > 0 ? body : FALLBACK_SCRIPT
+// KNOWN LIMITATION: if the script actually on screen is edited or deleted
+// while it is open and the firmware has already scrolled it, the glasses keep
+// showing whatever is already rendered there. Nothing pushes a mid-read
+// update, on purpose: the only way to change displayed text is
+// textContainerUpgrade, and any content change resets the firmware's scroll
+// position, which is the exact failure the leave prompt spent five attempts
+// avoiding. The change takes effect next time the tool is opened.
+export function setActiveScriptContent(id: string, body: string) {
+  if (currentScriptId === id) {
+    currentScript = body.trim().length > 0 ? body : FALLBACK_SCRIPT
+  }
+}
+
+export function clearActiveScriptIfCurrent(id: string) {
+  if (currentScriptId === id) {
+    currentScriptId = null
+    currentScript = FALLBACK_SCRIPT
+  }
 }
 
 export const teleprompter: Tool = {
   name: 'Teleprompter',
-  // Losing your place mid-speech to a mistimed double tap is the failure this
-  // guards. Position is not saved (see page.ts for why), so leaving means
-  // navigating back by hand, not something to do in front of an audience.
-  confirmOnExit: true,
-  hydrate: loadActiveScript,
+  // Only while actually reading. Browsing the picker has nothing to lose, so
+  // a confirmation there would be friction with nothing behind it.
+  confirmOnExit: () => mode === 'text',
+  beforeOpen: refresh,
+  contentKind: () => mode,
+  listItems: () =>
+    pickerScripts.length > 0 ? pickerScripts.map(s => s.title || '(untitled)') : [EMPTY_LIST_ITEM],
+  onListSelect: index => {
+    const item = pickerScripts[index]
+    // Absent when the picker is showing the empty-state placeholder instead of
+    // a real script; a tap on that placeholder correctly does nothing.
+    if (item) pickScript(item)
+  },
   initialContent: () => currentScript,
 }

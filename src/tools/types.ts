@@ -20,11 +20,13 @@ export type Tool = {
 
   // Ask before leaving, instead of leaving immediately on double tap.
   //
-  // Opt in, not universal. A confirmation on a placeholder is friction with
-  // nothing to protect, while one on the teleprompter is the difference between
-  // a mistimed gesture costing a moment and costing your place mid-speech. Tools
-  // holding state a wearer would mind losing set this; the rest do not.
-  readonly confirmOnExit?: boolean
+  // A function, not a static flag, because whether leaving is dangerous can
+  // depend on the tool's own internal state. Teleprompter only wants this
+  // while actually reading a script; browsing its own script picker has
+  // nothing to lose, so a confirmation there would be pure friction.
+  //
+  // Opt in, not universal. A confirmation on a placeholder protects nothing.
+  confirmOnExit?(): boolean
 
   // What the content area shows the moment the page is built, before any async
   // work has had a chance to produce something better. Must be synchronous: it is
@@ -34,6 +36,31 @@ export type Tool = {
   // Restore persisted state at startup. Awaited (with a timeout) before the shell
   // decides what page to show, so initialContent can rely on it having run.
   hydrate?(): Promise<void>
+
+  // Refresh anything this tool wants freshly loaded before THIS particular
+  // open, awaited before the page is built. Unlike hydrate, which runs once at
+  // startup, this runs every time the tool is opened. Matters for a tool whose
+  // content can change while the app is already running: Teleprompter's script
+  // picker needs the list of saved scripts as they are right now, not as they
+  // were at launch.
+  beforeOpen?(): Promise<void>
+
+  // Which kind of content container this tool wants for its CURRENT open.
+  // 'text' is the default when omitted, matching every tool before this one.
+  // A tool can switch between the two across its own internal navigation:
+  // Teleprompter is a list (choosing a script) until one is picked, then text
+  // (reading it), and can return to the list on its next open.
+  contentKind?(): 'text' | 'list'
+
+  // Item labels shown when contentKind() is 'list'. Native firmware selection
+  // and highlight, the same widget the launcher menu itself uses.
+  listItems?(): string[]
+
+  // A list item was tapped while this tool owns the content area (only
+  // relevant when contentKind() is 'list'). Called BEFORE the shell rebuilds,
+  // so the tool should update whatever internal state contentKind, listItems
+  // and initialContent will read on the rebuild this triggers.
+  onListSelect?(index: number): void
 
   // The page is now on screen. Start subscriptions and timers here rather than in
   // initialContent, because anything that updates the content area needs the

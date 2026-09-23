@@ -137,25 +137,62 @@ const menuList = new ListContainerProperty({
 // the one every tool's setContent targets. Full CONTENT_HEIGHT, no reserved
 // space: see page.ts for why a permanently smaller reading area was tried and
 // reverted.
+//
+// A tool can ask for its content slot as a list instead of text (see
+// Tool.contentKind in types.ts). Only Teleprompter uses this today, for its
+// script picker, and it is the same ListContainerProperty shape as the menu:
+// firmware owns highlight and scroll, we only react to a click.
+function toolListContent(tool: Tool): ListContainerProperty {
+  const items = tool.listItems?.() ?? []
+  return new ListContainerProperty({
+    xPosition: 0,
+    yPosition: CONTENT_Y,
+    width: CANVAS_WIDTH,
+    height: CONTENT_HEIGHT,
+    borderWidth: 0,
+    paddingLength: PADDING,
+    containerID: CONTAINER_ID_CONTENT,
+    containerName: CONTAINER_NAME_CONTENT,
+    isEventCapture: 1,
+    itemContainer: new ListItemContainerProperty({
+      itemCount: items.length,
+      itemWidth: LIST_ITEM_WIDTH,
+      isItemSelectBorderEn: 1,
+      itemName: items,
+    }),
+  })
+}
+
+function toolTextContent(tool: Tool): TextContainerProperty {
+  return new TextContainerProperty({
+    xPosition: 0,
+    yPosition: CONTENT_Y,
+    width: CANVAS_WIDTH,
+    height: CONTENT_HEIGHT,
+    borderWidth: 0,
+    paddingLength: PADDING,
+    containerID: CONTAINER_ID_CONTENT,
+    containerName: CONTAINER_NAME_CONTENT,
+    content: tool.initialContent(),
+    isEventCapture: 1,
+  })
+}
+
 function toolContainers(index: number) {
+  const tool = TOOLS[index]
   const bar = statusBarContainers()
+
+  if ((tool.contentKind?.() ?? 'text') === 'list') {
+    return {
+      containerTotalNum: bar.length + 1,
+      textObject: bar,
+      listObject: [toolListContent(tool)],
+    }
+  }
+
   return {
     containerTotalNum: bar.length + 1,
-    textObject: [
-      ...bar,
-      new TextContainerProperty({
-        xPosition: 0,
-        yPosition: CONTENT_Y,
-        width: CANVAS_WIDTH,
-        height: CONTENT_HEIGHT,
-        borderWidth: 0,
-        paddingLength: PADDING,
-        containerID: CONTAINER_ID_CONTENT,
-        containerName: CONTAINER_NAME_CONTENT,
-        content: TOOLS[index].initialContent(),
-        isEventCapture: 1,
-      }),
-    ],
+    textObject: [...bar, toolTextContent(tool)],
   }
 }
 
@@ -170,7 +207,7 @@ function menuContainers() {
 
 // --- Navigation -----------------------------------------------------------
 
-function openTool(index: number) {
+async function openTool(index: number) {
   if (index < 0 || index >= TOOLS.length) return
   // Any navigation clears the prompt. Cheaper to reset unconditionally here than
   // to reason about every path that could reach a new page with a stale flag set.
@@ -178,6 +215,12 @@ function openTool(index: number) {
   // there is nothing left over to clear.
   confirming = false
   const tool = TOOLS[index]
+
+  // Awaited before the page is built, so contentKind/listItems/initialContent
+  // (all synchronous, see types.ts) have current data the instant they run.
+  // Teleprompter uses this to read the latest saved scripts for its picker.
+  await tool.beforeOpen?.()
+
   bridge
     .rebuildPageContainer(new RebuildPageContainer(toolContainers(index)))
     .then(ok => {
@@ -276,6 +319,10 @@ const restoredScreen = await storedScreenPromise
 // never blocking the first frame on a storage read.
 if (restoredScreen && restoredScreen.kind === 'tool') {
   const tool = TOOLS[restoredScreen.index]
+  // Same reason as openTool: contentKind/listItems/initialContent need fresh
+  // data before toolContainers reads them, and this is the other place that
+  // reads them.
+  await tool.beforeOpen?.()
   const ok = await Promise.race([
     bridge.rebuildPageContainer(
       new RebuildPageContainer(toolContainers(restoredScreen.index)),
@@ -393,7 +440,7 @@ const unsubscribe = bridge.onEvenHubEvent(event => {
   if (isDoubleTap) {
     if (screen.kind === 'tool') {
       const tool = TOOLS[screen.index]
-      if (tool.confirmOnExit) {
+      if (tool.confirmOnExit?.()) {
         enterConfirm(tool.name)
         return
       }
@@ -432,6 +479,29 @@ const unsubscribe = bridge.onEvenHubEvent(event => {
   if (listEvent && listType === OsEventTypeList.CLICK_EVENT && screen.kind === 'menu') {
     openTool(listEvent.currentSelectItemIndex ?? 0)
     return
+  }
+
+  // A list click inside a tool's own content area (not the launcher menu).
+  // Only reachable when that tool's contentKind() is 'list', since that is the
+  // only way a tool page ever gets a list container in the first place.
+  //
+  // The tool updates its own internal state in onListSelect, then the shell
+  // rebuilds the SAME tool slot so the page reflects whatever contentKind,
+  // listItems or initialContent now return. This is a fresh page the wearer
+  // has not started reading yet, not a scrolled document, so a rebuild here
+  // costs nothing the way it would inside an open teleprompter.
+  if (listEvent && listType === OsEventTypeList.CLICK_EVENT && screen.kind === 'tool') {
+    const tool = TOOLS[screen.index]
+    if ((tool.contentKind?.() ?? 'text') === 'list') {
+      const index = listEvent.currentSelectItemIndex ?? 0
+      tool.onListSelect?.(index)
+      bridge
+        .rebuildPageContainer(new RebuildPageContainer(toolContainers(screen.index)))
+        .then(ok => {
+          if (!ok) status(`Failed to update ${tool.name}`)
+        })
+      return
+    }
   }
 
   // Scroll on a tool page. SCROLL_TOP_EVENT and SCROLL_BOTTOM_EVENT are 1 and 2,
