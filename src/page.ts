@@ -69,39 +69,37 @@ export const CONTAINER_NAME_CONFIRM_TITLE = 'confirm.title'
 // STATUS_BAR_HEIGHT, which is 5px taller because it was sized for the status
 // bar's own purpose, not for holding exactly one tight line of text here.
 export const CONFIRM_TITLE_HEIGHT = ROW_HEIGHT_PX
-export const CONFIRM_LIST_Y = CONTENT_Y + CONFIRM_TITLE_HEIGHT
 
-// UNVERIFIED HYPOTHESIS, recorded because the previous attempt at this gap
-// was wrong and should not be repeated blind.
+// CONFIRMED: list items render vertically CENTRED within their container, not
+// top-aligned like text. A large gap remained between the title and "No" even
+// with the two boxes positioned flush, zero pixels apart, which ruled out
+// positioning as the cause; shrinking the list box to roughly fit its two
+// items (rather than the whole leftover content area) closed the gap. The
+// launcher menu likely centres the same way, just with 4 items in a similarly
+// sized box, leaving much less spare room per item to disappear into.
 //
-// Shrinking the title box did not close the gap seen on hardware: a large
-// visible space remained between the question and "No" even though the title
-// and list boxes are positioned flush, zero pixels apart. That rules out
-// container positioning as the cause.
-//
-// The working theory is that list items render vertically CENTRED within
-// their container, not top-aligned like text. CONFIRM_LIST_HEIGHT was
-// previously CONTENT_HEIGHT - CONFIRM_TITLE_HEIGHT, about 220px, to hold just
-// two items - if they centre in that much space, most of it is blank space
-// above them, which is exactly the symptom reported. The launcher menu likely
-// shows the same centring but with 4 items in a similarly sized box, leaving
-// comparatively little empty space per item, which would be why it never
-// looked wrong there.
-//
-// ITEM_HEIGHT_ESTIMATE is a guess, not a measurement: double the text row
-// height, on the reasoning that a list row needs to be a bigger touch target
-// than a line of text, and nothing more precise than that. Sized for exactly
-// CONFIRM_ITEM_COUNT items rather than the leftover content area, so there is
-// little box left for centring to hide space inside.
-//
-// If this does not close the gap, the theory is wrong and needs abandoning
-// rather than iterating on the same guess; the way to actually pin this down
-// is the numbered-items calibration this project has used before (render a
-// list of distinct known items, observe on hardware, measure directly)
-// rather than guessing a second time.
+// ITEM_HEIGHT_ESTIMATE is still a guess, not a measurement: double the text
+// row height, on the reasoning that a list row needs to be a bigger touch
+// target than a line of text. It got the gap-closing behaviour right even if
+// the exact number is approximate; the real value would need the
+// numbered-items calibration this project has used before (render distinct
+// known items, observe on hardware, measure directly).
 const ITEM_HEIGHT_ESTIMATE = ROW_HEIGHT_PX * 2
 const CONFIRM_ITEM_COUNT = 2
 export const CONFIRM_LIST_HEIGHT = ITEM_HEIGHT_ESTIMATE * CONFIRM_ITEM_COUNT
+
+// With the gap closed, the title+list block is a compact ~135px sitting
+// inside a 248px content area, top-anchored right under the status bar. That
+// left a large, unbalanced dead zone below it, reported directly. Centring
+// the WHOLE block vertically within the content area reads as an actual
+// dialog rather than a page that ran out of content, and moves it down (per
+// direct request) without touching the just-fixed relationship between the
+// title and the list, which stays exactly as measured above.
+const CONFIRM_BLOCK_HEIGHT = CONFIRM_TITLE_HEIGHT + CONFIRM_LIST_HEIGHT
+const CONFIRM_BLOCK_OFFSET = Math.floor((CONTENT_HEIGHT - CONFIRM_BLOCK_HEIGHT) / 2)
+
+export const CONFIRM_TITLE_Y = CONTENT_Y + CONFIRM_BLOCK_OFFSET
+export const CONFIRM_LIST_Y = CONFIRM_TITLE_Y + CONFIRM_TITLE_HEIGHT
 
 // LEAVE-CONFIRM PROMPT: A RECORD OF WHAT DID NOT WORK, AND WHY THE SIXTH
 // ATTEMPT WAS WRONG TO REJECT THE FIFTH'S APPROACH.

@@ -12,6 +12,7 @@ import {
   CONFIRM_LIST_HEIGHT,
   CONFIRM_LIST_Y,
   CONFIRM_TITLE_HEIGHT,
+  CONFIRM_TITLE_Y,
   CONTAINER_ID_CONFIRM_TITLE,
   CONTAINER_ID_CONTENT,
   CONTAINER_NAME_CONFIRM_TITLE,
@@ -76,7 +77,7 @@ function confirmContainers(toolName: string) {
       ...bar,
       new TextContainerProperty({
         xPosition: 0,
-        yPosition: CONTENT_Y,
+        yPosition: CONFIRM_TITLE_Y,
         width: CANVAS_WIDTH,
         height: CONFIRM_TITLE_HEIGHT,
         borderWidth: 0,
