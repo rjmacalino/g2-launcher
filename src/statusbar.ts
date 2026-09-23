@@ -66,47 +66,87 @@ const MONTH_NAMES = [
 
 // Formatted by hand rather than through toLocaleString. Locale output varies by
 // host and can contain non-ASCII, and this repo is deliberately ASCII only.
+//
+// 12 hour with an AM/PM suffix and no zero padding on the hour, so 9:05AM rather
+// than 09:05AM. Note that midnight and noon are the cases a naive `h % 12` gets
+// wrong, landing on 0 instead of 12.
 function formatClock(now: Date): string {
-  const h = String(now.getHours()).padStart(2, '0')
+  const h24 = now.getHours()
+  const h12 = h24 % 12 === 0 ? 12 : h24 % 12
   const m = String(now.getMinutes()).padStart(2, '0')
-  return `${h}:${m}`
+  return `${h12}:${m} ${h24 < 12 ? 'AM' : 'PM'}`
 }
 
 function formatDate(now: Date): string {
   return `${DAY_NAMES[now.getDay()]} ${now.getDate()} ${MONTH_NAMES[now.getMonth()]}`
 }
 
-// Filled in once a weather proxy exists. Until then the temperature slot has a
-// defined place on screen and renders nothing.
-let temperatureText: string | null = null
+// What the weather slot shows. Null until a proxy exists, because an API key
+// cannot ship inside an extractable package.
+//
+// ICONS ARE NOT YET POSSIBLE TO CONFIRM. The requested design is a sun or
+// umbrella glyph next to the temperature. Three things stand in the way:
+//
+//   - the SDK exposes no icon, symbol or glyph API at all
+//   - the glasses use one fixed LVGL font baked into firmware, and the simulator
+//     notes say unknown glyphs render through LV_USE_FONT_PLACEHOLDER to match
+//     hardware, so an unsupported codepoint draws a placeholder box rather than
+//     nothing
+//   - which codepoints that font actually contains is undocumented
+//
+// So the labels are words until a glyph is proven to render. A box where the sun
+// should be is worse than the word "Clear".
+//
+// Testing a glyph is cheap and safe despite this repo being ASCII only: a '\uXXXX'
+// escape keeps the source file pure ASCII while emitting the codepoint at runtime,
+// which sidesteps the encoding corruption that damaged the README in #16.
+type WeatherCondition = 'clear' | 'rain'
 
+const CONDITION_LABELS: Record<WeatherCondition, string> = {
+  clear: 'Clear',
+  rain: 'Rain',
+}
+
+let weather: { condition: WeatherCondition; celsius: number } | null = null
+
+function renderWeather(): string {
+  if (!weather) return ''
+  return `${CONDITION_LABELS[weather.condition]} ${Math.round(weather.celsius)}C`
+}
+
+// Date on the left, weather in the middle, time on the right.
+//
+// Widths come from a measurement rather than a guess: on the simulator "Wed 23
+// Sep" rendered about 105px wide, so the font averages near 10.5px per character.
+// The longest values here are "Wed 23 Sep" at 10 characters and a time like
+// "12:30AM" at 7, which is what the x positions are spaced around.
 const SLOTS: readonly Slot[] = [
   {
     id: CONTAINER_ID_STATUS_LEFT,
     name: 'status.left',
     x: 0,
-    width: 150,
-    field: 'time',
-    render: formatClock,
+    width: 180,
+    field: 'date',
+    render: formatDate,
   },
   {
     id: CONTAINER_ID_STATUS_CENTRE,
     name: 'status.centre',
     x: 210,
-    width: 150,
+    width: 180,
     field: 'temperature',
-    render: () => temperatureText ?? '',
+    render: renderWeather,
   },
   {
     id: CONTAINER_ID_STATUS_RIGHT,
     name: 'status.right',
-    // Positioned so a typical date ends near the right edge. Text is
-    // left-aligned inside the container, so this is right-ish rather than truly
-    // right-aligned, which is the closest the platform allows.
-    x: 420,
-    width: 156,
-    field: 'date',
-    render: formatDate,
+    // Positioned so a typical time ends near the right edge. Text is left-aligned
+    // inside the container, so this is right-ish rather than truly right-aligned,
+    // which is the closest the platform allows.
+    x: 460,
+    width: 116,
+    field: 'time',
+    render: formatClock,
   },
 ]
 
@@ -197,12 +237,14 @@ function refresh() {
   }
 }
 
-// Set the temperature shown in the centre slot. Nothing calls this yet; weather
-// needs a proxy, because an API key cannot ship inside an extractable package.
-// Exported so the slot has a defined way in rather than a placeholder nobody can
-// find later.
-export function setTemperature(text: string | null) {
-  temperatureText = text
+// Set the weather shown in the centre slot. Nothing calls this yet; weather needs
+// a proxy. Exported so the slot has a defined way in rather than a placeholder
+// whoever builds weather has to go hunting for.
+//
+// Takes Celsius as a number rather than a preformatted string, so the display
+// format stays a decision this file owns and the weather tool cannot drift from it.
+export function setWeather(next: { condition: WeatherCondition; celsius: number } | null) {
+  weather = next
   refresh()
 }
 

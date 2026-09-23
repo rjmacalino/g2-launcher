@@ -1,7 +1,11 @@
 import { bridge, status } from './bridge'
 
 // Dotted namespace so per-tool keys stay grouped.
-export const STORAGE_KEY_TELEPROMPTER = 'teleprompter.line'
+//
+// 'teleprompter.line' used to live here. It is gone because the firmware owns
+// scroll position now and will not tell us what it is. Any value still on a
+// device from an older build is simply never read again, which is harmless: the
+// host has no notion of a key we stopped asking for.
 export const STORAGE_KEY_SCREEN = 'ui.screen'
 export const STORAGE_KEY_STATUS_BAR = 'ui.statusbar'
 

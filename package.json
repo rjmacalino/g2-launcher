@@ -9,7 +9,7 @@
     "preview": "vite preview",
     "pack": "npm run build && evenhub pack app.json dist -o g2-launcher.ehpk",
     "simulate": "evenhub-simulator http://localhost:5173",
-    "qr": "evenhub qr --url http://localhost:5173"
+    "qr": "node scripts/qr.mjs"
   },
   "dependencies": {
     "@evenrealities/even_hub_sdk": "^0.0.15"
