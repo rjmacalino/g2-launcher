@@ -14,6 +14,7 @@ import {
   CONTENT_HEIGHT,
   CONTENT_Y,
   PADDING,
+  setContent,
 } from './page'
 import { readWithTimeout } from './storage'
 import {
@@ -23,7 +24,7 @@ import {
   stopStatusBar,
 } from './statusbar'
 import { persistScreen, readStoredScreen, type Screen } from './screen'
-import { TOOLS, TOOL_NAMES } from './tools'
+import { TOOLS, TOOL_NAMES, type Tool } from './tools'
 
 // The shell. Owns which page is showing, builds pages, and routes input. It knows
 // tools only through the Tool interface, so adding one is a new file plus an entry
@@ -33,6 +34,34 @@ let screen: Screen = { kind: 'menu' }
 
 function activeTool() {
   return screen.kind === 'tool' ? TOOLS[screen.index] : null
+}
+
+// Whether the active tool is currently asking whether to leave.
+//
+// Not part of Screen, and deliberately not persisted. A cold start should never
+// restore the wearer into a half-answered question about a page they cannot
+// remember opening.
+let confirming = false
+
+// The prompt names the gesture as well as asking the question, because this is
+// the only screen where tap does something a wearer has not been taught yet.
+// Everywhere else tap means forward and double tap means back; here forward means
+// "yes, leave", which is worth spelling out rather than expecting them to infer.
+function confirmText(toolName: string): string {
+  return `Leave ${toolName}?\n\nTap to leave\nDouble tap to stay`
+}
+
+function enterConfirm(toolName: string) {
+  confirming = true
+  setContent(confirmText(toolName))
+}
+
+// Put the tool's own content back. initialContent reflects current tool state
+// rather than a fixed starting value, so the teleprompter returns to the line the
+// wearer was reading rather than to the top.
+function cancelConfirm(tool: Tool) {
+  confirming = false
+  setContent(tool.initialContent())
 }
 
 // Ceiling on the restore rebuild. Anything awaited between page creation and
@@ -111,6 +140,9 @@ function menuContainers() {
 
 function openTool(index: number) {
   if (index < 0 || index >= TOOLS.length) return
+  // Any navigation clears the prompt. Cheaper to reset unconditionally here than
+  // to reason about every path that could reach a new page with a stale flag set.
+  confirming = false
   const tool = TOOLS[index]
   bridge
     .rebuildPageContainer(new RebuildPageContainer(toolContainers(index)))
@@ -129,6 +161,7 @@ function openTool(index: number) {
 }
 
 function returnToMenu() {
+  confirming = false
   // Close before the rebuild, so an update arriving mid-transition cannot land on
   // a container that is about to be replaced.
   activeTool()?.onClose?.()
@@ -271,6 +304,17 @@ function eventTypeOf(envelope?: { eventType?: OsEventTypeList }): OsEventTypeLis
 // Tap on a tool page reaches the tool only through onScroll today. Tap is defined
 // as "forward" in the gesture rules and is free for a tool to claim.
 const unsubscribe = bridge.onEvenHubEvent(event => {
+  // TEMPORARY PROBE for #25. Revert once answered.
+  //
+  // The typed Text_ItemEvent carries only containerID, containerName and
+  // eventType, which is why we believe scroll position cannot be read. But
+  // EvenHubEvent also carries jsonData, documented as the raw host payload, and
+  // the typed models may be dropping fields the host actually sends. If an offset
+  // is in there, the teleprompter can let the firmware scroll AND keep position.
+  if (event.textEvent) {
+    status(`RAW textEvent: ${JSON.stringify(event.jsonData ?? null)}`)
+  }
+
   const sysType = eventTypeOf(event.sysEvent)
   const textType = eventTypeOf(event.textEvent)
   const listType = eventTypeOf(event.listEvent)
@@ -282,6 +326,17 @@ const unsubscribe = bridge.onEvenHubEvent(event => {
 
   if (isDoubleTap) {
     if (screen.kind === 'tool') {
+      const tool = TOOLS[screen.index]
+      // Double tap means back, and from the prompt back is the tool you came
+      // from. So the same gesture that raised the question also dismisses it.
+      if (confirming) {
+        cancelConfirm(tool)
+        return
+      }
+      if (tool.confirmOnExit) {
+        enterConfirm(tool.name)
+        return
+      }
       returnToMenu()
     } else {
       // Menu, or any state we do not recognise. This is deliberately not
@@ -317,6 +372,25 @@ const unsubscribe = bridge.onEvenHubEvent(event => {
   const listEvent = event.listEvent
   if (listEvent && listType === OsEventTypeList.CLICK_EVENT && screen.kind === 'menu') {
     openTool(listEvent.currentSelectItemIndex ?? 0)
+    return
+  }
+
+  // Tap while the leave prompt is showing means yes. This is the one place tap
+  // does something other than move forward within a tool, and it is why the
+  // prompt spells the gesture out.
+  //
+  // Requiring a different gesture than the one that opened the prompt is the
+  // whole protection. A thumb misfiring double taps will produce another double
+  // tap far sooner than a deliberate single one, so "double tap again to
+  // confirm" would have guarded against almost nothing.
+  if (confirming) {
+    if (sysType === OsEventTypeList.CLICK_EVENT || textType === OsEventTypeList.CLICK_EVENT) {
+      confirming = false
+      returnToMenu()
+    }
+    // Everything else, scroll included, is swallowed while the prompt is up.
+    // Scrolling text the wearer cannot currently see would move their position
+    // behind the question.
     return
   }
 

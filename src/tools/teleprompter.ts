@@ -158,6 +158,12 @@ function scroll(delta: 1 | -1) {
 
 export const teleprompter: Tool = {
   name: 'Teleprompter',
+  // Losing your place mid-speech to a mistimed double tap is the failure this
+  // guards. Position now survives the exit (G2-7), so the cost is smaller than it
+  // was, but recovering still means navigating back through a menu that always
+  // reopens on the first tool, which is not something to do in front of an
+  // audience.
+  confirmOnExit: true,
   initialContent: () => slice(line),
   hydrate: async () => {
     line = await readWithTimeout(readStoredLine(), 0)

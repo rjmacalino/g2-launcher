@@ -18,6 +18,14 @@ export type Tool = {
   // firmware reports back as currentSelectItemIndex.
   readonly name: string
 
+  // Ask before leaving, instead of leaving immediately on double tap.
+  //
+  // Opt in, not universal. A confirmation on a placeholder is friction with
+  // nothing to protect, while one on the teleprompter is the difference between
+  // a mistimed gesture costing a moment and costing your place mid-speech. Tools
+  // holding state a wearer would mind losing set this; the rest do not.
+  readonly confirmOnExit?: boolean
+
   // What the content area shows the moment the page is built, before any async
   // work has had a chance to produce something better. Must be synchronous: it is
   // called while assembling the container payload.
