@@ -194,15 +194,32 @@ export async function hydrate(): Promise<void> {
 // in any rendered string, and no zOrderIndex remains in this codebase - two
 // searches of the source have found no explanation.
 //
-// The one thing not yet tested: whether this is a firmware behaviour tied
-// specifically to placing multiple sibling text containers edge to edge on
-// the same row, something the docs do not mention and cannot be verified
-// without hardware. STATUS_BAR_SINGLE_CONTAINER_TEST, when true, collapses
-// the three slots into one combined container to test exactly that: if the
-// ticks disappear, adjacent containers are the cause; if they do not, this
-// theory is wrong too and needs abandoning like the last one, not iterating
-// on again blind. Revert once answered either way.
+// ROUND ONE, answered: collapsing to a single container removed two of the
+// three ticks, confirming those two were genuinely caused by placing sibling
+// text containers edge to edge on the same row. That theory is confirmed, not
+// hypothesis, for those two.
+//
+// ROUND TWO, this one. One tick remained, at the far right, exactly where the
+// single remaining container touches the canvas edge at x=576. Checked
+// directly: no similar tick appears anywhere else on screen where a container
+// also reaches x=576 (the content area, the confirm list), which rules out
+// "any container touching the canvas edge gets one" as too broad an
+// explanation - it is specific to the status bar row.
+//
+// New theory: this could be OS-owned chrome, not ours at all. Wearable
+// displays commonly reserve a fixed corner (battery, connectivity) regardless
+// of what the app draws under it, which would explain both why it survived
+// changing our own container structure (it was never ours to begin with) and
+// why it only ever appears in the status bar row (apps do not get to draw
+// over system chrome elsewhere).
+//
+// STATUS_BAR_RIGHT_INSET_TEST pulls our content back from the right edge, so
+// nothing we draw touches that corner. If the tick is STILL there, in space
+// that is now genuinely ours to leave blank, that confirms it is not ours: a
+// fixed system element, not a bug, and not something to keep chasing. If it
+// disappears, this theory is wrong too, and the cause is still unknown.
 const STATUS_BAR_SINGLE_CONTAINER_TEST = true
+const STATUS_BAR_RIGHT_INSET_TEST = 26
 
 // The bar's containers. Every page builder spreads these in, which is what makes a
 // page without a bar impossible to construct. They record what they drew so the
@@ -219,7 +236,7 @@ export function statusBarContainers(): TextContainerProperty[] {
       new TextContainerProperty({
         xPosition: 0,
         yPosition: 0,
-        width: 576,
+        width: 576 - STATUS_BAR_RIGHT_INSET_TEST,
         height: STATUS_BAR_HEIGHT,
         borderWidth: 0,
         paddingLength: PADDING,
