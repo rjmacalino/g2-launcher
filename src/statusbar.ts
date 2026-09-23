@@ -24,12 +24,15 @@ export type StatusBarConfig = {
   temperature: boolean
 }
 
-// Temperature defaults off because there is nothing to show yet. Turning it on
-// before a proxy exists would mean a field that is always blank.
+// Temperature now defaults on. It used to default off because there was
+// nothing to show yet - true while Weather was a placeholder, no longer true
+// now that it fetches real conditions (see weather-service.ts). Leaving this
+// off by default would have meant the centre slot stayed silently blank on
+// every device forever, since nothing else ever flips it on.
 const DEFAULTS: StatusBarConfig = {
   time: true,
   date: true,
-  temperature: false,
+  temperature: true,
 }
 
 // The clock shows minutes, so a one-second timer would be 59 wasted host round
@@ -111,7 +114,7 @@ function formatDate(now: Date): string {
 export type WeatherCondition = 'clear' | 'cloudy' | 'fog' | 'rain' | 'snow' | 'storm'
 
 export const CONDITION_LABELS: Record<WeatherCondition, string> = {
-  clear: 'Clear',
+  clear: 'Sunny',
   cloudy: 'Cloudy',
   fog: 'Fog',
   rain: 'Rainy',
