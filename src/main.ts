@@ -83,11 +83,20 @@ ${row('Yes', CONFIRM_YES)}`
 // content resets the firmware's scroll and costs the wearer their place. Dimming
 // leaves the tool exactly where it was and gives the faded backdrop a modal
 // wants anyway.
+// Sequenced, not fired together. Two upgrades dispatched at once and one of them
+// is dropped: the first version did both concurrently and the brightness change
+// came back rejected, leaving the tool at full brightness behind the modal. The
+// docs warn about this for image sends ("no concurrent sends") and it holds for
+// text upgrades too.
+//
+// Dim first, then draw, so there is never a frame where the modal is up over an
+// undimmed tool.
 function enterConfirm(toolName: string) {
   confirming = true
   confirmChoice = CONFIRM_NO
-  setContentBrightness(BRIGHTNESS_DIMMED)
-  setModalText(confirmText(toolName))
+  setContentBrightness(BRIGHTNESS_DIMMED).then(() => {
+    setModalText(confirmText(toolName))
+  })
 }
 
 function moveConfirm(next: 0 | 1, toolName: string) {
@@ -99,10 +108,13 @@ function moveConfirm(next: 0 | 1, toolName: string) {
 // Dismiss the prompt. Clearing the modal and restoring brightness, with the tool
 // untouched throughout, so the wearer is returned to exactly the line they were
 // reading rather than to the top.
+// Clear the modal first, then restore brightness, for the same sequencing reason
+// and so the tool is never briefly readable with the prompt still on top of it.
 function cancelConfirm() {
   confirming = false
-  setModalText('')
-  setContentBrightness(BRIGHTNESS_NORMAL)
+  setModalText('').then(() => {
+    setContentBrightness(BRIGHTNESS_NORMAL)
+  })
 }
 
 // Ceiling on the restore rebuild. Anything awaited between page creation and
@@ -167,21 +179,25 @@ function toolContainers(index: number) {
         isEventCapture: 1,
       }),
       // The modal, empty. It has to exist from page creation because adding a
-      // container later means a rebuild, and a rebuild resets scroll. Empty
-      // costs nothing: a text container has no background fill, so an empty one
-      // draws nothing at all.
+      // container later means a rebuild, and a rebuild resets scroll.
+      //
+      // NO BORDER, and that is not an aesthetic choice. A border draws whether or
+      // not the container has text, and TextContainerUpgrade carries no border
+      // fields, so a bordered container is bordered permanently. The first
+      // version of this had a 2px border and left an empty rectangle sitting over
+      // the script on every tool page.
+      //
+      // Only the text can be turned off, by writing an empty string. So the modal
+      // has to be made of text alone, and the separation from the tool behind it
+      // comes from brightness: the tool dims to 0, the modal draws at 4.
       new TextContainerProperty({
         xPosition: MODAL_X,
         yPosition: MODAL_Y,
         width: MODAL_WIDTH,
         height: MODAL_HEIGHT,
-        // The border is what makes this read as a box sitting over the tool
-        // rather than text floating on top of other text. It is also the only
-        // visual decoration available, since there is no background or fill.
-        borderWidth: 2,
-        borderColor: 12,
-        borderRadius: 8,
+        borderWidth: 0,
         paddingLength: 8,
+        textColor: BRIGHTNESS_NORMAL,
         containerID: CONTAINER_ID_MODAL,
         containerName: CONTAINER_NAME_MODAL,
         content: '',
