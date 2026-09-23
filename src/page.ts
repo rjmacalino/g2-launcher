@@ -63,13 +63,19 @@ export const CONTAINER_NAME_CONTENT = 'tool'
 export const CONTAINER_ID_MODAL = 5
 export const CONTAINER_NAME_MODAL = 'modal'
 
-// A box rather than the full width, which is what makes it read as a modal over
-// the tool rather than a page that replaced it. Sized to its four lines plus
-// padding and border.
-export const MODAL_WIDTH = 288
-export const MODAL_HEIGHT = 132
-export const MODAL_X = (CANVAS_WIDTH - MODAL_WIDTH) / 2
-export const MODAL_Y = CONTENT_Y + (CONTENT_HEIGHT - MODAL_HEIGHT) / 2
+// Covers the whole content area, but never the status bar. The clock stays
+// readable with a prompt open, which is the difference between a dialog inside
+// the app and one that takes over the glasses.
+//
+// Full area for a practical reason as well as a visual one. The content
+// container keeps input capture while the prompt is open, because capture is
+// fixed at page creation and moving it means a rebuild, which costs the scroll
+// position. So a scroll aimed at the marker also scrolls the tool behind. At full
+// area that movement is hidden rather than distracting.
+export const MODAL_WIDTH = CANVAS_WIDTH
+export const MODAL_HEIGHT = CONTENT_HEIGHT
+export const MODAL_X = 0
+export const MODAL_Y = CONTENT_Y
 
 // zOrderIndex is all or nothing per page: once any container sets it, every
 // container must set a unique one. Larger renders in front, so the modal sits

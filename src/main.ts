@@ -16,6 +16,7 @@ import {
   BRIGHTNESS_NORMAL,
   CONTAINER_ID_MODAL,
   CONTAINER_NAME_MODAL,
+  CONTENT_ROWS,
   CONTENT_Y,
   MODAL_HEIGHT,
   MODAL_WIDTH,
@@ -67,13 +68,37 @@ let confirmChoice: 0 | 1 = CONFIRM_NO
 // it tracks the label length and appears to jump sideways as the selection
 // moves, which reads as the marker being unstable rather than the selection
 // changing.
+//
+// The modal container now covers the full content area rather than a small box,
+// per a direct request: no border was ever possible (TextContainerUpgrade has no
+// border fields, so anything drawn once stays drawn, which is what produced the
+// permanent empty rectangle in an earlier version), so the only way to make this
+// read as a dialog rather than loose text is to occupy the whole area itself and
+// separate it from the tool with dimming, not with a frame.
+//
+// Rule lines drawn as text stand in for the border that cannot exist. They
+// appear when the modal text is set and disappear when it is cleared, which a
+// real border could not do.
+//
+// Length is measured, not guessed. The status bar work established the font
+// averages about 10.5px per character (from "Wed 23 Sep" rendering near 105px),
+// so a rule matching the usable width is (CANVAS_WIDTH - PADDING * 2) / 10.5
+// characters. A dash count picked without this would either wrap, which breaks
+// the vertical centring math, or leave the rule visibly short of the edges.
+const AVG_CHAR_PX = 10.5
+const RULE = '-'.repeat(Math.floor((CANVAS_WIDTH - PADDING * 2) / AVG_CHAR_PX))
+
 function confirmText(toolName: string): string {
   const row = (label: string, value: 0 | 1) =>
     `${label.padEnd(3)} ${confirmChoice === value ? '<' : ''}`.trimEnd()
-  return `End ${toolName}
 
-${row('No', CONFIRM_NO)}
-${row('Yes', CONFIRM_YES)}`
+  const lines = [RULE, `End ${toolName}`, '', row('No', CONFIRM_NO), row('Yes', CONFIRM_YES), RULE]
+
+  // Centred within the full content area now, not a small box, so the same
+  // vertical-centring approach from the earlier design still applies: pad with
+  // blank rows computed from how many actually fit.
+  const padding = Math.max(0, Math.floor((CONTENT_ROWS - lines.length) / 2))
+  return '\n'.repeat(padding) + lines.join('\n')
 }
 
 // Open the prompt.
