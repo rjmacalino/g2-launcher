@@ -22,6 +22,15 @@ const EMPTY_HOURS_ITEM = 'No hourly data for this day.'
 
 const DAY_NAMES = ['Sun', 'Mon', 'Tue', 'Wed', 'Thu', 'Fri', 'Sat']
 
+// The canvas is 576px wide and a list item can carry up to 64 characters
+// (see page.ts / data.ts's platform-limit comments) - far more than one
+// short "6am 15C Cloudy" reading needs. Packing several hours into a single
+// row uses that width instead of leaving it empty and forcing a scroll for
+// what would otherwise be one reading per line. Three fits comfortably
+// under the 64-character cap with room to spare; going wider risks crowding
+// once real column widths are seen on hardware.
+const HOURS_PER_ROW = 3
+
 type Depth = 'days' | 'hours'
 let depth: Depth = 'days'
 let selectedIndex = 0
@@ -45,14 +54,42 @@ function hourLabel(hour: number): string {
   return `${h12}${hour < 12 ? 'am' : 'pm'}`
 }
 
+// date is 'YYYY-MM-DD' (Open-Meteo's own format). DD/MM/YY per direct
+// request, not this codebase's usual day-name style - a date next to the
+// weekday name disambiguates which of two same-named weekdays a 16-day range
+// can contain (day 0 and day 7 can both be a Wednesday).
+function shortDate(date: string): string {
+  const [yyyy, mm, dd] = date.split('-')
+  return `${dd}/${mm}/${yyyy.slice(2)}`
+}
+
 function dayRow(day: DailyForecast, index: number): string {
   const hi = Math.round(day.highCelsius)
   const lo = Math.round(day.lowCelsius)
-  return `${dayLabel(index, day.date)}: ${hi}/${lo}C ${CONDITION_LABELS[day.condition]}`.slice(0, 64)
+  const label = dayLabel(index, day.date)
+  return `${label} ${shortDate(day.date)}: ${hi}/${lo}C ${CONDITION_LABELS[day.condition]}`.slice(0, 64)
 }
 
-function hourRow(hour: HourlyForecast): string {
-  return `${hourLabel(hour.hour)}  ${Math.round(hour.celsius)}C  ${CONDITION_LABELS[hour.condition]}`.slice(0, 64)
+function hourCell(hour: HourlyForecast): string {
+  return `${hourLabel(hour.hour)} ${Math.round(hour.celsius)}C ${CONDITION_LABELS[hour.condition]}`
+}
+
+// Several hours per row instead of one, using the canvas's horizontal room
+// (see HOURS_PER_ROW) so a 13-hour day takes about 5 rows to read instead of
+// 13 - most of it visible without scrolling instead of nearly all of it
+// requiring it.
+function hourRows(hours: HourlyForecast[]): string[] {
+  const rows: string[] = []
+  for (let i = 0; i < hours.length; i += HOURS_PER_ROW) {
+    rows.push(
+      hours
+        .slice(i, i + HOURS_PER_ROW)
+        .map(hourCell)
+        .join('  ')
+        .slice(0, 64),
+    )
+  }
+  return rows
 }
 
 export const weatherTool: Tool = {
@@ -71,7 +108,7 @@ export const weatherTool: Tool = {
     }
     const day = getDaily()[selectedIndex]
     if (!day || day.hourly.length === 0) return [EMPTY_HOURS_ITEM]
-    return day.hourly.map(hourRow)
+    return hourRows(day.hourly)
   },
   onListSelect: index => {
     if (depth !== 'days') return

@@ -114,7 +114,7 @@ export const CONDITION_LABELS: Record<WeatherCondition, string> = {
   clear: 'Clear',
   cloudy: 'Cloudy',
   fog: 'Fog',
-  rain: 'Rain',
+  rain: 'Rainy',
   snow: 'Snow',
   storm: 'Storm',
 }
