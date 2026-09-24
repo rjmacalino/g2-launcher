@@ -48,7 +48,7 @@ export type ForecastResult = {
 // anything outside these ranges falls back to 'cloudy' rather than throwing,
 // since a slightly-off condition word is a smaller failure than losing the
 // whole forecast over one unrecognised code.
-function conditionFromCode(code: number): WeatherCondition {
+export function conditionFromCode(code: number): WeatherCondition {
   if (code === 0) return 'clear'
   if (code >= 1 && code <= 3) return 'cloudy'
   if (code === 45 || code === 48) return 'fog'

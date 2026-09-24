@@ -72,7 +72,10 @@ function dayRow(day: DailyForecast, index: number): string {
   const hi = Math.round(day.highCelsius)
   const lo = Math.round(day.lowCelsius)
   const label = dayLabel(index, day.date)
-  return `${label} ${shortDate(day.date)}: ${hi}/${lo}C ${CONDITION_LABELS[day.condition]}`.slice(0, 64)
+  return `${label} ${shortDate(day.date)}: ${hi}/${lo}C ${CONDITION_LABELS[day.condition]}`.slice(
+    0,
+    64,
+  )
 }
 
 // Word, not glyph: weather symbols were tried here and the firmware font drops

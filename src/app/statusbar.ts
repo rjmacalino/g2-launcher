@@ -65,8 +65,18 @@ type Slot = {
 
 const DAY_NAMES = ['Sun', 'Mon', 'Tue', 'Wed', 'Thu', 'Fri', 'Sat']
 const MONTH_NAMES = [
-  'Jan', 'Feb', 'Mar', 'Apr', 'May', 'Jun',
-  'Jul', 'Aug', 'Sep', 'Oct', 'Nov', 'Dec',
+  'Jan',
+  'Feb',
+  'Mar',
+  'Apr',
+  'May',
+  'Jun',
+  'Jul',
+  'Aug',
+  'Sep',
+  'Oct',
+  'Nov',
+  'Dec',
 ]
 
 // Formatted by hand rather than through toLocaleString. Locale output varies by
@@ -151,10 +161,14 @@ const SLOTS: readonly Slot[] = [
 const dateSlot = SLOTS.find(s => s.field === 'date')
 const timeSlot = SLOTS.find(s => s.field === 'time')
 if (dateSlot && WIDEST_DATE_PX > dateSlot.width - 2 * PADDING) {
-  status(`Status bar date slot may be too narrow: ${WIDEST_DATE_PX}px content in ${dateSlot.width}px`)
+  status(
+    `Status bar date slot may be too narrow: ${WIDEST_DATE_PX}px content in ${dateSlot.width}px`,
+  )
 }
 if (timeSlot && WIDEST_TIME_PX > timeSlot.width - 2 * PADDING) {
-  status(`Status bar time slot may be too narrow: ${WIDEST_TIME_PX}px content in ${timeSlot.width}px`)
+  status(
+    `Status bar time slot may be too narrow: ${WIDEST_TIME_PX}px content in ${timeSlot.width}px`,
+  )
 }
 
 let config: StatusBarConfig = { ...DEFAULTS }

@@ -24,8 +24,13 @@ progress, `[x]` done, `[?]` waiting on a decision.
 - [x] 0.4 Restructured `src/` into the layout below. Verified with a real
       simulator session: menu, tool open/close, the confirm dialog and
       navigation all still fire correctly, and the build output is unchanged
-- [ ] 0.5 Tooling: ESLint, Prettier, Vitest for pure logic, GitHub Actions CI
-      running typecheck, lint, test and build on every pull request
+- [x] 0.5 Tooling: ESLint (flat config, typescript-eslint, browser globals for
+      `src/`, Node globals for `scripts/`), Prettier matching the existing
+      no-semicolon style, Vitest with unit tests for the WMO condition
+      mapping, the day/hour grouping in `fetchForecast`, and the notes
+      checklist text sanitiser. GitHub Actions CI runs typecheck, lint,
+      format check, test and build on every pull request and push to `main`
+      (`npm run ci` reproduces the same sequence locally)
 
 ### Target structure
 

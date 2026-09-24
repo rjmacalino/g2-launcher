@@ -1,6 +1,7 @@
 node_modules/
 dist/
 *.ehpk
+coverage/
 
 # Simulator screenshots land in the repo root
 glasses_*.png

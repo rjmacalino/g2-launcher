@@ -308,20 +308,18 @@ async function openTool(index: number) {
   // Teleprompter uses this to read the latest saved scripts for its picker.
   await tool.beforeOpen?.()
 
-  bridge
-    .rebuildPageContainer(new RebuildPageContainer(toolContainers(index)))
-    .then(ok => {
-      if (ok) {
-        screen = { kind: 'tool', index }
-        persistScreen(screen)
-        status(`Tool: ${tool.name}`)
-        // Started only after the page is on screen. Anything a tool does to the
-        // content area needs the container to exist first.
-        tool.onOpen?.()
-      } else {
-        status(`Failed to open ${tool.name}`)
-      }
-    })
+  bridge.rebuildPageContainer(new RebuildPageContainer(toolContainers(index))).then(ok => {
+    if (ok) {
+      screen = { kind: 'tool', index }
+      persistScreen(screen)
+      status(`Tool: ${tool.name}`)
+      // Started only after the page is on screen. Anything a tool does to the
+      // content area needs the container to exist first.
+      tool.onOpen?.()
+    } else {
+      status(`Failed to open ${tool.name}`)
+    }
+  })
 }
 
 function returnToMenu() {
@@ -329,18 +327,16 @@ function returnToMenu() {
   // Close before the rebuild, so an update arriving mid-transition cannot land on
   // a container that is about to be replaced.
   activeTool()?.onClose?.()
-  bridge
-    .rebuildPageContainer(new RebuildPageContainer(menuContainers()))
-    .then(ok => {
-      if (ok) {
-        screen = { kind: 'menu' }
-        persistScreen(screen)
-        status('Menu')
-      } else {
-        // Back failed. Exit rather than leave the wearer stuck.
-        requestExit()
-      }
-    })
+  bridge.rebuildPageContainer(new RebuildPageContainer(menuContainers())).then(ok => {
+    if (ok) {
+      screen = { kind: 'menu' }
+      persistScreen(screen)
+      status('Menu')
+    } else {
+      // Back failed. Exit rather than leave the wearer stuck.
+      requestExit()
+    }
+  })
 }
 
 // Request the system exit confirmation dialog.
@@ -366,10 +362,7 @@ function requestExit() {
 // Every read races a timeout, because a read that never settles would block the
 // event handler registration below.
 const storedScreenPromise = readWithTimeout(readStoredScreen(), null)
-const hydrationPromise = Promise.all([
-  hydrateStatusBar(),
-  ...TOOLS.map(tool => tool.hydrate?.()),
-])
+const hydrationPromise = Promise.all([hydrateStatusBar(), ...TOOLS.map(tool => tool.hydrate?.())])
 
 // Show the menu first. It is the safe default and every path that does not
 // restore lands here anyway. Creating it before the reads resolve means the first
@@ -411,9 +404,7 @@ if (restoredScreen && restoredScreen.kind === 'tool') {
   // reads them.
   await tool.beforeOpen?.()
   const ok = await Promise.race([
-    bridge.rebuildPageContainer(
-      new RebuildPageContainer(toolContainers(restoredScreen.index)),
-    ),
+    bridge.rebuildPageContainer(new RebuildPageContainer(toolContainers(restoredScreen.index))),
     new Promise<boolean>(resolve => {
       setTimeout(() => resolve(false), RESTORE_REBUILD_TIMEOUT_MS)
     }),
@@ -511,7 +502,10 @@ const unsubscribe = bridge.onEvenHubEvent(event => {
   // what stops an accidental double-tap while the prompt is open from falling
   // through to the exit/back logic meant for when no prompt is showing.
   if (confirming && screen.kind === 'tool') {
-    if (listEvent && (listType === OsEventTypeList.CLICK_EVENT || listType === OsEventTypeList.DOUBLE_CLICK_EVENT)) {
+    if (
+      listEvent &&
+      (listType === OsEventTypeList.CLICK_EVENT || listType === OsEventTypeList.DOUBLE_CLICK_EVENT)
+    ) {
       const tool = TOOLS[screen.index]
       const choice = listEvent.currentSelectItemIndex ?? CONFIRM_NO
       if (choice === CONFIRM_YES) {

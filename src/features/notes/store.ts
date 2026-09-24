@@ -68,7 +68,7 @@ function writeAllNotes(all: NoteDoc[]): Promise<boolean> {
 export const NOTE_MAX_ITEMS = 20
 export const NOTE_ITEM_MAX_CHARS = 64
 
-function sanitizeItemTexts(texts: string[]): string[] {
+export function sanitizeItemTexts(texts: string[]): string[] {
   return texts
     .map(t => t.trim())
     .filter(t => t.length > 0)
@@ -124,7 +124,9 @@ async function saveNote(note: NoteDoc): Promise<boolean> {
 async function resetNoteItems(id: string): Promise<boolean> {
   const all = await readAllNotes()
   const next = all.map(n =>
-    n.id === id ? { ...n, items: n.items.map(it => ({ ...it, done: false })), updatedAt: Date.now() } : n,
+    n.id === id
+      ? { ...n, items: n.items.map(it => ({ ...it, done: false })), updatedAt: Date.now() }
+      : n,
   )
   return writeAllNotes(next)
 }

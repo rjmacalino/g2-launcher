@@ -308,7 +308,7 @@ function renderNotesEditor(item: NoteDoc | null) {
   // survive that redraw, so they live in this closure instead of only in the
   // inputs themselves.
   let draftTitle = item?.title ?? ''
-  let draftTexts: string[] = item && item.items.length > 0 ? item.items.map(i => i.text) : ['']
+  const draftTexts: string[] = item && item.items.length > 0 ? item.items.map(i => i.text) : ['']
 
   function itemRowHtml(text: string, index: number): string {
     return `
