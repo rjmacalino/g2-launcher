@@ -98,10 +98,10 @@ if (!/^\d{1,5}$/.test(String(PORT))) {
 // shim on Windows, and Node refuses to spawn .cmd without a shell since the fix
 // for CVE-2024-27980. Without it this fails silently: the script prints the right
 // address, the CLI never runs, and no QR appears.
-const result = spawnSync(
-  `npx evenhub qr --ip ${chosen.ip} --port ${PORT} --http`,
-  { stdio: 'inherit', shell: true },
-)
+const result = spawnSync(`npx evenhub qr --ip ${chosen.ip} --port ${PORT} --http`, {
+  stdio: 'inherit',
+  shell: true,
+})
 
 if (result.status !== 0) {
   console.error('')

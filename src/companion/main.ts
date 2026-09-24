@@ -1,21 +1,18 @@
+import { notes, NOTE_MAX_ITEMS, NOTE_ITEM_MAX_CHARS, type NoteDoc } from '../features/notes/store'
 import {
-  notes,
   scripts,
   getActiveScriptId,
   setActiveScriptId,
-  NOTE_MAX_ITEMS,
-  NOTE_ITEM_MAX_CHARS,
-  type Item,
-  type NoteDoc,
-} from './data'
-import { setActiveScriptContent, clearActiveScriptIfCurrent } from './tools/teleprompter'
-import { TOOL_NAMES } from './tools'
+  type Script,
+} from '../features/teleprompter/store'
+import { setActiveScriptContent, clearActiveScriptIfCurrent } from '../features/teleprompter/tool'
+import { TOOL_NAMES } from '../app/registry'
 
 // The phone companion page: browse the same tools the glasses menu shows, and
 // manage the data behind Notes and Teleprompter scripts.
 //
 // This runs in the SAME JS instance as everything driving the glasses (see
-// bridge.ts), not a separate app talking over a network. That is why this
+// platform/bridge.ts), not a separate app talking over a network. That is why this
 // needs no server: bridge.setLocalStorage is already a persistent per-device
 // store, and editing the active script here can update the teleprompter's
 // in-memory content directly via setActiveScriptContent, without a round trip
@@ -28,21 +25,21 @@ import { TOOL_NAMES } from './tools'
 
 type Collection = 'scripts' | 'notes'
 
-// Mirrors the shell's own Screen type in main.ts: a small closed set of places
+// Mirrors the shell's own Screen type in app/main.ts: a small closed set of places
 // the wearer can be, driving what render() draws. The top level, 'menu', is a
 // deliberate copy of the glasses' own launcher list (same TOOL_NAMES, same
 // order), so opening the phone looks like opening the glasses.
 type View =
   | { kind: 'menu' }
   | { kind: 'list'; collection: Collection }
-  | { kind: 'editor'; collection: 'scripts'; item: Item | null }
+  | { kind: 'editor'; collection: 'scripts'; item: Script | null }
   | { kind: 'editor'; collection: 'notes'; item: NoteDoc | null }
   | { kind: 'stub'; label: string }
 
 let view: View = { kind: 'menu' }
 
 // Which script is "active": the one most recently chosen, from either the
-// phone's Use button or the glasses' own picker (see teleprompter.ts). Purely
+// phone's Use button or the glasses' own picker (see features/teleprompter/tool.ts). Purely
 // informational here, the badge shown next to a script in the list. It does
 // NOT mean "will load automatically next time the teleprompter opens" - the
 // glasses always show their picker first, per direct request, so nothing
@@ -110,7 +107,7 @@ function renderStub(label: string) {
 
 // --- List: Scripts ------------------------------------------------------
 
-function scriptRow(item: Item): string {
+function scriptRow(item: Script): string {
   const isActive = item.id === activeScriptId
   const title = escapeHtml(item.title || '(untitled)')
   return `
@@ -189,7 +186,7 @@ function glassesPreview(body: string): string {
   `
 }
 
-function renderScriptsEditor(item: Item | null) {
+function renderScriptsEditor(item: Script | null) {
   if (!root) return
 
   root.innerHTML = `
@@ -237,7 +234,7 @@ function renderScriptsEditor(item: Item | null) {
 // --- List: Notes ------------------------------------------------------
 
 // A note's checklist state is meant to be worked through on the glasses (see
-// tools/notes.ts): that is the point of a hands-free device. The phone's job
+// features/notes/tool.ts): that is the point of a hands-free device. The phone's job
 // is authoring the list and, occasionally, clearing it back to a fresh start
 // before the wearer heads out again - not ticking items off one at a time,
 // which a touchscreen does no better than the glasses do.
@@ -311,7 +308,7 @@ function renderNotesEditor(item: NoteDoc | null) {
   // survive that redraw, so they live in this closure instead of only in the
   // inputs themselves.
   let draftTitle = item?.title ?? ''
-  let draftTexts: string[] = item && item.items.length > 0 ? item.items.map(i => i.text) : ['']
+  const draftTexts: string[] = item && item.items.length > 0 ? item.items.map(i => i.text) : ['']
 
   function itemRowHtml(text: string, index: number): string {
     return `
@@ -319,7 +316,7 @@ function renderNotesEditor(item: NoteDoc | null) {
         <input
           type="text"
           class="item-text"
-          placeholder="Item"
+          placeholder="Script"
           maxlength="${NOTE_ITEM_MAX_CHARS}"
           value="${escapeHtml(text)}"
         />

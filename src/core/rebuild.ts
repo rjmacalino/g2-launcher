@@ -1,12 +1,12 @@
-import type { Tool } from './tools/types'
+import type { Tool } from './tool'
 
 // A tool whose data changes out from under it (Weather's background refresh,
-// see weather-service.ts) needs a way to ask the shell to redraw its OWN
+// see features/weather/service.ts) needs a way to ask the shell to redraw its OWN
 // currently-open page once new data lands. There is no in-place list content
-// upgrade in this SDK (see page.ts), only a full rebuildPageContainer, so
+// upgrade in this SDK (see platform/page.ts), only a full rebuildPageContainer, so
 // "redraw me" has to go through the shell either way.
 //
-// A registered callback rather than a tool importing main.ts directly: main
+// A registered callback rather than a tool importing app/main.ts directly: main
 // already imports the tools array, so a tool importing back from main would
 // be a circular module dependency. Registering a handler here at startup
 // keeps the coupling one small function wide instead of a cycle.

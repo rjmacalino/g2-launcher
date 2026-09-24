@@ -6,6 +6,10 @@ import { waitForEvenAppBridge } from '@evenrealities/even_hub_sdk'
 const statusEl = document.getElementById('status')
 
 export function status(line: string) {
+  // The one sanctioned console.log in this codebase: every other diagnostic
+  // funnels through this function, so an eslint no-console rule elsewhere
+  // catches code that bypassed it instead of allowing console.log everywhere.
+  // eslint-disable-next-line no-console
   console.log(line)
   if (statusEl) statusEl.textContent = line
 }

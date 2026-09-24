@@ -9,6 +9,11 @@
     {
       "name": "location",
       "desc": "Used to look up the weather forecast for where you are. A single location fix is taken in the background; your coordinates are never shown on screen."
+    },
+    {
+      "name": "network",
+      "desc": "Downloads the weather forecast for your location from Open-Meteo.",
+      "whitelist": ["https://api.open-meteo.com"]
     }
   ],
   "supported_languages": ["en"]

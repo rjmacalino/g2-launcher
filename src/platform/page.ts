@@ -1,5 +1,6 @@
 import { TextContainerUpgrade } from '@evenrealities/even_hub_sdk'
 import { bridge, status } from './bridge'
+import { LIST_ITEM_HEIGHT_PX } from './text'
 
 // Page geometry, and the one way to change what the content area says.
 //
@@ -78,15 +79,13 @@ export const CONFIRM_TITLE_HEIGHT = ROW_HEIGHT_PX
 // launcher menu likely centres the same way, just with 4 items in a similarly
 // sized box, leaving much less spare room per item to disappear into.
 //
-// ITEM_HEIGHT_ESTIMATE is still a guess, not a measurement: double the text
-// row height, on the reasoning that a list row needs to be a bigger touch
-// target than a line of text. It got the gap-closing behaviour right even if
-// the exact number is approximate; the real value would need the
-// numbered-items calibration this project has used before (render distinct
-// known items, observe on hardware, measure directly).
-const ITEM_HEIGHT_ESTIMATE = ROW_HEIGHT_PX * 2
+// LIST_ITEM_HEIGHT_PX (40px) replaces an earlier guess of double the text row
+// height (54px). It comes from Even Realities' own font-measurement
+// reference, not a re-measurement here - the visual change this makes to the
+// confirm dialog (a shorter, tighter box) has not been re-verified on
+// hardware since the swap.
 const CONFIRM_ITEM_COUNT = 2
-export const CONFIRM_LIST_HEIGHT = ITEM_HEIGHT_ESTIMATE * CONFIRM_ITEM_COUNT
+export const CONFIRM_LIST_HEIGHT = LIST_ITEM_HEIGHT_PX * CONFIRM_ITEM_COUNT
 
 // With the gap closed, the title+list block is a compact ~135px sitting
 // inside a 248px content area, top-anchored right under the status bar. That
@@ -135,14 +134,14 @@ export const CONFIRM_LIST_Y = CONFIRM_TITLE_Y + CONFIRM_TITLE_HEIGHT
 // hand-rolled bounce bug" in exchange for a cost that was not actually avoided.
 //
 // So the confirm prompt is a native list again (see confirmContainers in
-// main.ts): correct bounce at the real ends of No/Yes, for no additional cost
+// app/main.ts): correct bounce at the real ends of No/Yes, for no additional cost
 // versus the text version it replaced.
 //
 // This also unlocked the actual fix for where "Yes" goes. Teleprompter now has
 // two levels of its own depth (script picker, then reading), and confirming
 // leave should step back one level, not necessarily out of the tool entirely -
 // the same "back" that double-tap already means everywhere else in this app.
-// See Tool.onConfirmedExit in tools/types.ts.
+// See Tool.onConfirmedExit in core/tool.ts.
 
 // Replace the text in the content area, in place, with no page rebuild.
 //

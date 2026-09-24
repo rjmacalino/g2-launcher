@@ -1,5 +1,5 @@
-import { STORAGE_KEY_SCREEN, readJson, writeKey } from './storage'
-import { TOOLS } from './tools'
+import { STORAGE_KEY_SCREEN, readJson, writeKey } from '../platform/storage'
+import { TOOLS } from './registry'
 
 // Which page is showing. A discriminated union, not `number | null`, because
 // index 0 is falsy, so an `if (currentToolIndex)` check would treat "the first

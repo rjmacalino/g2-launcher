@@ -1,4 +1,4 @@
-import type { WeatherCondition } from './statusbar'
+import type { WeatherCondition } from './conditions'
 
 // Open-Meteo (https://open-meteo.com): free, no API key, CORS-enabled. The
 // old Weather placeholder was blocked on "an API key cannot ship inside an
@@ -15,7 +15,7 @@ const DAY_END_HOUR = 18
 // 16, not 7: Open-Meteo's actual maximum for a real forecast, not an
 // arbitrary deeper number. Requested per direct question about "infinite
 // scroll" - true infinite scroll is not buildable here for two independent
-// reasons (see tools/weather.ts): the native list widget gives no
+// reasons (see tool.ts): the native list widget gives no
 // near-the-end scroll signal to hang pagination off, and a forecast beyond
 // ~16 days is not real data to prefetch in the first place. Asking for more
 // days than this costs nothing extra - it is the same single request either
@@ -43,12 +43,12 @@ export type ForecastResult = {
   daily: DailyForecast[]
 }
 
-// WMO weather codes, collapsed into the six buckets statusbar.ts can display
+// WMO weather codes, collapsed into the six buckets in conditions.ts
 // (see WeatherCondition there). Open-Meteo documents the full code list;
 // anything outside these ranges falls back to 'cloudy' rather than throwing,
 // since a slightly-off condition word is a smaller failure than losing the
 // whole forecast over one unrecognised code.
-function conditionFromCode(code: number): WeatherCondition {
+export function conditionFromCode(code: number): WeatherCondition {
   if (code === 0) return 'clear'
   if (code >= 1 && code <= 3) return 'cloudy'
   if (code === 45 || code === 48) return 'fog'
@@ -135,7 +135,7 @@ export async function fetchForecast(latitude: number, longitude: number): Promis
   // is_day only matters for the current reading, not the daily/hourly rows.
   // WMO code 0 ("clear sky") is correct at night too - a clear sky after
   // dark has no sun in it - but CONDITION_LABELS' word for it is "Sunny",
-  // which is wrong once the sun is down. statusbar.ts uses this flag to say
+  // which is wrong once the sun is down. currentConditionWord in conditions.ts uses this flag to say
   // "Clear" instead of "Sunny" for the single point-in-time reading it
   // shows; the daily/hourly rows stay as-is, since "Sunny" describing a
   // whole day (or an hour inside the 6am-18:00 window this app already

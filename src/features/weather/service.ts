@@ -1,22 +1,24 @@
-import { fetchForecast, type DailyForecast } from './weather-api'
-import { getCurrentLocation } from './location'
-import { setWeather } from './statusbar'
-import { status } from './bridge'
+import { fetchForecast, type DailyForecast } from './api'
+import type { CurrentWeather } from './conditions'
+import { getCurrentLocation } from '../../platform/location'
+import { status } from '../../platform/bridge'
 
 // Weather data lives here, independent of whether the Weather tool page is
-// open. The status bar shows current conditions on every page (see
-// setWeather in statusbar.ts), so this has to keep refreshing in the
-// background the same way the clock does - start()/stop() are called
-// alongside startStatusBar()/stopStatusBar() in main.ts, not from the tool's
-// own onOpen/onClose. The Weather tool (tools/weather.ts) just reads
-// whatever this module already has, and subscribes via onUpdate to redraw
-// itself when new data lands while it happens to be open.
+// open. The status bar shows current conditions on every page, so this keeps
+// refreshing in the background the same way the clock does: start()/stop()
+// are called from the app shell's foreground handling, not from the tool's
+// own onOpen/onClose.
+//
+// This module knows nothing about the status bar or any page. Subscribers
+// (the shell for the status bar, the Weather tool for its own page) listen
+// via onUpdate and read getCurrent()/getDaily()/getState() themselves.
 const REFRESH_INTERVAL_MS = 15 * 60 * 1000
 
 export type WeatherState = 'loading' | 'ready' | 'unavailable'
 
 let state: WeatherState = 'loading'
 let daily: DailyForecast[] = []
+let current: CurrentWeather | null = null
 let timerId: ReturnType<typeof setInterval> | null = null
 
 // Coalesced: a resume and the periodic timer landing at the same moment
@@ -48,17 +50,15 @@ export function refresh(): Promise<void> {
     const loc = await getCurrentLocation()
     if (!loc) {
       state = 'unavailable'
-      // Clears the status bar's slot rather than leaving a stale reading
-      // parked there from the last successful fetch - once this refresh has
-      // confirmed we do not currently have real data, showing an old number
-      // silently is worse than showing the "no data" placeholder (see
-      // renderWeather in statusbar.ts).
-      setWeather(null)
+      // Cleared rather than left holding a stale reading from the last
+      // successful fetch: once a refresh confirms we have no real data,
+      // showing an old number silently is worse than showing "no data".
+      current = null
       // Distinguishes "never got a location fix" from a forecast fetch
       // failing below - both used to collapse into the same silent
       // "unavailable", which made this undiagnosable from the status strip
       // alone. A denied/unavailable permission and a request that simply
-      // timed out still look the same from here (see location.ts), but at
+      // timed out still look the same from here (see platform/location.ts), but at
       // least which STAGE failed is now visible.
       status('Weather: no location fix (permission denied, or no fix in time)')
       return
@@ -68,10 +68,10 @@ export function refresh(): Promise<void> {
       const result = await fetchForecast(loc.latitude, loc.longitude)
       daily = result.daily
       state = 'ready'
-      setWeather(result.current)
+      current = result.current
     } catch (e) {
       state = 'unavailable'
-      setWeather(null)
+      current = null
       status(`Weather update failed: ${e instanceof Error ? e.message : String(e)}`)
     }
   })().finally(() => {
@@ -90,10 +90,14 @@ export function getDaily(): DailyForecast[] {
   return daily
 }
 
+export function getCurrent(): CurrentWeather | null {
+  return current
+}
+
 // Resource lifecycle in the same shape as the status bar clock and, before
 // it, the GPS subscription: runs until stopped, invisible if leaked, and the
 // OS suspends the app out from under it, so start/stop are driven by the
-// same foreground enter/exit events in main.ts rather than a second pattern.
+// same foreground enter/exit events in app/main.ts rather than a second pattern.
 export function start() {
   if (timerId !== null) return
   refresh()

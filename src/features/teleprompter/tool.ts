@@ -1,5 +1,5 @@
-import { scripts, setActiveScriptId, type Item } from '../data'
-import type { Tool } from './types'
+import { scripts, setActiveScriptId, type Script } from './store'
+import type { Tool } from '../../core/tool'
 
 // The script used to be a hardcoded array in this file, then whatever was
 // marked "active" on the phone. Per direct request, the glasses themselves now
@@ -16,9 +16,9 @@ type Mode = 'list' | 'text'
 let mode: Mode = 'list'
 
 // Cached for the CURRENT open only, refreshed in beforeOpen (awaited by the
-// shell before the page is built, see types.ts) so contentKind, listItems and
+// shell before the page is built, see core/tool.ts) so contentKind, listItems and
 // initialContent - all synchronous - have correct data the instant they run.
-let pickerScripts: Item[] = []
+let pickerScripts: Script[] = []
 
 let currentScript = FALLBACK_SCRIPT
 let currentScriptId: string | null = null
@@ -34,7 +34,7 @@ async function refresh(): Promise<void> {
   mode = 'list'
 }
 
-function pickScript(item: Item) {
+function pickScript(item: Script) {
   currentScriptId = item.id
   currentScript = item.body.trim().length > 0 ? item.body : FALLBACK_SCRIPT
   mode = 'text'

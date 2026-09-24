@@ -2,16 +2,24 @@
 <html lang="en">
   <head>
     <meta charset="UTF-8" />
-    <meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0, minimum-scale=1.0, user-scalable=no" />
+    <meta
+      name="viewport"
+      content="width=device-width, initial-scale=1.0, maximum-scale=1.0, minimum-scale=1.0, user-scalable=no"
+    />
     <title>G2 Launcher</title>
     <style>
-      html, body {
+      html,
+      body {
         margin: 0;
         height: 100%;
         /* ER brand dark-theme surface (#232323) + Neutral-200 text (#E5E5E5). */
         background: #232323;
-        color: #E5E5E5;
-        font: 14px/1.4 -apple-system, BlinkMacSystemFont, system-ui, sans-serif;
+        color: #e5e5e5;
+        font:
+          14px/1.4 -apple-system,
+          BlinkMacSystemFont,
+          system-ui,
+          sans-serif;
         /* Kill WebView zoom + iOS auto-sizing + rubber-band scroll. */
         touch-action: manipulation;
         -webkit-text-size-adjust: 100%;
@@ -32,7 +40,7 @@
         background: #333333;
         border: 1px solid #444444;
         border-radius: 6px;
-        color: #E5E5E5;
+        color: #e5e5e5;
         font-size: 13px;
       }
       /* The top-level menu mirrors the glasses launcher list, so its rows are
@@ -99,7 +107,7 @@
         background: #3a3a3a;
         border: 1px solid #4a4a4a;
         border-radius: 4px;
-        color: #E5E5E5;
+        color: #e5e5e5;
         font-size: 13px;
       }
       .empty {
@@ -119,7 +127,7 @@
         background: #2c2c2c;
         border: 1px solid #3a3a3a;
         border-radius: 6px;
-        color: #E5E5E5;
+        color: #e5e5e5;
         font-size: 14px;
         box-sizing: border-box;
       }
@@ -129,7 +137,7 @@
         background: #2c2c2c;
         border: 1px solid #3a3a3a;
         border-radius: 6px;
-        color: #E5E5E5;
+        color: #e5e5e5;
         font-size: 14px;
         font-family: inherit;
         resize: none;
@@ -153,7 +161,7 @@
         background: #2c2c2c;
         border: 1px solid #3a3a3a;
         border-radius: 6px;
-        color: #E5E5E5;
+        color: #e5e5e5;
         font-size: 14px;
         box-sizing: border-box;
       }
@@ -162,7 +170,7 @@
         background: #3a3a3a;
         border: 1px solid #4a4a4a;
         border-radius: 4px;
-        color: #E5E5E5;
+        color: #e5e5e5;
         font-size: 13px;
       }
       .add-item {
@@ -170,7 +178,7 @@
         background: #3a3a3a;
         border: 1px solid #4a4a4a;
         border-radius: 6px;
-        color: #E5E5E5;
+        color: #e5e5e5;
         font-size: 13px;
       }
       .add-item:disabled {
@@ -193,10 +201,10 @@
       }
       .editor-actions .cancel {
         background: #3a3a3a;
-        color: #E5E5E5;
+        color: #e5e5e5;
       }
       /* An approximation of the glasses canvas, not a pixel-perfect replica -
-         see the comment on glassesPreview() in companion.ts for why one is
+         see the comment on glassesPreview() in src/companion/main.ts for why one is
          not possible. 576x288 is the real canvas size, so the aspect ratio
          (2:1) is the one thing here that IS exact. */
       .glasses-preview {
@@ -240,7 +248,7 @@
   <body>
     <div id="companion"></div>
     <div id="status">Companion app is running. Check the glasses display.</div>
-    <script type="module" src="/src/main.ts"></script>
-    <script type="module" src="/src/companion.ts"></script>
+    <script type="module" src="/src/app/main.ts"></script>
+    <script type="module" src="/src/companion/main.ts"></script>
   </body>
 </html>

@@ -6,7 +6,7 @@ import {
   RebuildPageContainer,
   TextContainerProperty,
 } from '@evenrealities/even_hub_sdk'
-import { bridge, status } from './bridge'
+import { bridge, status } from '../platform/bridge'
 import {
   CANVAS_WIDTH,
   CONFIRM_LIST_HEIGHT,
@@ -21,18 +21,25 @@ import {
   CONTENT_Y,
   LIST_ITEM_WIDTH,
   PADDING,
-} from './page'
-import { readWithTimeout } from './storage'
+} from '../platform/page'
+import { readWithTimeout } from '../platform/storage'
 import {
   hydrate as hydrateStatusBar,
+  setWeather as setStatusBarWeather,
   startStatusBar,
   statusBarContainers,
   stopStatusBar,
 } from './statusbar'
-import { registerRebuildHandler } from './rebuild'
+import { registerRebuildHandler } from '../core/rebuild'
 import { persistScreen, readStoredScreen, type Screen } from './screen'
-import { TOOLS, TOOL_NAMES, type Tool } from './tools'
-import { start as startWeather, stop as stopWeather } from './weather-service'
+import { TOOLS, TOOL_NAMES } from './registry'
+import type { Tool } from '../core/tool'
+import {
+  getCurrent as getCurrentWeather,
+  onUpdate as onWeatherUpdate,
+  start as startWeather,
+  stop as stopWeather,
+} from '../features/weather/service'
 
 // The shell. Owns which page is showing, builds pages, and routes input. It knows
 // tools only through the Tool interface, so adding one is a new file plus an entry
@@ -142,7 +149,7 @@ function cancelConfirm(index: number) {
 // Yes: ask the tool where "leaving" actually goes. Most tools have no answer
 // for this and default to the menu; Teleprompter uses it to step back to its
 // own picker instead of exiting itself entirely (see onConfirmedExit in
-// types.ts). Either way the tool's own onConfirmedExit runs first, so its
+// core/tool.ts). Either way the tool's own onConfirmedExit runs first, so its
 // internal state is already updated by the time the rebuild reads it.
 function confirmExit(tool: Tool, index: number) {
   confirming = false
@@ -201,11 +208,11 @@ const menuList = new ListContainerProperty({
 // The content container MUST set isEventCapture: 1. A page with no capture
 // container has no way out, and it is also the container the firmware scrolls and
 // the one every tool's setContent targets. Full CONTENT_HEIGHT, no reserved
-// space: see page.ts for why a permanently smaller reading area was tried and
+// space: see platform/page.ts for why a permanently smaller reading area was tried and
 // reverted.
 //
 // A tool can ask for its content slot as a list instead of text (see
-// Tool.contentKind in types.ts). Only Teleprompter uses this today, for its
+// Tool.contentKind in core/tool.ts). Only Teleprompter uses this today, for its
 // script picker, and it is the same ListContainerProperty shape as the menu:
 // firmware owns highlight and scroll, we only react to a click.
 function toolListContent(tool: Tool): ListContainerProperty {
@@ -262,7 +269,7 @@ function toolContainers(index: number) {
   }
 }
 
-// A tool's data changed out from under it (see rebuild.ts) and wants its own
+// A tool's data changed out from under it (see core/rebuild.ts) and wants its own
 // page redrawn. Verified here, not trusted from the caller: only rebuild if
 // the given tool is actually the one on screen right now, and not while a
 // leave prompt is open, so a background data update can never clobber
@@ -297,24 +304,22 @@ async function openTool(index: number) {
   const tool = TOOLS[index]
 
   // Awaited before the page is built, so contentKind/listItems/initialContent
-  // (all synchronous, see types.ts) have current data the instant they run.
+  // (all synchronous, see core/tool.ts) have current data the instant they run.
   // Teleprompter uses this to read the latest saved scripts for its picker.
   await tool.beforeOpen?.()
 
-  bridge
-    .rebuildPageContainer(new RebuildPageContainer(toolContainers(index)))
-    .then(ok => {
-      if (ok) {
-        screen = { kind: 'tool', index }
-        persistScreen(screen)
-        status(`Tool: ${tool.name}`)
-        // Started only after the page is on screen. Anything a tool does to the
-        // content area needs the container to exist first.
-        tool.onOpen?.()
-      } else {
-        status(`Failed to open ${tool.name}`)
-      }
-    })
+  bridge.rebuildPageContainer(new RebuildPageContainer(toolContainers(index))).then(ok => {
+    if (ok) {
+      screen = { kind: 'tool', index }
+      persistScreen(screen)
+      status(`Tool: ${tool.name}`)
+      // Started only after the page is on screen. Anything a tool does to the
+      // content area needs the container to exist first.
+      tool.onOpen?.()
+    } else {
+      status(`Failed to open ${tool.name}`)
+    }
+  })
 }
 
 function returnToMenu() {
@@ -322,18 +327,16 @@ function returnToMenu() {
   // Close before the rebuild, so an update arriving mid-transition cannot land on
   // a container that is about to be replaced.
   activeTool()?.onClose?.()
-  bridge
-    .rebuildPageContainer(new RebuildPageContainer(menuContainers()))
-    .then(ok => {
-      if (ok) {
-        screen = { kind: 'menu' }
-        persistScreen(screen)
-        status('Menu')
-      } else {
-        // Back failed. Exit rather than leave the wearer stuck.
-        requestExit()
-      }
-    })
+  bridge.rebuildPageContainer(new RebuildPageContainer(menuContainers())).then(ok => {
+    if (ok) {
+      screen = { kind: 'menu' }
+      persistScreen(screen)
+      status('Menu')
+    } else {
+      // Back failed. Exit rather than leave the wearer stuck.
+      requestExit()
+    }
+  })
 }
 
 // Request the system exit confirmation dialog.
@@ -359,10 +362,7 @@ function requestExit() {
 // Every read races a timeout, because a read that never settles would block the
 // event handler registration below.
 const storedScreenPromise = readWithTimeout(readStoredScreen(), null)
-const hydrationPromise = Promise.all([
-  hydrateStatusBar(),
-  ...TOOLS.map(tool => tool.hydrate?.()),
-])
+const hydrationPromise = Promise.all([hydrateStatusBar(), ...TOOLS.map(tool => tool.hydrate?.())])
 
 // Show the menu first. It is the safe default and every path that does not
 // restore lands here anyway. Creating it before the reads resolve means the first
@@ -404,9 +404,7 @@ if (restoredScreen && restoredScreen.kind === 'tool') {
   // reads them.
   await tool.beforeOpen?.()
   const ok = await Promise.race([
-    bridge.rebuildPageContainer(
-      new RebuildPageContainer(toolContainers(restoredScreen.index)),
-    ),
+    bridge.rebuildPageContainer(new RebuildPageContainer(toolContainers(restoredScreen.index))),
     new Promise<boolean>(resolve => {
       setTimeout(() => resolve(false), RESTORE_REBUILD_TIMEOUT_MS)
     }),
@@ -435,7 +433,8 @@ startStatusBar()
 // Same lifecycle as the clock: runs for as long as the app is foregrounded,
 // independent of which tool is on screen, because the status bar's weather
 // slot needs current conditions on every page, not only while Weather itself
-// is open.
+// is open. The shell connects the two so neither module knows about the other.
+onWeatherUpdate(() => setStatusBarWeather(getCurrentWeather()))
 startWeather()
 
 // --- Input ----------------------------------------------------------------
@@ -503,7 +502,10 @@ const unsubscribe = bridge.onEvenHubEvent(event => {
   // what stops an accidental double-tap while the prompt is open from falling
   // through to the exit/back logic meant for when no prompt is showing.
   if (confirming && screen.kind === 'tool') {
-    if (listEvent && (listType === OsEventTypeList.CLICK_EVENT || listType === OsEventTypeList.DOUBLE_CLICK_EVENT)) {
+    if (
+      listEvent &&
+      (listType === OsEventTypeList.CLICK_EVENT || listType === OsEventTypeList.DOUBLE_CLICK_EVENT)
+    ) {
       const tool = TOOLS[screen.index]
       const choice = listEvent.currentSelectItemIndex ?? CONFIRM_NO
       if (choice === CONFIRM_YES) {
