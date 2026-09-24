@@ -1,4 +1,8 @@
-import { TextContainerUpgrade } from '@evenrealities/even_hub_sdk'
+import {
+  ImageRawDataUpdate,
+  ImageRawDataUpdateResult,
+  TextContainerUpgrade,
+} from '@evenrealities/even_hub_sdk'
 import { bridge, status } from './bridge'
 import { LIST_ITEM_HEIGHT_PX } from './text'
 
@@ -58,6 +62,19 @@ export const CONTAINER_ID_STATUS_CENTRE = 2
 export const CONTAINER_ID_STATUS_RIGHT = 3
 export const CONTAINER_ID_CONTENT = 4
 export const CONTAINER_NAME_CONTENT = 'tool'
+
+// An image page is two containers: the image itself, which cannot capture
+// input (see setImage below), plus this invisible full-area text container
+// behind it that does. ID 6, after the confirm title's 5, same disjoint-range
+// reasoning as the rest of this block.
+export const CONTAINER_ID_CONTENT_IMAGE = 6
+export const CONTAINER_NAME_CONTENT_IMAGE = 'tool.image'
+
+// Platform maximum for one image container (see docs/platform.md, Image
+// containers). Not the canvas size - 576x288 would tile a smaller image
+// rather than fit it, and no single container can reach full-canvas anyway.
+export const IMAGE_MAX_WIDTH = 288
+export const IMAGE_MAX_HEIGHT = 144
 
 // The leave prompt is a title (this question, non-interactive) above a list
 // (the two answers). A list item's own text cannot carry a non-selectable
@@ -161,5 +178,34 @@ export function setContent(text: string): Promise<boolean> {
     .then(ok => {
       if (!ok) status('Content update failed')
       return ok
+    })
+}
+
+// Push pixels into the content image container declared by an 'image'
+// contentKind page (see Tool.imageSize in core/tool.ts). Only callable after
+// the page is on screen - an image container cannot receive data at the same
+// call that creates it, which is why this is a separate function from
+// whatever built the page rather than a field on the container itself.
+//
+// data is whatever bridge.updateImageRawData accepts: encoded image bytes
+// (PNG works, per the official image template) or raw greyscale pixels. The
+// host decodes and converts to 4-bit greyscale either way, per
+// docs/platform.md's Image containers section.
+export function setImage(
+  data: number[] | Uint8Array | ArrayBuffer | string,
+): Promise<ImageRawDataUpdateResult> {
+  return bridge
+    .updateImageRawData(
+      new ImageRawDataUpdate({
+        containerID: CONTAINER_ID_CONTENT_IMAGE,
+        containerName: CONTAINER_NAME_CONTENT_IMAGE,
+        imageData: data,
+      }),
+    )
+    .then(result => {
+      if (!ImageRawDataUpdateResult.isSuccess(result)) {
+        status(`Image update failed: ${result}`)
+      }
+      return result
     })
 }

@@ -59,14 +59,30 @@ export type Tool = {
 
   // Which kind of content container this tool wants for its CURRENT open.
   // 'text' is the default when omitted, matching every tool before this one.
-  // A tool can switch between the two across its own internal navigation:
+  // A tool can switch between kinds across its own internal navigation:
   // Teleprompter is a list (choosing a script) until one is picked, then text
   // (reading it), and can return to the list on its next open.
-  contentKind?(): 'text' | 'list'
+  contentKind?(): 'text' | 'list' | 'image'
 
   // Item labels shown when contentKind() is 'list'. Native firmware selection
   // and highlight, the same widget the launcher menu itself uses.
   listItems?(): string[]
+
+  // Container size when contentKind() is 'image', in pixels. Defaults to the
+  // platform maximum (288 x 144, see platform/page.ts's IMAGE_MAX_WIDTH /
+  // IMAGE_MAX_HEIGHT) when omitted - most images want as much room as this
+  // platform allows a single image container, not a smaller one.
+  //
+  // The shell only declares the container; sending pixels into it is the
+  // tool's own job; from onOpen, via platform/page.ts's setImage(), once the
+  // container exists (an image container cannot receive data at the same
+  // time it is created - see updateImageRawData in the SDK). An image
+  // container also cannot capture input, so the shell places an invisible
+  // full-area text container behind it to receive taps and scrolls; a tool
+  // using this content kind gets those through onScroll same as a text tool,
+  // and a tap reaches it only via double-tap's own confirm-exit handling
+  // (there is no onListSelect equivalent for a plain tap on an image page).
+  imageSize?(): { width: number; height: number }
 
   // A list item was tapped while this tool owns the content area (only
   // relevant when contentKind() is 'list'). Called BEFORE the shell rebuilds,
@@ -92,6 +108,18 @@ export type Tool = {
   // initialContent, because anything that updates the content area needs the
   // container to exist first.
   onOpen?(): void
+
+  // A rebuild the tool itself triggered (onListSelect, or onConfirmedExit
+  // returning 'tool') has landed and the new containers exist. Unlike
+  // onOpen, the shell calls this after EVERY such internal rebuild, not only
+  // the first time the tool is opened - needed by a tool whose new depth
+  // requires the container to already exist before it can act, which is
+  // only 'image' content today (pixels can only be sent to a container
+  // already on screen, see Tool.imageSize). Most tools never need this:
+  // Notes, Teleprompter and Weather all read already-loaded state
+  // synchronously through listItems()/initialContent() on the same rebuild,
+  // with nothing left to do once it lands.
+  onContentReady?(): void
 
   // Leaving the page. Stop everything onOpen started. Called before the rebuild
   // that replaces the page, so a late update cannot land on a container that is
