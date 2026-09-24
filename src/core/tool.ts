@@ -143,4 +143,17 @@ export type Tool = {
   // Notes uses it to reset a checklist's done state, which is not navigation
   // in either direction. Unassigned until a tool needs it; most never will.
   onLongPress?(): void
+
+  // Custom contextual-menu items for this tool's CURRENT open (opened by
+  // tap-then-long-press on the glasses - see docs/platform.md, Contextual
+  // menu). Omitted, or an empty array, means only the system items (Display
+  // off, Brightness, Close). Re-evaluated on every rebuild that shows this
+  // tool: the platform does not merge or remember a previous menu, and a
+  // rebuild that omits menuObject clears any custom items entirely, so the
+  // shell always re-declares whatever this returns right now.
+  contextMenu?(): { itemName: string; itemID: number }[]
+
+  // A custom contextual-menu item was selected (see contextMenu above).
+  // itemID matches whatever this tool itself assigned it.
+  onMenuItemClick?(itemID: number): void
 }

@@ -3,6 +3,8 @@ import {
   ImageContainerProperty,
   ListContainerProperty,
   ListItemContainerProperty,
+  MenuContainerProperty,
+  MenuItemProperty,
   OsEventTypeList,
   RebuildPageContainer,
   TextContainerProperty,
@@ -296,16 +298,29 @@ function toolImageContent(tool: Tool): ImageContainerProperty {
   })
 }
 
+// Re-declared on every rebuild that shows this tool - omitting it clears any
+// previous custom items (see Tool.contextMenu in core/tool.ts), so there is
+// no "leave the old menu alone" option to accidentally take.
+function toolMenu(tool: Tool): MenuContainerProperty | undefined {
+  const items = tool.contextMenu?.() ?? []
+  if (items.length === 0) return undefined
+  return new MenuContainerProperty({
+    menuItems: items.map(i => new MenuItemProperty({ itemName: i.itemName, itemID: i.itemID })),
+  })
+}
+
 function toolContainers(index: number) {
   const tool = TOOLS[index]
   const bar = statusBarContainers()
   const kind = tool.contentKind?.() ?? 'text'
+  const menuObject = toolMenu(tool)
 
   if (kind === 'list') {
     return {
       containerTotalNum: bar.length + 1,
       textObject: bar,
       listObject: [toolListContent(tool)],
+      menuObject,
     }
   }
 
@@ -314,12 +329,14 @@ function toolContainers(index: number) {
       containerTotalNum: bar.length + 2,
       textObject: [...bar, toolImageCapture()],
       imageObject: [toolImageContent(tool)],
+      menuObject,
     }
   }
 
   return {
     containerTotalNum: bar.length + 1,
     textObject: [...bar, toolTextContent(tool)],
+    menuObject,
   }
 }
 
@@ -530,11 +547,21 @@ function eventTypeOf(envelope?: { eventType?: OsEventTypeList }): OsEventTypeLis
 //      onListSelect, if it has one.
 //   6. Long press on a tool page -> the tool's onLongPress, if it has one.
 //   7. Scroll on a tool page -> the tool's onScroll, if it has one.
-//   8. Exit events -> close the active tool, unsubscribe.
+//   8. Contextual menu item click -> the tool's onMenuItemClick, if it has one.
+//   9. Exit events -> close the active tool, unsubscribe.
 //
 // Tap on a tool page reaches the tool only through onListSelect (list content)
 // or onScroll (text content) today. Tap is defined as "forward" in the gesture
 // rules and is free for a tool to claim either way.
+//
+// Opening or closing the contextual menu also fires FOREGROUND_EXIT_EVENT
+// and FOREGROUND_ENTER_EVENT (per docs/platform.md, Contextual menu) - step 3
+// already handles those unconditionally, so a tool's onSuspend/onResume also
+// fire around a menu open, same as they would around the app actually
+// backgrounding. Not distinguished from real backgrounding, on purpose: the
+// SDK gives no way to tell the two apart, and treating them the same is the
+// safe default (a tool that stops a subscription for a real background exit
+// stopping it for a menu open too is a conservative miss, not a bug).
 const unsubscribe = bridge.onEvenHubEvent(event => {
   const sysType = eventTypeOf(event.sysEvent)
   const textType = eventTypeOf(event.textEvent)
@@ -668,6 +695,15 @@ const unsubscribe = bridge.onEvenHubEvent(event => {
       tool.onScroll(-1)
       return
     }
+  }
+
+  // Contextual menu item click. Only reachable when the active tool declared
+  // custom items via contextMenu() (see toolMenu above) - the system's own
+  // Display off / Brightness / Close slots do not surface a click event to
+  // us at all, only ours do.
+  if (event.menuItemClickEvent) {
+    activeTool()?.onMenuItemClick?.(event.menuItemClickEvent.itemID ?? 0)
+    return
   }
 
   // OS-initiated exit. Best-effort: the WebView may be torn down before the event

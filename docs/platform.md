@@ -15,7 +15,13 @@ Source tags:
 - [SIM] `node_modules/@evenrealities/evenhub-simulator/README.md`
 - [NOTES] https://github.com/nickustinov/even-g2-notes (community reference, widely cited)
 - [COMMUNITY] a named open-source G2 project, linked where cited
-- [HW] our own test on RJ's glasses, recorded in this repo's history
+- [HW] our own test on RJ's real glasses, recorded in this repo's history
+- [LAB-SIM] our own test via the dev-only Lab tool (see roadmap.md Phase 1),
+  run in the simulator, not yet on real glasses. The simulator's own README
+  is explicit that behaviour can differ from hardware, so this is evidence,
+  not confirmation - see the simulator gaps this repo has already hit
+  (location, and now IMU and album access, are simply unimplemented in this
+  simulator build) for how far that gap can go
 - [UNVERIFIED] claimed somewhere, not yet tested by us
 
 ## 1. Hardware
@@ -52,8 +58,8 @@ Source tags:
 | Line height 27 px | [PLUGIN] font-measurement, matches our own measurement [HW] |
 | Font is proportional, not monospaced. Pixel-accurate measuring: `@evenrealities/pretext` (`getTextWidth`, `measureTextWrap`, `pxTruncate`) | [PLUGIN] |
 | Padding and border shrink the text area on all four sides | [PLUGIN] |
-| `textContainerUpgrade` supports `contentOffset` and `contentLength` for partial replacement | [DOCS] |
-| Any content-carrying upgrade or rebuild resets the firmware scroll position. A brightness-only upgrade does not | [HW] |
+| `textContainerUpgrade` supports `contentOffset` and `contentLength` for partial replacement | [DOCS]. Tried in the simulator (Lab's partial-update probe: replace only byte range 0-6 of a 20-line block) and it did not behave as a partial replace there - the displayed content became just the replacement fragment, with the rest of the block gone, and scroll reset to the top. [LAB-SIM], contradicts [DOCS] enough that this needs a real-hardware run before trusting either result; the SDK's own comment for this call already warns the simulator visually redraws where hardware is smoother, which is consistent with the simulator simply not implementing offset/length semantics rather than partial-update itself being broken |
+| Any content-carrying upgrade or rebuild resets the firmware scroll position. A brightness-only upgrade does not | [HW] confirmed previously with real content changes (dimming a scrolled teleprompter). A brightness-only update with no `content` field at all (`textColor` only) was re-tried via Lab's brightness probe and returned `false` (rejected) in the simulator [LAB-SIM] - likely a simulator gap, not a reversal of the earlier hardware result, since the earlier success was itself on real hardware and used the same content-less shape; needs a real-hardware re-check to be sure |
 
 ### Glyphs
 
@@ -78,7 +84,7 @@ run this table on our own glasses.
 | Rule | Source |
 |---|---|
 | Up to 20 items, 64 characters each | [DOCS] |
-| Item height 40 px fixed, 12 px horizontal padding per side | [PLUGIN] font-measurement |
+| Item height 40 px fixed, 12 px horizontal padding per side | [PLUGIN] font-measurement. Not independently re-measured by us; G2-37 already took this value as given when it replaced the confirm dialog's guessed 54px |
 | Items render vertically centred in the list box | [HW] |
 | No per-item styling, no separators, no in-place update (rebuild required) | [DOCS] |
 | Firmware owns scroll and highlight. A rebuilt list always highlights index 0 | [DOCS] [HW] |
@@ -90,13 +96,13 @@ run this table on our own glasses.
 |---|---|
 | Size 20 to 288 wide, 20 to 144 high | [DOCS] [SDK] |
 | Data: encoded image bytes (PNG, JPEG) or raw greyscale. The host decodes, resizes and converts to 4-bit | [TPL] image template, [SIM] 0.9.2 to 0.9.3 |
-| Canvas works: draw on an offscreen `<canvas>`, `toBlob('image/png')`, send the bytes | [TPL] [HW] confirmed in the simulator via the Lab tool's draw probe: gradient, a filled circle and a filled square all rendered |
+| Canvas works: draw on an offscreen `<canvas>`, `toBlob('image/png')`, send the bytes | [TPL] [LAB-SIM] Lab's draw probe: gradient, a filled circle and a filled square all rendered |
 | Cannot send during `createStartUpPageContainer`. Create, then call `updateImageRawData` | [DOCS] |
 | Never send two images at once. Await each send | [DOCS] |
 | Match image size to the container, a smaller image is tiled | [NOTES] |
-| Black pixels are off, so an all-black image effectively clears an already-drawn container back to blank, no rebuild needed | [DOCS] [NOTES] [HW] confirmed in the simulator: Lab's draw probe followed by a long-press (send all-black to the same container) returned to a blank page. This overturns the "cannot be cleared" premise page.ts's LEAVE-CONFIRM PROMPT history was built on - that record is about the specific approach tried at the time (a permanent backdrop declared once, never re-sent), not a platform limit; re-sending new pixels to an existing image container was never actually tried until now |
+| Black pixels are off, so an all-black image effectively clears an already-drawn container back to blank, no rebuild needed | [DOCS] [NOTES] [LAB-SIM] Lab's draw probe followed by a long-press (send all-black to the same container) returned to a blank page. This overturns the "cannot be cleared" premise page.ts's LEAVE-CONFIRM PROMPT history was built on - that record is about the specific approach tried at the time (a permanent backdrop declared once, never re-sent), not a platform limit; re-sending new pixels to an existing image container was never actually tried until now |
 | Image-first pages: full-screen text container with `' '` and `isEventCapture: 1` behind the image | [DOCS] |
-| Photos from the phone: `pickImageFromAlbum()` / `captureImageFromCamera()` return base64 (permissions `album`, `camera`) | [SDK] [DOCS] |
+| Photos from the phone: `pickImageFromAlbum()` / `captureImageFromCamera()` return base64 (permissions `album`, `camera`) | [SDK] [DOCS] - `pickImageFromAlbum` is an unimplemented variant in this simulator build (`unknown variant`), same failure shape as `startAppLocationUpdates`; needs real hardware |
 | Store icons: 1-bit, built from 2 x 2 pixel blocks, strokes at least 2 px. In-app icons: 24 x 24 is the norm | [DOCS] design-guidelines |
 
 ### Performance (one measured data point, SDK 0.0.13)
@@ -119,13 +125,14 @@ location or network before the first paint.
 |---|---|---|
 | Network (`fetch`, WebSocket) | `network` with a `whitelist` of full origins. Whitelist does not bypass CORS | [DOCS] networking |
 | Location one-shot and continuous | `location` | [DOCS] |
-| Glasses microphone | `g2-microphone` (page must exist before `audioControl`) | [DOCS] [TPL] |
+| Glasses microphone | `g2-microphone` (page must exist before `audioControl`) | [DOCS] [TPL] [LAB-SIM] `audioControl(true, Glasses)` plus a live `audioEvent` subscription both worked in the simulator - real PCM frames streamed continuously, frame counter and `speakerRole` both updated live |
 | Phone microphone | `phone-microphone` | [DOCS] |
-| Album / camera | `album` / `camera` | [DOCS] |
-| IMU (x, y, z via `sysEvent.imuData`, pacing P100 to P1000) | none listed | [SDK] |
-| Device status: battery, charging, `isWearing`, in case | none | [SDK] |
+| Album / camera | `album` / `camera` | [DOCS]. `pickImageFromAlbum()` is unimplemented in this simulator build (`unknown variant`) - needs real hardware, same as location |
+| IMU (x, y, z via `sysEvent.imuData`, pacing P100 to P1000) | none listed | [SDK]. `imuControl()` is unimplemented in this simulator build (`unknown variant`) - needs real hardware, same as location |
+| Device status: battery, charging, `isWearing`, in case | none | [SDK] [LAB-SIM] `getDeviceInfo()`/`getUserInfo()` both resolve in the simulator with hardcoded values (model g2, battery 100, wearing true, charging false, user "Simulator") - matches the simulator README's own note that these are hardcoded, not live; real values need hardware |
 | User info: name, avatar, country | none | [SDK] |
 | Launch source: `appMenu` or `glassesMenu` | none | [SDK] |
+| Contextual menu: custom items, click events | none | [DOCS] [LAB-SIM] Full round trip confirmed: declared 2 custom items, opened the menu, clicked one, got `menuItemClickEvent` back with the right `itemID`, and the documented `FOREGROUND_EXIT_EVENT` -> click -> `FOREGROUND_ENTER_EVENT`-shaped sequence (actually observed as enter before the click event, exit after) matched what docs/platform.md section 2 already described |
 
 Audio format: PCM 16 kHz, signed 16-bit little-endian, mono, 100 ms per event
 [SIM] [DOCS]. Each frame also carries `speakerRole` (self, other, unknown).
@@ -140,7 +147,11 @@ Community apps solve it three ways:
    short commands [COMMUNITY] https://github.com/tntpsu/even-voice-shim
 2. Browser `SpeechRecognition` in the WebView, which uses the phone microphone,
    not the glasses one. [COMMUNITY] https://github.com/MrScautHD/Even-Voice-AI
-   uses it as its primary path. [UNVERIFIED] on our phone.
+   uses it as its primary path. `window.SpeechRecognition` is present and
+   constructs without throwing in the desktop simulator's own WebView
+   [LAB-SIM] - a positive sign, but that is a desktop Tauri WebView, not the
+   Even app's real WebView on a phone, so this is not confirmation the target
+   environment has it. [UNVERIFIED] on the actual phone.
 3. Self-hosted Whisper on a machine we control.
 
 Keys must never ship in the package, it is extractable [DOCS].
