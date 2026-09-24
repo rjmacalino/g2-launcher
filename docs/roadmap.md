@@ -110,11 +110,24 @@ then on hardware by RJ. Results go back into platform.md with a [HW] tag.
 
 ## Phase 2: design system
 
-- [ ] Glasses tokens: margins, header height, brightness roles
-      (primary 4, secondary 2, disabled 1), glyph constants
-- [ ] Icon set: weather conditions, timer, notes, battery; 24 x 24, 1-bit,
-      2 px strokes, rendered to PNG and sent via one image container per page
-- [ ] Page builders: header plus list, header plus text, full-image, confirm
+- [x] Glasses tokens (`src/ui/tokens.ts`): brightness roles (primary 4,
+      secondary 2, disabled 1) and icon size (24px). Layout geometry (margins,
+      header height) already lives in platform/page.ts and was left there
+      rather than duplicated under a second name - tokens.ts holds only what
+      did not already have a home
+- [x] Icon set: 6 weather condition icons (clear, cloudy, rain, snow, fog,
+      storm), drawn as flat vector shapes at native 24 x 24 in
+      `src/ui/icons.ts`, thresholded to pure black/white, sent as PNG via
+      `updateImageRawData`. Verified in the simulator via Lab's "Icon set"
+      probe - all 6 rendered and are legible at real size [LAB-SIM]. Timer,
+      notes and battery icons not built yet - deferred until those features
+      actually need them, rather than drawing icons with no consumer
+- [ ] Page builders: header plus list, header plus text, full-image, confirm.
+      Deliberately not done in this pass - this means touching main.ts's
+      confirm dialog construction, which took six redesigns to get right (see
+      page.ts's LEAVE-CONFIRM PROMPT history) and deserves a focused pass of
+      its own with real hardware verification after, not a refactor bundled
+      in alongside unrelated work
 - [ ] Companion page follows the Even phone design tokens (from the official
       design guidelines)
 

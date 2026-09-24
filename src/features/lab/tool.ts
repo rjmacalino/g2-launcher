@@ -1,8 +1,17 @@
 import { AudioInputSource, OsEventTypeList } from '@evenrealities/even_hub_sdk'
-import { setBrightness, setContent, setContentPartial, setImage } from '../../platform/page'
+import {
+  IMAGE_MAX_HEIGHT,
+  IMAGE_MAX_WIDTH,
+  setBrightness,
+  setContent,
+  setContentPartial,
+  setImage,
+} from '../../platform/page'
 import { bridge, status } from '../../platform/bridge'
 import { GLYPH_CANDIDATES } from './glyphs'
 import { drawAllBlack, drawTestPattern } from './test-pattern'
+import { drawWeatherIcon, WEATHER_ICON_CONDITIONS } from '../../ui/icons'
+import { ICON_SIZE } from '../../ui/tokens'
 import type { Tool } from '../../core/tool'
 
 // Dev-only: a menu of hardware probes for facts docs/platform.md marks
@@ -22,6 +31,9 @@ type Probe = {
   // from onOpen, since pixels can only go to a container that already exists
   // on screen (see Tool.imageSize in core/tool.ts).
   content?(): string
+  // Only meaningful for kind: 'image'. Defaults to the platform maximum
+  // (288 x 144) when omitted, same as Tool.imageSize's own default.
+  imageSize?(): { width: number; height: number }
   onOpen?(): void
   onClose?(): void
   onLongPress?(): void
@@ -46,6 +58,7 @@ let imuLast = { x: 0, y: 0, z: 0 }
 let imuUnsubscribe: (() => void) | null = null
 
 let deviceStatusText = 'Loading...'
+let iconIndex = 0
 
 const CONTEXT_MENU_ITEM_A = 1
 const CONTEXT_MENU_ITEM_B = 2
@@ -238,6 +251,28 @@ const probes: readonly Probe[] = [
         .catch(e => status(`Lab: album pick threw ${e instanceof Error ? e.message : String(e)}`))
     },
   },
+  {
+    name: 'Icon set (long-press cycles)',
+    kind: 'image',
+    // A small container, not the platform maximum: real icon usage (a
+    // weather condition next to a temperature, say) wants a modest fixed
+    // size, not 288 x 144 stretched around a 24px drawing.
+    imageSize: () => ({ width: ICON_SIZE, height: ICON_SIZE }),
+    onOpen: () => {
+      iconIndex = 0
+      drawWeatherIcon(WEATHER_ICON_CONDITIONS[iconIndex])
+        .then(setImage)
+        .then(result => status(`Lab: icon ${WEATHER_ICON_CONDITIONS[iconIndex]} -> ${result}`))
+        .catch(e => status(`Lab: icon draw threw ${e instanceof Error ? e.message : String(e)}`))
+    },
+    onLongPress: () => {
+      iconIndex = (iconIndex + 1) % WEATHER_ICON_CONDITIONS.length
+      drawWeatherIcon(WEATHER_ICON_CONDITIONS[iconIndex])
+        .then(setImage)
+        .then(result => status(`Lab: icon ${WEATHER_ICON_CONDITIONS[iconIndex]} -> ${result}`))
+        .catch(e => status(`Lab: icon draw threw ${e instanceof Error ? e.message : String(e)}`))
+    },
+  },
 ]
 
 type Depth = 'menu' | 'result'
@@ -257,6 +292,8 @@ export const labTool: Tool = {
     return selectedProbe()?.kind ?? 'text'
   },
   listItems: () => probes.map(p => p.name),
+  imageSize: () =>
+    selectedProbe()?.imageSize?.() ?? { width: IMAGE_MAX_WIDTH, height: IMAGE_MAX_HEIGHT },
   onListSelect: index => {
     if (depth !== 'menu') return
     if (!probes[index]) return
