@@ -61,9 +61,21 @@ A dev-only "Lab" tool, excluded from release builds, one menu item per probe.
 Each probe gets run on the simulator (screenshots via the automation API),
 then on hardware by RJ. Results go back into platform.md with a [HW] tag.
 
-- [ ] Image: canvas-drawn 24 x 24 and 48 x 48 icons, a 288 x 144 chart
-- [ ] Image: all-black send clears a container
-- [ ] Glyph sheet: every character platform.md lists as available
+- [x] Image: canvas draw works (gradient, filled circle, filled square, all in
+      one 288 x 144 send). Verified in the simulator via Lab's "Draw +
+      long-press to clear" probe. Not yet tested at icon sizes (24 x 24,
+      48 x 48) or as a data chart specifically, and not yet on real hardware
+- [x] Image: all-black send clears a container. Verified in the simulator -
+      draw, then long-press to send all-black to the same container, back to
+      blank with no rebuild. Overturns the "cannot be cleared" premise behind
+      page.ts's LEAVE-CONFIRM PROMPT history (see docs/platform.md, Image
+      containers). Not yet confirmed on real hardware
+- [x] Glyph sheet: renders in Lab's "Glyph sheet" probe, one line per
+      candidate with its codepoint label, including a known-bad control
+      (the weather sun glyph, already proven to fail). Ran once in the
+      simulator - every candidate drew something there, which the simulator's
+      own caveats say is not proof of hardware behaviour. Needs a real
+      on-glasses run to mean anything
 - [ ] Text brightness levels 0 to 4 side by side
 - [ ] Contextual menu: custom items and their click events
 - [ ] List item height matches 40 px

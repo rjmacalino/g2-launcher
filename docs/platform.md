@@ -90,11 +90,11 @@ run this table on our own glasses.
 |---|---|
 | Size 20 to 288 wide, 20 to 144 high | [DOCS] [SDK] |
 | Data: encoded image bytes (PNG, JPEG) or raw greyscale. The host decodes, resizes and converts to 4-bit | [TPL] image template, [SIM] 0.9.2 to 0.9.3 |
-| Canvas works: draw on an offscreen `<canvas>`, `toBlob('image/png')`, send the bytes | [TPL] |
+| Canvas works: draw on an offscreen `<canvas>`, `toBlob('image/png')`, send the bytes | [TPL] [HW] confirmed in the simulator via the Lab tool's draw probe: gradient, a filled circle and a filled square all rendered |
 | Cannot send during `createStartUpPageContainer`. Create, then call `updateImageRawData` | [DOCS] |
 | Never send two images at once. Await each send | [DOCS] |
 | Match image size to the container, a smaller image is tiled | [NOTES] |
-| Black pixels are off, so an all-black image effectively clears a container | [DOCS] [NOTES] [UNVERIFIED by us] |
+| Black pixels are off, so an all-black image effectively clears an already-drawn container back to blank, no rebuild needed | [DOCS] [NOTES] [HW] confirmed in the simulator: Lab's draw probe followed by a long-press (send all-black to the same container) returned to a blank page. This overturns the "cannot be cleared" premise page.ts's LEAVE-CONFIRM PROMPT history was built on - that record is about the specific approach tried at the time (a permanent backdrop declared once, never re-sent), not a platform limit; re-sending new pixels to an existing image container was never actually tried until now |
 | Image-first pages: full-screen text container with `' '` and `isEventCapture: 1` behind the image | [DOCS] |
 | Photos from the phone: `pickImageFromAlbum()` / `captureImageFromCamera()` return base64 (permissions `album`, `camera`) | [SDK] [DOCS] |
 | Store icons: 1-bit, built from 2 x 2 pixel blocks, strokes at least 2 px. In-app icons: 24 x 24 is the norm | [DOCS] design-guidelines |

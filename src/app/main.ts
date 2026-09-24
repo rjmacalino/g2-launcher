@@ -1,5 +1,6 @@
 import {
   CreateStartUpPageContainer,
+  ImageContainerProperty,
   ListContainerProperty,
   ListItemContainerProperty,
   OsEventTypeList,
@@ -15,10 +16,14 @@ import {
   CONFIRM_TITLE_Y,
   CONTAINER_ID_CONFIRM_TITLE,
   CONTAINER_ID_CONTENT,
+  CONTAINER_ID_CONTENT_IMAGE,
   CONTAINER_NAME_CONFIRM_TITLE,
   CONTAINER_NAME_CONTENT,
+  CONTAINER_NAME_CONTENT_IMAGE,
   CONTENT_HEIGHT,
   CONTENT_Y,
+  IMAGE_MAX_HEIGHT,
+  IMAGE_MAX_WIDTH,
   LIST_ITEM_WIDTH,
   PADDING,
 } from '../platform/page'
@@ -161,6 +166,7 @@ function confirmExit(tool: Tool, index: number) {
   bridge.rebuildPageContainer(new RebuildPageContainer(toolContainers(index))).then(ok => {
     if (ok) {
       status(`Tool: ${tool.name}`)
+      tool.onContentReady?.()
     } else {
       status(`Failed to update ${tool.name}`)
     }
@@ -251,15 +257,63 @@ function toolTextContent(tool: Tool): TextContainerProperty {
   })
 }
 
+// The invisible capture layer behind an 'image' page. Image containers
+// cannot set isEventCapture (see ImageContainerProperty in the SDK), so a
+// tap, double-tap and scroll all still need a real container behind the
+// image to land on - full content area, blank content, same trick the
+// official image template and even-g2-notes both document.
+function toolImageCapture(): TextContainerProperty {
+  return new TextContainerProperty({
+    xPosition: 0,
+    yPosition: CONTENT_Y,
+    width: CANVAS_WIDTH,
+    height: CONTENT_HEIGHT,
+    borderWidth: 0,
+    paddingLength: 0,
+    containerID: CONTAINER_ID_CONTENT,
+    containerName: CONTAINER_NAME_CONTENT,
+    content: ' ',
+    isEventCapture: 1,
+  })
+}
+
+// The image container itself, empty. A tool fills it after the page is on
+// screen, via setImage() in platform/page.ts - see Tool.imageSize in
+// core/tool.ts for why this cannot happen at creation. Centred in the
+// content area at whatever size the tool asked for, clamped to the one
+// container maximum this platform allows.
+function toolImageContent(tool: Tool): ImageContainerProperty {
+  const size = tool.imageSize?.() ?? { width: IMAGE_MAX_WIDTH, height: IMAGE_MAX_HEIGHT }
+  const width = Math.min(size.width, IMAGE_MAX_WIDTH)
+  const height = Math.min(size.height, IMAGE_MAX_HEIGHT)
+  return new ImageContainerProperty({
+    xPosition: Math.floor((CANVAS_WIDTH - width) / 2),
+    yPosition: CONTENT_Y + Math.floor((CONTENT_HEIGHT - height) / 2),
+    width,
+    height,
+    containerID: CONTAINER_ID_CONTENT_IMAGE,
+    containerName: CONTAINER_NAME_CONTENT_IMAGE,
+  })
+}
+
 function toolContainers(index: number) {
   const tool = TOOLS[index]
   const bar = statusBarContainers()
+  const kind = tool.contentKind?.() ?? 'text'
 
-  if ((tool.contentKind?.() ?? 'text') === 'list') {
+  if (kind === 'list') {
     return {
       containerTotalNum: bar.length + 1,
       textObject: bar,
       listObject: [toolListContent(tool)],
+    }
+  }
+
+  if (kind === 'image') {
+    return {
+      containerTotalNum: bar.length + 2,
+      textObject: [...bar, toolImageCapture()],
+      imageObject: [toolImageContent(tool)],
     }
   }
 
@@ -583,7 +637,11 @@ const unsubscribe = bridge.onEvenHubEvent(event => {
       bridge
         .rebuildPageContainer(new RebuildPageContainer(toolContainers(screen.index)))
         .then(ok => {
-          if (!ok) status(`Failed to update ${tool.name}`)
+          if (ok) {
+            tool.onContentReady?.()
+          } else {
+            status(`Failed to update ${tool.name}`)
+          }
         })
       return
     }
