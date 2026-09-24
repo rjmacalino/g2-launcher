@@ -181,6 +181,53 @@ export function setContent(text: string): Promise<boolean> {
     })
 }
 
+// Replace only part of the content text, by byte offset and length, rather
+// than the whole string. Exists for Lab's partial-update probe: whether this
+// preserves scroll position the way a brightness-only upgrade does, or resets
+// it the way every other content-carrying upgrade does, has never actually
+// been tested here - see docs/platform.md, Text containers.
+export function setContentPartial(
+  text: string,
+  contentOffset: number,
+  contentLength: number,
+): Promise<boolean> {
+  return bridge
+    .textContainerUpgrade(
+      new TextContainerUpgrade({
+        containerID: CONTAINER_ID_CONTENT,
+        containerName: CONTAINER_NAME_CONTENT,
+        content: text,
+        contentOffset,
+        contentLength,
+      }),
+    )
+    .then(ok => {
+      if (!ok) status('Partial content update failed')
+      return ok
+    })
+}
+
+// Brightness only, no content field at all - this is the update that does
+// NOT reset scroll (see the LEAVE-CONFIRM PROMPT history above: this is how
+// the modal design dimmed a tool without disturbing its reading position,
+// before that whole approach was replaced). Range is MIN_TEXT_BRIGHTNESS to
+// MAX_TEXT_BRIGHTNESS (0 to 4); out-of-range values are rejected by the SDK
+// before this even reaches the host.
+export function setBrightness(level: number): Promise<boolean> {
+  return bridge
+    .textContainerUpgrade(
+      new TextContainerUpgrade({
+        containerID: CONTAINER_ID_CONTENT,
+        containerName: CONTAINER_NAME_CONTENT,
+        textColor: level,
+      }),
+    )
+    .then(ok => {
+      if (!ok) status('Brightness update failed')
+      return ok
+    })
+}
+
 // Push pixels into the content image container declared by an 'image'
 // contentKind page (see Tool.imageSize in core/tool.ts). Only callable after
 // the page is on screen - an image container cannot receive data at the same
