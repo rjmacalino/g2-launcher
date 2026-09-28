@@ -62,6 +62,7 @@ import { preload as preloadWhisper } from '../core/whisper'
 import { ask as askGemini } from '../core/gemini'
 import {
   finishListening as finishJarvisListening,
+  isListening as isJarvisListening,
   onDone as onJarvisDone,
 } from '../features/jarvis/tool'
 import { getApiKey as getGeminiApiKey } from '../features/jarvis/settings'
@@ -430,7 +431,15 @@ async function openTool(index: number) {
   bridge.rebuildPageContainer(new RebuildPageContainer(toolContainers(index))).then(ok => {
     if (ok) {
       screen = { kind: 'tool', index }
-      persistScreen(screen)
+      // Jarvis is never persisted as "the current screen" - it is a
+      // momentary action, not a place the wearer would want restored on the
+      // next cold start or resume. Restoring straight into it would start
+      // listening with no long press at all (found the hard way [HW]: a
+      // stale persisted Jarvis screen meant the app opened already
+      // listening, with no gesture to explain why). Whatever was persisted
+      // before stays persisted - see enterJarvis, which is the only other
+      // caller that can land here with tool.name === 'Jarvis'.
+      if (tool.name !== 'Jarvis') persistScreen(screen)
       status(`Tool: ${tool.name}`)
       // Started only after the page is on screen. Anything a tool does to the
       // content area needs the container to exist first.
@@ -516,7 +525,18 @@ const restoredScreen = await storedScreenPromise
 // If a recent tool page was stored, rebuild to it. The menu was already shown;
 // the rebuild causes a brief flicker during cold start, which is the trade for
 // never blocking the first frame on a storage read.
-if (restoredScreen && restoredScreen.kind === 'tool') {
+//
+// Never restores into Jarvis specifically, even if an old stored value still
+// names it (from before openTool stopped persisting it, or from a version
+// that crashed mid-session before it could correct itself) - falling
+// through here means the menu already drawn as the safe default stays put,
+// which is exactly what should happen instead of silently starting to
+// listen with no long press to explain why.
+if (
+  restoredScreen &&
+  restoredScreen.kind === 'tool' &&
+  TOOLS[restoredScreen.index].name !== 'Jarvis'
+) {
   const tool = TOOLS[restoredScreen.index]
   // Same reason as openTool: contentKind/listItems/initialContent need fresh
   // data before toolContainers reads them, and this is the other place that
@@ -741,13 +761,23 @@ const unsubscribe = bridge.onEvenHubEvent(event => {
   // something different here and must not fall through to the universal
   // meaning. Per direct request: holding down the whole time a command is
   // being spoken turned out to be the wrong shape (release ended the
-  // recording too early to ever get an interim caption on screen) - long
-  // press now only starts listening, freeing the wearer to let go
-  // immediately, and a double-press is the deliberate "I'm done" signal
-  // instead.
+  // recording too early) - long press now only starts listening, freeing
+  // the wearer to let go immediately, and a double-press is the deliberate
+  // "I'm done" signal instead.
+  //
+  // Only while genuinely listening, though - checked with isJarvisListening,
+  // not just "is Jarvis the active screen". A finished result sitting on
+  // screen waiting for the auto-return, or a session that never actually
+  // started, are not a recording to stop; a double-press there needs to
+  // fall through to the normal isDoubleTap branch below and behave like
+  // leaving any other tool. Missing this distinction left no way out of a
+  // stuck Jarvis session at all [HW] - every double-press just re-ran an
+  // already-finished one.
   if (isDoubleTap && screen.kind === 'tool' && TOOLS[screen.index].name === 'Jarvis') {
-    finishJarvisListening()
-    return
+    if (isJarvisListening()) {
+      finishJarvisListening()
+      return
+    }
   }
 
   if (isDoubleTap) {

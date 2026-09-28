@@ -15,30 +15,30 @@ export type VoiceResult =
   { kind: 'transcript'; transcript: string } | { kind: 'error'; message: string }
 
 // Driven by the SDK's own LONG_PRESS_EVENT to start (see app/main.ts) and a
-// double-press to end - not a release, tried first and dropped: holding down
-// the whole time a command was spoken meant releasing ended the recording
-// before an interim caption ever had a chance to appear. MAX_RECORD_MS only
-// exists as a safety net for a wearer who never double-presses at all - the
-// normal end of a recording is always the deliberate double-press, not this
-// timer.
+// double-press to end. MAX_RECORD_MS only exists as a safety net for a
+// wearer who never double-presses at all - the normal end of a recording is
+// always the deliberate double-press, not this timer.
 const MAX_RECORD_MS = 15_000
 
-// How often to re-transcribe everything captured so far and report it as an
-// interim caption while still recording. Whisper has no true streaming mode
-// here - each tick re-runs on the whole buffer, which is why this is a
-// second or two apart rather than continuous: much tighter and a long
-// recording would mean overlapping transcribe calls competing for the same
-// CPU. Short enough that even a quick command ("timer 5 minutes", spoken in
-// under 2 seconds) has a real chance of showing at least one interim caption
-// before the wearer double-presses.
-const INTERIM_INTERVAL_MS = 1500
-
+// No interim, incrementally-transcribed captions here on purpose - tried in
+// G2-51/G2-52 and reverted [HW]: real-hardware testing found neither the
+// captions nor the double-press-to-stop worked reliably. The likely cause,
+// not fully confirmed but consistent with everything observed: Whisper
+// inference is CPU-bound WASM running on the main JS thread, and re-running
+// it on the WHOLE growing buffer every 1.5s (no true streaming mode exists
+// here) means later ticks take progressively longer. On hardware slower
+// than the dev machine this was built against (where even 1s of audio took
+// ~2s to transcribe), that can block the thread long enough to stall event
+// processing itself - which would explain a double-press never registering,
+// not just captions never appearing. A single clean transcription at the
+// end, with nothing running while the mic is open, is the version that was
+// actually confirmed working on real hardware (G2-49). True live captions
+// would need inference moved off the main thread (a Web Worker) to be safe
+// to run repeatedly during a recording - a real, separate piece of work,
+// not a tweak to this one.
 let chunks: Uint8Array[] = []
 let unsubscribe: (() => void) | null = null
-let interimTimer: ReturnType<typeof setInterval> | null = null
 let safetyTimer: ReturnType<typeof setTimeout> | null = null
-let onInterim: ((text: string) => void) | null = null
-let interimInFlight = false
 
 // Signed 16-bit little-endian PCM (see docs/platform.md, Device APIs) ->
 // Float32 samples in [-1, 1], the shape every Transformers.js ASR pipeline
@@ -63,38 +63,14 @@ function concat(parts: readonly Uint8Array[]): Uint8Array {
   return out
 }
 
-// Skipped, not queued, when a previous tick is still running - a hold long
-// enough to fall behind should catch up by skipping stale ticks, not by
-// piling up transcribe() calls that all eventually land out of order.
-async function transcribeSoFar() {
-  if (interimInFlight || chunks.length === 0) return
-  interimInFlight = true
-  try {
-    const audio = toFloat32(concat(chunks))
-    const text = await transcribe(audio)
-    if (text) onInterim?.(text)
-  } catch {
-    // Interim failures are silent - the final transcribe in stop() is the
-    // one that actually matters, and surfacing every mid-hold hiccup on
-    // screen would be noise the wearer cannot act on anyway.
-  } finally {
-    interimInFlight = false
-  }
-}
-
-// Starts capturing from the glasses mic and begins reporting interim
-// transcriptions to onCaptionUpdate every INTERIM_INTERVAL_MS. Resolves once
-// capture has actually started (or failed to). onSafetyTimeout fires once,
-// MAX_RECORD_MS after starting, only if stop() has not already been called
-// by then - a wearer who never double-presses should still get the
-// recording ended for them. The caller's onSafetyTimeout is expected to
-// call stop() itself, exactly as it would on a real double-press.
-export async function start(
-  onCaptionUpdate: (text: string) => void,
-  onSafetyTimeout: () => void,
-): Promise<boolean> {
+// Starts capturing from the glasses mic. Resolves once capture has actually
+// started (or failed to). onSafetyTimeout fires once, MAX_RECORD_MS after
+// starting, only if stop() has not already been called by then - a wearer
+// who never double-presses should still get the recording ended for them.
+// The caller's onSafetyTimeout is expected to call stop() itself, exactly
+// as it would on a real double-press.
+export async function start(onSafetyTimeout: () => void): Promise<boolean> {
   chunks = []
-  onInterim = onCaptionUpdate
   unsubscribe = bridge.onEvenHubEvent(event => {
     const audio = event.audioEvent
     if (!audio || audio.source !== AudioInputSource.Glasses) return
@@ -104,32 +80,23 @@ export async function start(
   if (!ok) {
     unsubscribe?.()
     unsubscribe = null
-    onInterim = null
     return false
   }
-  interimTimer = setInterval(transcribeSoFar, INTERIM_INTERVAL_MS)
   safetyTimer = setTimeout(onSafetyTimeout, MAX_RECORD_MS)
   return true
 }
 
 function teardownCapture() {
-  if (interimTimer !== null) {
-    clearInterval(interimTimer)
-    interimTimer = null
-  }
   if (safetyTimer !== null) {
     clearTimeout(safetyTimer)
     safetyTimer = null
   }
   unsubscribe?.()
   unsubscribe = null
-  onInterim = null
   bridge.audioControl(false)
 }
 
-// Ends capture and runs one final transcription over everything recorded,
-// for the best accuracy the model can give rather than whatever an interim
-// tick happened to catch mid-word.
+// Ends capture and runs one transcription over everything recorded.
 export async function stop(): Promise<VoiceResult> {
   teardownCapture()
   if (chunks.length === 0) return { kind: 'error', message: 'no audio captured' }
