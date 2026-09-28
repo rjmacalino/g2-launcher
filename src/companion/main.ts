@@ -104,7 +104,14 @@ function renderMenu() {
 // the same way an API key ships in any app that calls a paid or
 // rate-limited third-party service: brought by the wearer, not shipped in
 // the package for anyone who downloads it to find.
-async function renderJarvisSettings() {
+// Confirms the save actually round-tripped rather than trusting that
+// setLocalStorage's own `ok` result means the value is really readable back
+// - per direct report, a key entered here was not being found by Jarvis
+// later, with no error visible anywhere to explain why. Re-reading
+// immediately after writing turns "did this actually work" into something
+// visible on the phone screen instead of something only debuggable with
+// devtools, which real hardware does not have an easy way to reach.
+async function renderJarvisSettings(statusMessage?: string) {
   if (!root) return
   const existingKey = await getGeminiApiKey()
 
@@ -119,6 +126,7 @@ async function renderJarvisSettings() {
         Leave this blank and Jarvis still works for commands, it just will
         not answer open-ended questions.
       </p>
+      ${statusMessage ? `<p class="jarvis-settings-status">${escapeHtml(statusMessage)}</p>` : ''}
       <input
         class="title gemini-key"
         type="password"
@@ -137,15 +145,25 @@ async function renderJarvisSettings() {
   root.querySelector('.save')?.addEventListener('click', async () => {
     const input = root.querySelector<HTMLInputElement>('.gemini-key')
     if (!input) return
-    await setGeminiApiKey(input.value.trim())
-    view = { kind: 'menu' }
-    render()
+    const typed = input.value.trim()
+    const wroteOk = await setGeminiApiKey(typed)
+    const readBack = await getGeminiApiKey()
+    if (!wroteOk) {
+      await renderJarvisSettings('Save failed - the device rejected the write. Try again.')
+    } else if (typed.length > 0 && readBack !== typed) {
+      await renderJarvisSettings(
+        "Saved, but reading it back did not match what you typed - Jarvis likely won't find it. Try again, or report this.",
+      )
+    } else if (typed.length > 0) {
+      await renderJarvisSettings(`Saved and confirmed (${readBack?.length ?? 0} characters).`)
+    } else {
+      await renderJarvisSettings('Cleared.')
+    }
   })
 
   root.querySelector('.clear')?.addEventListener('click', async () => {
     await setGeminiApiKey('')
-    view = { kind: 'menu' }
-    render()
+    await renderJarvisSettings('Cleared.')
   })
 }
 
