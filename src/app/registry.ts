@@ -1,6 +1,7 @@
 import type { Tool } from '../core/tool'
 import { notesTool } from '../features/notes/tool'
 import { teleprompter } from '../features/teleprompter/tool'
+import { timerTool } from '../features/timer/tool'
 import { weatherTool } from '../features/weather/tool'
 
 // Order is the index. The firmware reports the highlighted list row back as
@@ -17,7 +18,7 @@ import { weatherTool } from '../features/weather/tool'
 // screen index, and imported behind import.meta.env.DEV so a production
 // build tree-shakes the whole features/lab module out rather than merely
 // hiding a menu entry that is still sitting in the package.
-const tools: Tool[] = [weatherTool, notesTool, teleprompter]
+const tools: Tool[] = [weatherTool, notesTool, teleprompter, timerTool]
 
 if (import.meta.env.DEV) {
   const { labTool } = await import('../features/lab/tool')
