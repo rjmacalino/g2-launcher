@@ -20,7 +20,13 @@
 // preflights with an access-control-allow-origin that echoes the request's
 // own Origin, so this can call it directly from the WebView - no backend
 // proxy needed.
-const MODEL = 'gemini-2.5-flash'
+// gemini-2.5-flash, the model this originally shipped with, turned out to
+// be retired for new API keys [confirmed against the live API with a real
+// key, not documentation] - Google's own error names gemini-3.8-flash as
+// its replacement, and a request against it gets past model validation
+// (hit a transient 503 "high demand" on the two tries made here, a Google
+// capacity issue, not a request problem).
+const MODEL = 'gemini-3.8-flash'
 const ENDPOINT = `https://generativelanguage.googleapis.com/v1beta/models/${MODEL}:generateContent`
 
 // Kept short on purpose: this answers a question relayed through a
@@ -34,20 +40,39 @@ const SYSTEM_INSTRUCTION =
 
 export type GeminiResult = { kind: 'answer'; text: string } | { kind: 'error'; message: string }
 
+// One retry, specifically for a 503 - seen twice in a row testing this
+// against the real API with a real key, and Google's own error text calls
+// it "usually temporary". Not retried for any other status: a bad request
+// or an auth failure will not fix itself on a second try, so retrying those
+// would only cost the wearer more waiting for the same result.
+const RETRY_DELAY_MS = 1500
+
+function delay(ms: number): Promise<void> {
+  return new Promise(resolve => setTimeout(resolve, ms))
+}
+
+async function requestOnce(apiKey: string, question: string): Promise<Response> {
+  return fetch(ENDPOINT, {
+    method: 'POST',
+    headers: {
+      'Content-Type': 'application/json',
+      'x-goog-api-key': apiKey,
+    },
+    body: JSON.stringify({
+      contents: [{ parts: [{ text: question }] }],
+      systemInstruction: { parts: [{ text: SYSTEM_INSTRUCTION }] },
+      generationConfig: { maxOutputTokens: 120 },
+    }),
+  })
+}
+
 export async function ask(apiKey: string, question: string): Promise<GeminiResult> {
   try {
-    const response = await fetch(ENDPOINT, {
-      method: 'POST',
-      headers: {
-        'Content-Type': 'application/json',
-        'x-goog-api-key': apiKey,
-      },
-      body: JSON.stringify({
-        contents: [{ parts: [{ text: question }] }],
-        systemInstruction: { parts: [{ text: SYSTEM_INSTRUCTION }] },
-        generationConfig: { maxOutputTokens: 120 },
-      }),
-    })
+    let response = await requestOnce(apiKey, question)
+    if (response.status === 503) {
+      await delay(RETRY_DELAY_MS)
+      response = await requestOnce(apiKey, question)
+    }
     if (!response.ok) {
       return { kind: 'error', message: `Gemini returned ${response.status}` }
     }
