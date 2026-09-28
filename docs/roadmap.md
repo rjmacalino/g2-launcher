@@ -150,22 +150,22 @@ then on hardware by RJ. Results go back into platform.md with a [HW] tag.
       before this is [x]
 - [ ] Alarm: visual only (no speaker), only while the app is open
 - [ ] Voice notes: dictate a checklist item
-- [~] Voice commands ("JARVIS"): "Jarvis, timer 5 minutes", parsed on our
+- [x] Voice commands ("JARVIS"): "Jarvis, timer 5 minutes", parsed on our
       side. Push-to-talk shipped (G2-46 parser, G2-48 tool, G2-49 switched
       the engine to on-device Whisper after browser SpeechRecognition turned
-      out not to actually work on real hardware - see D1): opening the
-      Jarvis tool records from the glasses mic, a long-press ends it early,
-      transcribes on-device, shows what it heard and what it did, and a
-      double-tap plus reopen tries again. Verified end to end in the
-      simulator except real speech itself - the desktop simulator has no way
-      to feed it actual audio, so this needs a real-hardware run before it
-      is [x], including real timing (model load + inference speed on an
-      actual phone CPU, only measured on a dev machine so far). Always-listen
+      out not to actually work on real hardware - see D1) and confirmed
+      working end to end [HW] on 2026-09-28: open Jarvis, it records from
+      the glasses mic, a long-press ends it early, transcribes on-device,
+      dispatches to Timer. RJ's actual run: heard "timer 5 minutes", started
+      a 5:00 timer. Real hardware timing (model load + inference speed) is
+      still not separately measured - RJ used the long-press to end
+      recording deliberately rather than waiting for it, so how long the
+      transcribe-and-dispatch step itself took was not observed. Always-listen
       mode (continuous recognition, watching every transcript for the wake
       phrase, switchable once Settings grows a place for it) is deliberately
       not built yet: continuous Whisper inference is a real battery cost,
-      and there is no reason to pay it before confirming push-to-talk works
-      well on real hardware first
+      and there is no data yet on whether RJ even wants it now that
+      push-to-talk works
 - [ ] Photo viewer: album image on the glasses
 
 ## Decisions
