@@ -32,6 +32,7 @@ import {
 import { readWithTimeout } from '../platform/storage'
 import {
   hydrate as hydrateStatusBar,
+  setTimer as setStatusBarTimer,
   setWeather as setStatusBarWeather,
   startStatusBar,
   statusBarContainers,
@@ -47,6 +48,14 @@ import {
   start as startWeather,
   stop as stopWeather,
 } from '../features/weather/service'
+import {
+  getTimer,
+  onBackground as suspendTimerTicking,
+  onForeground as resumeTimerTicking,
+  onUpdate as onTimerUpdate,
+  remainingMs as timerRemainingMs,
+} from '../features/timer/service'
+import { formatDuration } from '../shared/duration'
 
 // The shell. Owns which page is showing, builds pages, and routes input. It knows
 // tools only through the Tool interface, so adding one is a new file plus an entry
@@ -508,6 +517,23 @@ startStatusBar()
 onWeatherUpdate(() => setStatusBarWeather(getCurrentWeather()))
 startWeather()
 
+// Same shape as the weather wiring just above: the shell connects the timer
+// service to the status bar so neither module knows about the other. Unlike
+// weather there is no startTimer() call here - the service already started
+// its own ticking during hydrate() (above, inside hydrationPromise) if a
+// timer was already running when the app launched. The immediate call below
+// covers the gap between that hydrate and this subscription being wired: an
+// active timer must show correctly on the very first status bar paint, not
+// only from its first tick up to a second later.
+function timerBarText(): string | null {
+  const state = getTimer()
+  if (state.status === 'idle') return null
+  const remaining = formatDuration(timerRemainingMs(Date.now()))
+  return state.status === 'paused' ? `Paused ${remaining}` : remaining
+}
+onTimerUpdate(() => setStatusBarTimer(timerBarText()))
+setStatusBarTimer(timerBarText())
+
 // --- Input ----------------------------------------------------------------
 
 // Reads the event type out of one envelope.
@@ -626,6 +652,7 @@ const unsubscribe = bridge.onEvenHubEvent(event => {
   if (sysType === OsEventTypeList.FOREGROUND_ENTER_EVENT) {
     startStatusBar()
     startWeather()
+    resumeTimerTicking()
     activeTool()?.onResume?.()
     return
   }
@@ -635,6 +662,7 @@ const unsubscribe = bridge.onEvenHubEvent(event => {
     activeTool()?.onSuspend?.()
     stopStatusBar()
     stopWeather()
+    suspendTimerTicking()
     return
   }
 
