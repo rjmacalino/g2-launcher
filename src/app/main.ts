@@ -59,11 +59,13 @@ import {
 import { parseVoiceCommand } from '../features/timer/voiceCommand'
 import { registerVoiceDispatch } from '../core/voiceDispatch'
 import { preload as preloadWhisper } from '../core/whisper'
+import { ask as askGemini } from '../core/gemini'
 import {
   finishListening as finishJarvisListening,
   isListening as isJarvisListening,
   onDone as onJarvisDone,
 } from '../features/jarvis/tool'
+import { getApiKey as getGeminiApiKey } from '../features/jarvis/settings'
 import { formatDuration } from '../shared/duration'
 
 // The shell. Owns which page is showing, builds pages, and routes input. It knows
@@ -593,15 +595,30 @@ setStatusBarTimer(timerBarText())
 
 // The Jarvis tool captures speech but has no idea what a transcript means -
 // deciding that is app-level knowledge (see core/voiceDispatch.ts for why).
-// Today the only thing a transcript can do is start a timer; a later voice
-// command for another feature would mean trying that feature's own parser
-// here too, in the same place, rather than features/jarvis importing it
-// directly.
-registerVoiceDispatch(transcript => {
+// Tried as a structured command first (today just Timer); anything that
+// does not match falls through to Gemini, so a transcript that is not a
+// command at all ("what's the capital of France") still gets an answer
+// instead of "Didn't recognize a command" - but only if the wearer has
+// actually entered a Gemini API key on the companion page (see
+// features/jarvis/settings.ts). No key means the fallback is skipped
+// entirely, same behaviour as before Gemini existed: local parsing has no
+// dependency on network or a key, and unconfigured Jarvis should still work
+// for the one thing it always could.
+registerVoiceDispatch(async transcript => {
   const command = parseVoiceCommand(transcript)
-  if (command.kind !== 'startTimer') return { handled: false }
-  startTimerFromVoice(command.durationMs)
-  return { handled: true, message: `Started a ${formatDuration(command.durationMs)} timer.` }
+  if (command.kind === 'startTimer') {
+    startTimerFromVoice(command.durationMs)
+    return { handled: true, message: `Started a ${formatDuration(command.durationMs)} timer.` }
+  }
+
+  const apiKey = await getGeminiApiKey()
+  if (!apiKey) return { handled: false }
+
+  const result = await askGemini(apiKey, transcript)
+  if (result.kind === 'error') {
+    return { handled: true, message: `Couldn't reach Gemini (${result.message}).` }
+  }
+  return { handled: true, message: result.text }
 })
 
 // Kicked off here, not awaited, and not gated behind ever opening Jarvis:

@@ -257,3 +257,24 @@ then on hardware by RJ. Results go back into platform.md with a [HW] tag.
   since it is dev-only and never ships. Any future tool needing a "neither
   forward nor back" action has to use its own contextual menu instead (see
   Timer and Notes for the shape) - plain long press is Jarvis's now.
+- D4 Cloud LLM fallback (2026-09-28): D1's "no paid services" is revisited
+  here, deliberately, not silently overridden - per direct request, Jarvis
+  now falls back to a cloud LLM (Google's Gemini API, `gemini-2.5-flash`)
+  for any transcript that does not match a local command parser, so it can
+  answer an open-ended question instead of only running structured
+  commands. Chose Gemini's free tier over DeepSeek (also researched,
+  confirmed working, cheap but not free) specifically because RJ asked to
+  check for free options first. Real tradeoff, not hidden: Google's free
+  tier terms allow using submitted content to improve their products - this
+  matters more here than for typical free-tier testing, since Jarvis can
+  relay speech from whoever the wearer is talking to, not only their own
+  words. Confirmed by real requests, not just documentation (which
+  described the wrong endpoint shape when checked against the live API):
+  both DeepSeek's and Gemini's APIs answer CORS preflights with the
+  requesting Origin echoed back, so either can be called directly from the
+  WebView with no backend proxy. The API key is never bundled in the
+  build - entered by the wearer on the companion page (Jarvis's settings,
+  see src/companion/main.ts), stored only in this device's own local
+  storage. No key means Jarvis behaves exactly as before D4: local command
+  parsing only, "Didn't recognise a command" for anything else - the
+  fallback is additive, never required.
