@@ -12,8 +12,17 @@
     },
     {
       "name": "network",
-      "desc": "Downloads the weather forecast for your location from Open-Meteo.",
-      "whitelist": ["https://api.open-meteo.com"]
+      "desc": "Downloads the weather forecast for your location from Open-Meteo, and the on-device speech recognition model used for voice commands (downloaded once, then cached on the device).",
+      "whitelist": [
+        "https://api.open-meteo.com",
+        "https://huggingface.co",
+        "https://cdn-lfs.huggingface.co",
+        "https://cdn-lfs-us-1.huggingface.co"
+      ]
+    },
+    {
+      "name": "g2-microphone",
+      "desc": "Records a short clip from the glasses microphone when you open Jarvis, so a voice command like \"timer 5 minutes\" can be recognised. Recording stops as soon as a result is ready; nothing is recorded otherwise."
     }
   ],
   "supported_languages": ["en"]
