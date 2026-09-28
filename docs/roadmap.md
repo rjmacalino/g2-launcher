@@ -187,6 +187,17 @@ then on hardware by RJ. Results go back into platform.md with a [HW] tag.
       it needs RJ to create a free Picovoice account and report back its
       actual free-tier terms, which could not be verified from documentation
       alone
+- [~] Jarvis Q&A fallback (G2-55, see decision D4): a transcript that is
+      not a recognised command now falls back to Google's Gemini API, so
+      "Jarvis, what's the capital of France" gets a real spoken-back answer
+      instead of "Didn't recognise a command". Requires the wearer's own
+      free Gemini API key, entered on the companion page - no key means
+      Jarvis behaves exactly as before this ticket. Verified in the
+      simulator that the no-key path still falls through cleanly
+      (unchanged behaviour); the actual Gemini call itself - CORS and the
+      request/response shape were confirmed directly against the live API,
+      but no real key has been used yet - still needs a real-hardware test
+      with an actual key entered
 - [ ] Live conversation captions ("Conversate"-inspired): continuously
       transcribe a conversation with another person and show live captions,
       not a command. Distinct from Jarvis (a command executor) - raised
@@ -228,3 +239,24 @@ then on hardware by RJ. Results go back into platform.md with a [HW] tag.
   since it is dev-only and never ships. Any future tool needing a "neither
   forward nor back" action has to use its own contextual menu instead (see
   Timer and Notes for the shape) - plain long press is Jarvis's now.
+- D4 Cloud LLM fallback (2026-09-28): D1's "no paid services" is revisited
+  here, deliberately, not silently overridden - per direct request, Jarvis
+  now falls back to a cloud LLM (Google's Gemini API, `gemini-2.5-flash`)
+  for any transcript that does not match a local command parser, so it can
+  answer an open-ended question instead of only running structured
+  commands. Chose Gemini's free tier over DeepSeek (also researched,
+  confirmed working, cheap but not free) specifically because RJ asked to
+  check for free options first. Real tradeoff, not hidden: Google's free
+  tier terms allow using submitted content to improve their products - this
+  matters more here than for typical free-tier testing, since Jarvis can
+  relay speech from whoever the wearer is talking to, not only their own
+  words. Confirmed by real requests, not just documentation (which
+  described the wrong endpoint shape when checked against the live API):
+  both DeepSeek's and Gemini's APIs answer CORS preflights with the
+  requesting Origin echoed back, so either can be called directly from the
+  WebView with no backend proxy. The API key is never bundled in the
+  build - entered by the wearer on the companion page (Jarvis's settings,
+  see src/companion/main.ts), stored only in this device's own local
+  storage. No key means Jarvis behaves exactly as before D4: local command
+  parsing only, "Didn't recognise a command" for anything else - the
+  fallback is additive, never required.

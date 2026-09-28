@@ -82,7 +82,11 @@ export async function finishListening() {
     notifyDone()
     return
   }
-  const dispatch = dispatchVoiceCommand(result.transcript)
+  const dispatch = await dispatchVoiceCommand(result.transcript)
+  if (mySession !== sessionId) {
+    notifyDone()
+    return
+  }
   const outcome = dispatch.handled ? dispatch.message : "Didn't recognize a command."
   setContent(`Heard: "${result.transcript}"\n\n${outcome}`)
   notifyDone()

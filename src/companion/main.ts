@@ -6,6 +6,10 @@ import {
   type Script,
 } from '../features/teleprompter/store'
 import { setActiveScriptContent, clearActiveScriptIfCurrent } from '../features/teleprompter/tool'
+import {
+  getApiKey as getGeminiApiKey,
+  setApiKey as setGeminiApiKey,
+} from '../features/jarvis/settings'
 import { TOOL_NAMES } from '../app/registry'
 
 // The phone companion page: browse the same tools the glasses menu shows, and
@@ -34,6 +38,7 @@ type View =
   | { kind: 'list'; collection: Collection }
   | { kind: 'editor'; collection: 'scripts'; item: Script | null }
   | { kind: 'editor'; collection: 'notes'; item: NoteDoc | null }
+  | { kind: 'jarvis-settings' }
   | { kind: 'stub'; label: string }
 
 let view: View = { kind: 'menu' }
@@ -85,9 +90,62 @@ function renderMenu() {
       const name = el.dataset.name
       if (name === 'Teleprompter') view = { kind: 'list', collection: 'scripts' }
       else if (name === 'Notes') view = { kind: 'list', collection: 'notes' }
+      else if (name === 'Jarvis') view = { kind: 'jarvis-settings' }
       else view = { kind: 'stub', label: name ?? '' }
       render()
     })
+  })
+}
+
+// --- Jarvis settings ------------------------------------------------------
+
+// A key entered here is never bundled in the build - it is read at runtime
+// off this device's own local storage (see features/jarvis/settings.ts),
+// the same way an API key ships in any app that calls a paid or
+// rate-limited third-party service: brought by the wearer, not shipped in
+// the package for anyone who downloads it to find.
+async function renderJarvisSettings() {
+  if (!root) return
+  const existingKey = await getGeminiApiKey()
+
+  root.innerHTML = `
+    ${backButton()}
+    <div class="editor jarvis-settings">
+      <p class="stub-body">
+        Jarvis answers a question it does not recognise as a command
+        (like "timer 5 minutes") by asking Google's Gemini API. This needs
+        your own free API key from
+        <a href="https://aistudio.google.com/apikey" target="_blank" rel="noopener">aistudio.google.com</a>.
+        Leave this blank and Jarvis still works for commands, it just will
+        not answer open-ended questions.
+      </p>
+      <input
+        class="title gemini-key"
+        type="password"
+        placeholder="Gemini API key"
+        value="${escapeHtml(existingKey ?? '')}"
+      />
+      <div class="editor-actions">
+        <button class="save">Save</button>
+        <button class="cancel clear">Clear</button>
+      </div>
+    </div>
+  `
+
+  attachBack({ kind: 'menu' })
+
+  root.querySelector('.save')?.addEventListener('click', async () => {
+    const input = root.querySelector<HTMLInputElement>('.gemini-key')
+    if (!input) return
+    await setGeminiApiKey(input.value.trim())
+    view = { kind: 'menu' }
+    render()
+  })
+
+  root.querySelector('.clear')?.addEventListener('click', async () => {
+    await setGeminiApiKey('')
+    view = { kind: 'menu' }
+    render()
   })
 }
 
@@ -406,6 +464,9 @@ function render() {
     case 'editor':
       if (view.collection === 'scripts') renderScriptsEditor(view.item)
       else renderNotesEditor(view.item)
+      return
+    case 'jarvis-settings':
+      renderJarvisSettings()
       return
   }
 }

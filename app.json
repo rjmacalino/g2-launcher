@@ -12,12 +12,13 @@
     },
     {
       "name": "network",
-      "desc": "Downloads the weather forecast for your location from Open-Meteo, and the on-device speech recognition model used for voice commands (downloaded once, then cached on the device).",
+      "desc": "Downloads the weather forecast for your location from Open-Meteo, the on-device speech recognition model used for voice commands (downloaded once, then cached on the device), and, only if you add your own Gemini API key, sends a voice command's transcript to Google's Gemini API when Jarvis does not recognise it as a command.",
       "whitelist": [
         "https://api.open-meteo.com",
         "https://huggingface.co",
         "https://cdn-lfs.huggingface.co",
-        "https://cdn-lfs-us-1.huggingface.co"
+        "https://cdn-lfs-us-1.huggingface.co",
+        "https://generativelanguage.googleapis.com"
       ]
     },
     {
