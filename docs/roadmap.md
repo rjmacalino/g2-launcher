@@ -130,16 +130,39 @@ then on hardware by RJ. Results go back into platform.md with a [HW] tag.
       in alongside unrelated work
 - [ ] Companion page follows the Even phone design tokens (from the official
       design guidelines)
+- [~] Settings tool (G2-47, PR #40): a glasses-side toggle list for the
+      status bar's time/date/weather fields, the config that had been
+      persisted since the status bar was built with nowhere to edit it. Not
+      yet the general preferences framework a JARVIS mode toggle will need
+      (see the Voice commands item below) - it only knows about the one
+      config that already existed
 
 ## Phase 3: features
 
 - [ ] Status bar: condition icon, battery, active timer
 - [ ] Weather v2: icons, hourly temperature chart as an image
-- [ ] Timer: hour and minute pickers, runs from an end timestamp, shows on the
+- [~] Timer: hour and minute pickers, runs from an end timestamp, shows on the
       status bar while other tools are open, contextual menu for pause/cancel
+      (G2-43 to G2-45, PRs #36-#38). Verified in the simulator end to end
+      except the contextual menu itself - the automation API has no
+      long-press action to script it, so Pause/Resume/Cancel need a real
+      hardware check (or a manual click in the simulator's own window)
+      before this is [x]
 - [ ] Alarm: visual only (no speaker), only while the app is open
 - [ ] Voice notes: dictate a checklist item
-- [ ] Voice commands: "set a timer for 5 minutes", parsed on our side
+- [~] Voice commands ("JARVIS"): "Jarvis, timer 5 minutes", parsed on our
+      side. Scoped as push-to-talk (hold a gesture, speak, release) plus an
+      always-listen mode, switchable in Settings once it exists there. The
+      parser (G2-46, PR #39) is done and does not depend on which speech
+      engine supplies the transcript. What is still open, per decision D1:
+      whether browser `SpeechRecognition` exists in the real Even Hub app's
+      WebView on a phone (confirmed only in the desktop simulator's own
+      WebView, which is not the same environment) - RJ to check
+      `'webkitSpeechRecognition' in window` on real hardware. If it is not
+      there, the fallback is Whisper as WASM, a much bigger build, and
+      always-listen against Whisper specifically may not be practical given
+      the battery cost of continuous inference - worth re-deciding once the
+      hardware check answers the first question
 - [ ] Photo viewer: album image on the glasses
 
 ## Decisions
