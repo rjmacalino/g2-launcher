@@ -151,30 +151,28 @@ then on hardware by RJ. Results go back into platform.md with a [HW] tag.
 - [ ] Alarm: visual only (no speaker), only while the app is open
 - [ ] Voice notes: dictate a checklist item
 - [~] Voice commands ("JARVIS"): "Jarvis, timer 5 minutes", parsed on our
-      side. Scoped as push-to-talk (hold a gesture, speak, release) plus an
-      always-listen mode, switchable in Settings once it exists there. The
-      parser (G2-46, PR #39) is done and does not depend on which speech
-      engine supplies the transcript. What is still open, per decision D1:
-      whether browser `SpeechRecognition` exists in the real Even Hub app's
-      WebView on a phone (confirmed only in the desktop simulator's own
-      WebView, which is not the same environment) - RJ to check
-      `'webkitSpeechRecognition' in window` on real hardware. If it is not
-      there, the fallback is Whisper as WASM, a much bigger build, and
-      always-listen against Whisper specifically may not be practical given
-      the battery cost of continuous inference - worth re-deciding once the
-      hardware check answers the first question
+      side. Push-to-talk shipped (G2-46 parser + G2-48 tool): opening the
+      Jarvis tool starts listening immediately via browser
+      `SpeechRecognition` (confirmed working on real hardware, see D1),
+      shows what it heard and what it did, and a double-tap plus reopen
+      tries again. Verified end to end in the simulator except real speech
+      itself - the desktop simulator has no way to feed it actual audio, so
+      this needs a real-hardware run before it is [x]. Always-listen mode
+      (continuous recognition, watching every transcript for the wake
+      phrase, switchable once Settings grows a place for it) is deliberately
+      not built yet - no reason to pay that extra battery/complexity cost
+      before confirming push-to-talk actually transcribes real speech
+      usefully on real hardware
 - [ ] Photo viewer: album image on the glasses
 
 ## Decisions
 
-- D1 Speech to text (2026-09-24): no paid services for now. Free options, in
-  the order we will try them:
-  1. Browser `SpeechRecognition` in the WebView (phone mic). Needs the Phase 1
-     probe; support inside the Even app WebView is unverified.
-  2. Whisper running in the WebView itself (WASM). Glasses mic, no server, but
-     a large model download and slow on a phone. Unverified.
-  3. Whisper on RJ's own computer, reached over the local network. Free, but
-     only works while that machine is on.
+- D1 Speech to text (2026-09-24, resolved 2026-09-28 [HW]): browser
+  `SpeechRecognition` confirmed present and constructs without throwing in
+  the real Even Hub app's WebView on RJ's phone (Lab's presence-check probe,
+  run for real this time, not just in the desktop simulator). Whisper (WASM
+  or on RJ's own computer) stays the documented fallback if this ever stops
+  being true on a future device/app version, but is not being built now.
   Paid cloud STT stays out unless this decision is revisited.
 - D2 Alarms (2026-09-24): visual only, while the app is open. No native phone
   companion for now.
