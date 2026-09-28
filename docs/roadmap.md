@@ -151,28 +151,37 @@ then on hardware by RJ. Results go back into platform.md with a [HW] tag.
 - [ ] Alarm: visual only (no speaker), only while the app is open
 - [ ] Voice notes: dictate a checklist item
 - [~] Voice commands ("JARVIS"): "Jarvis, timer 5 minutes", parsed on our
-      side. Push-to-talk shipped (G2-46 parser + G2-48 tool): opening the
-      Jarvis tool starts listening immediately via browser
-      `SpeechRecognition` (confirmed working on real hardware, see D1),
-      shows what it heard and what it did, and a double-tap plus reopen
-      tries again. Verified end to end in the simulator except real speech
-      itself - the desktop simulator has no way to feed it actual audio, so
-      this needs a real-hardware run before it is [x]. Always-listen mode
-      (continuous recognition, watching every transcript for the wake
+      side. Push-to-talk shipped (G2-46 parser, G2-48 tool, G2-49 switched
+      the engine to on-device Whisper after browser SpeechRecognition turned
+      out not to actually work on real hardware - see D1): opening the
+      Jarvis tool records from the glasses mic, a long-press ends it early,
+      transcribes on-device, shows what it heard and what it did, and a
+      double-tap plus reopen tries again. Verified end to end in the
+      simulator except real speech itself - the desktop simulator has no way
+      to feed it actual audio, so this needs a real-hardware run before it
+      is [x], including real timing (model load + inference speed on an
+      actual phone CPU, only measured on a dev machine so far). Always-listen
+      mode (continuous recognition, watching every transcript for the wake
       phrase, switchable once Settings grows a place for it) is deliberately
-      not built yet - no reason to pay that extra battery/complexity cost
-      before confirming push-to-talk actually transcribes real speech
-      usefully on real hardware
+      not built yet: continuous Whisper inference is a real battery cost,
+      and there is no reason to pay it before confirming push-to-talk works
+      well on real hardware first
 - [ ] Photo viewer: album image on the glasses
 
 ## Decisions
 
-- D1 Speech to text (2026-09-24, resolved 2026-09-28 [HW]): browser
-  `SpeechRecognition` confirmed present and constructs without throwing in
-  the real Even Hub app's WebView on RJ's phone (Lab's presence-check probe,
-  run for real this time, not just in the desktop simulator). Whisper (WASM
-  or on RJ's own computer) stays the documented fallback if this ever stops
-  being true on a future device/app version, but is not being built now.
-  Paid cloud STT stays out unless this decision is revisited.
+- D1 Speech to text (2026-09-24, resolved 2026-09-28 [HW], corrected same
+  day): browser `SpeechRecognition` constructs without throwing in the real
+  Even Hub app's WebView (confirmed on RJ's phone), but that turned out to be
+  a false positive - actually using it needs `getUserMedia`, which fails
+  with `not-allowed` on real hardware regardless of the phone's OS-level app
+  permission (tested twice, including after explicitly re-granting it). The
+  host WebView is not forwarding the mic permission request to web content
+  at all, which is a platform limitation, not something fixable from this
+  app's code or the phone's Settings app. Whisper running as WASM on-device
+  is the actual path now (G2-49): it reads the glasses mic through the SDK's
+  own `audioControl` bridge instead, which does not go through getUserMedia
+  and was already proven working by Lab's microphone probe. Paid cloud STT
+  stays out unless this decision is revisited.
 - D2 Alarms (2026-09-24): visual only, while the app is open. No native phone
   companion for now.

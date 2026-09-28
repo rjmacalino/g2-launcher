@@ -60,6 +60,44 @@ let imuUnsubscribe: (() => void) | null = null
 let deviceStatusText = 'Loading...'
 let iconIndex = 0
 
+const WHISPER_MODEL = 'Xenova/whisper-tiny.en'
+let whisperProbeText = 'Loading Whisper model...\n(first run downloads ~30-50MB)'
+
+// Dynamically imported, not a top-level import: this pulls in the whole
+// transformers.js runtime, and nothing else in Lab (let alone the app
+// proper, which never imports features/lab at all - see registry.ts)
+// should pay that cost just for this one probe to exist in the list.
+async function runWhisperProbe() {
+  whisperProbeText = 'Loading Whisper model...\n(first run downloads ~30-50MB)'
+  setContent(whisperProbeText)
+  const loadStart = performance.now()
+  try {
+    const { pipeline } = await import('@huggingface/transformers')
+    const transcriber = await pipeline('automatic-speech-recognition', WHISPER_MODEL, {
+      dtype: 'q8',
+    })
+    const loadMs = Math.round(performance.now() - loadStart)
+    whisperProbeText = `Model loaded in ${loadMs}ms.\nTranscribing test clip...`
+    setContent(whisperProbeText)
+
+    // 1 second of near-silent noise at 16kHz mono, not real speech and not
+    // the glasses mic - this only needs to prove the pipeline runs end to
+    // end, not that a transcript is accurate. Real speech input is a
+    // separate, later step once this is confirmed to work at all.
+    const audio = new Float32Array(16000)
+    for (let i = 0; i < audio.length; i++) audio[i] = (Math.random() - 0.5) * 0.01
+
+    const inferStart = performance.now()
+    const result = await transcriber(audio)
+    const inferMs = Math.round(performance.now() - inferStart)
+    const first = Array.isArray(result) ? result[0] : result
+    whisperProbeText = `Load: ${loadMs}ms  Infer: ${inferMs}ms\nResult: "${first?.text ?? ''}"`
+  } catch (e) {
+    whisperProbeText = `Whisper failed: ${e instanceof Error ? e.message : String(e)}`
+  }
+  setContent(whisperProbeText)
+}
+
 const CONTEXT_MENU_ITEM_A = 1
 const CONTEXT_MENU_ITEM_B = 2
 
@@ -233,6 +271,26 @@ const probes: readonly Probe[] = [
         return `window.SpeechRecognition: present, but threw: ${e instanceof Error ? e.message : String(e)}`
       }
     },
+  },
+  {
+    // Whisper WASM, per direct decision after SpeechRecognition (the probe
+    // right above this one) turned out to construct fine but fail to
+    // actually capture audio - getUserMedia's mic request comes back
+    // 'not-allowed' on real hardware regardless of the phone's own app
+    // permission setting, which points at the host WebView not forwarding
+    // the request at all. This probe tests a completely different question:
+    // not audio capture (that goes through the SDK's own audioControl
+    // bridge instead, already proven working - see the microphone probe
+    // above), but whether an in-browser ML model can load and run at all in
+    // this WebView. Runs on a synthetic near-silent clip, not the glasses
+    // mic, deliberately - proving the WASM/ONNX pipeline executes here is a
+    // separate question from transcription accuracy, and answering it does
+    // not need real audio.
+    name: 'Whisper WASM init (long-press to run again)',
+    kind: 'text',
+    content: () => whisperProbeText,
+    onOpen: runWhisperProbe,
+    onLongPress: runWhisperProbe,
   },
   {
     name: 'Album pick (long-press to open picker)',

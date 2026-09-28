@@ -58,6 +58,7 @@ import {
 } from '../features/timer/service'
 import { parseVoiceCommand } from '../features/timer/voiceCommand'
 import { registerVoiceDispatch } from '../core/voiceDispatch'
+import { preload as preloadWhisper } from '../features/jarvis/whisper'
 import { formatDuration } from '../shared/duration'
 
 // The shell. Owns which page is showing, builds pages, and routes input. It knows
@@ -549,6 +550,14 @@ registerVoiceDispatch(transcript => {
   startTimerFromVoice(command.durationMs)
   return { handled: true, message: `Started a ${formatDuration(command.durationMs)} timer.` }
 })
+
+// Kicked off here, not awaited, and not gated behind ever opening Jarvis:
+// loading the Whisper model takes real time (confirmed by Lab's probe), so
+// starting it during startup gives it a head start against the moment the
+// wearer actually opens Jarvis, rather than starting cold at that moment. A
+// slow or failed load must not block startup, which is exactly what
+// preload() itself already guarantees (see features/jarvis/whisper.ts).
+preloadWhisper()
 
 // --- Input ----------------------------------------------------------------
 
