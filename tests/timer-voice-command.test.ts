@@ -76,4 +76,26 @@ describe('parseVoiceCommand', () => {
       transcript: "what's the weather like",
     })
   })
+
+  it('tolerates a mispronunciation Whisper hears as a near-miss word', () => {
+    expect(parseVoiceCommand('dimer 5 minutes')).toEqual({
+      kind: 'startTimer',
+      durationMs: 5 * 60_000,
+    })
+    expect(parseVoiceCommand('thymer 5 minutes')).toEqual({
+      kind: 'startTimer',
+      durationMs: 5 * 60_000,
+    })
+    expect(parseVoiceCommand('timmer 5 minutes')).toEqual({
+      kind: 'startTimer',
+      durationMs: 5 * 60_000,
+    })
+  })
+
+  it('does not fuzzy-match short unrelated words', () => {
+    expect(parseVoiceCommand('the time is 5 minutes past noon')).toEqual({
+      kind: 'unrecognized',
+      transcript: 'the time is 5 minutes past noon',
+    })
+  })
 })
