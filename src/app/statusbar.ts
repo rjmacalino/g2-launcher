@@ -7,8 +7,13 @@ import {
   PADDING,
   STATUS_BAR_HEIGHT,
 } from '../platform/page'
-import { STORAGE_KEY_STATUS_BAR, readJson, readWithTimeout } from '../platform/storage'
 import { currentConditionWord, type CurrentWeather } from '../features/weather/conditions'
+import {
+  getConfig,
+  hydrate as hydrateConfig,
+  onUpdate as onConfigUpdate,
+  type StatusBarConfig,
+} from '../features/settings/store'
 import { getTextWidth } from '../platform/text'
 
 // Information that stays on screen regardless of which tool is open. A bar that
@@ -16,26 +21,9 @@ import { getTextWidth } from '../platform/text'
 // being reliable, so every page carries it and there is no way to build a page
 // that does not.
 //
-// Which fields appear is the wearer's choice. The config is persisted now even
-// though the UI to edit it comes later on the companion page, because the shape of
-// the stored value is what the settings screen will edit and getting it wrong
-// later means a migration.
-export type StatusBarConfig = {
-  time: boolean
-  date: boolean
-  temperature: boolean
-}
-
-// Temperature now defaults on. It used to default off because there was
-// nothing to show yet - true while Weather was a placeholder, no longer true
-// now that it fetches real conditions (see features/weather/service.ts). Leaving this
-// off by default would have meant the centre slot stayed silently blank on
-// every device forever, since nothing else ever flips it on.
-const DEFAULTS: StatusBarConfig = {
-  time: true,
-  date: true,
-  temperature: true,
-}
+// Which fields appear is the wearer's choice, edited from the Settings tool
+// (see features/settings/store.ts, which owns the persisted config - this
+// file only owns what to draw with it).
 
 // The clock shows minutes, so a one-second timer would be 59 wasted host round
 // trips a minute. Polling faster than the displayed resolution and skipping the
@@ -171,8 +159,6 @@ if (timeSlot && WIDEST_TIME_PX > timeSlot.width - 2 * PADDING) {
   )
 }
 
-let config: StatusBarConfig = { ...DEFAULTS }
-
 let timerId: ReturnType<typeof setInterval> | null = null
 
 // What each slot currently shows, so a tick can skip the slots that have not
@@ -181,31 +167,20 @@ let timerId: ReturnType<typeof setInterval> | null = null
 const lastText = new Map<number, string>()
 
 function renderSlot(slot: Slot, now: Date): string {
-  if (!config[slot.field]) return ''
+  if (!getConfig()[slot.field]) return ''
   return slot.render(now)
 }
 
-// Read the persisted config. Any failure falls back to defaults rather than an
-// empty bar: a wearer who has never opened settings should still get a clock, and
-// a corrupt value should not produce a blank strip they cannot explain.
-async function readConfig(): Promise<StatusBarConfig> {
-  const parsed = await readJson(STORAGE_KEY_STATUS_BAR)
-  if (!parsed) return { ...DEFAULTS }
-  return {
-    time: typeof parsed.time === 'boolean' ? parsed.time : DEFAULTS.time,
-    date: typeof parsed.date === 'boolean' ? parsed.date : DEFAULTS.date,
-    temperature:
-      typeof parsed.temperature === 'boolean' ? parsed.temperature : DEFAULTS.temperature,
-  }
-}
-
-// Load the stored config. The bar is drawn during page creation, before this
-// resolves, so the first frame uses defaults and is corrected afterwards. Awaiting
-// it before page creation would block the first frame on storage, which is what
-// the startup order exists to avoid. refresh() skips even the correcting upgrade
-// for any slot whose text is unchanged.
+// Load the persisted config (see features/settings/store.ts) and repaint
+// whenever the Settings tool changes it. The bar is drawn during page
+// creation, before this resolves, so the first frame uses defaults and is
+// corrected afterwards. Awaiting it before page creation would block the
+// first frame on storage, which is what the startup order exists to avoid.
+// refresh() skips even the correcting upgrade for any slot whose text is
+// unchanged.
 export async function hydrate(): Promise<void> {
-  config = await readWithTimeout(readConfig(), { ...DEFAULTS })
+  await hydrateConfig()
+  onConfigUpdate(refresh)
 }
 
 // RESOLVED. Two thin vertical tick marks near the status bar edges turned out
