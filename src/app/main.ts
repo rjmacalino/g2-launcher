@@ -54,7 +54,10 @@ import {
   onForeground as resumeTimerTicking,
   onUpdate as onTimerUpdate,
   remainingMs as timerRemainingMs,
+  start as startTimerFromVoice,
 } from '../features/timer/service'
+import { parseVoiceCommand } from '../features/timer/voiceCommand'
+import { registerVoiceDispatch } from '../core/voiceDispatch'
 import { formatDuration } from '../shared/duration'
 
 // The shell. Owns which page is showing, builds pages, and routes input. It knows
@@ -533,6 +536,19 @@ function timerBarText(): string | null {
 }
 onTimerUpdate(() => setStatusBarTimer(timerBarText()))
 setStatusBarTimer(timerBarText())
+
+// The Jarvis tool captures speech but has no idea what a transcript means -
+// deciding that is app-level knowledge (see core/voiceDispatch.ts for why).
+// Today the only thing a transcript can do is start a timer; a later voice
+// command for another feature would mean trying that feature's own parser
+// here too, in the same place, rather than features/jarvis importing it
+// directly.
+registerVoiceDispatch(transcript => {
+  const command = parseVoiceCommand(transcript)
+  if (command.kind !== 'startTimer') return { handled: false }
+  startTimerFromVoice(command.durationMs)
+  return { handled: true, message: `Started a ${formatDuration(command.durationMs)} timer.` }
+})
 
 // --- Input ----------------------------------------------------------------
 
