@@ -9,22 +9,23 @@ describe('parseVoiceCommand', () => {
     })
   })
 
-  it('parses the roadmap phrasing', () => {
-    expect(parseVoiceCommand('set a timer for 5 minutes')).toEqual({
+  it('parses a bare duration with no command verb at all', () => {
+    expect(parseVoiceCommand('Jarvis, 5 minutes')).toEqual({
       kind: 'startTimer',
       durationMs: 5 * 60_000,
     })
   })
 
-  it('parses "alarm" as a synonym for "timer"', () => {
-    expect(parseVoiceCommand('alarm 5 minutes')).toEqual({
+  it('parses real reported phrasings', () => {
+    expect(parseVoiceCommand('Jarvis, set alarm 5 mins')).toEqual({
       kind: 'startTimer',
       durationMs: 5 * 60_000,
     })
-  })
-
-  it('ignores a wake-word style prefix', () => {
-    expect(parseVoiceCommand('Jarvis, timer 5 minutes')).toEqual({
+    expect(parseVoiceCommand('Jarvis, alarm 5 mins')).toEqual({
+      kind: 'startTimer',
+      durationMs: 5 * 60_000,
+    })
+    expect(parseVoiceCommand('Jarvis, can you set a timer for 5 minutes for me.')).toEqual({
       kind: 'startTimer',
       durationMs: 5 * 60_000,
     })
@@ -56,28 +57,7 @@ describe('parseVoiceCommand', () => {
     })
   })
 
-  it('is unrecognized without the timer/alarm keyword', () => {
-    expect(parseVoiceCommand('5 minutes')).toEqual({
-      kind: 'unrecognized',
-      transcript: '5 minutes',
-    })
-  })
-
-  it('is unrecognized without a parseable duration', () => {
-    expect(parseVoiceCommand('set a timer')).toEqual({
-      kind: 'unrecognized',
-      transcript: 'set a timer',
-    })
-  })
-
-  it('is unrecognized for unrelated speech', () => {
-    expect(parseVoiceCommand("what's the weather like")).toEqual({
-      kind: 'unrecognized',
-      transcript: "what's the weather like",
-    })
-  })
-
-  it('tolerates a mispronunciation Whisper hears as a near-miss word', () => {
+  it('tolerates any mispronunciation of the command verb, since none is required', () => {
     expect(parseVoiceCommand('dimer 5 minutes')).toEqual({
       kind: 'startTimer',
       durationMs: 5 * 60_000,
@@ -86,16 +66,16 @@ describe('parseVoiceCommand', () => {
       kind: 'startTimer',
       durationMs: 5 * 60_000,
     })
-    expect(parseVoiceCommand('timmer 5 minutes')).toEqual({
-      kind: 'startTimer',
-      durationMs: 5 * 60_000,
-    })
   })
 
-  it('does not fuzzy-match short unrelated words', () => {
-    expect(parseVoiceCommand('the time is 5 minutes past noon')).toEqual({
+  it('is unrecognized without a parseable duration', () => {
+    expect(parseVoiceCommand('set a timer')).toEqual({
       kind: 'unrecognized',
-      transcript: 'the time is 5 minutes past noon',
+      transcript: 'set a timer',
+    })
+    expect(parseVoiceCommand("what's the weather like")).toEqual({
+      kind: 'unrecognized',
+      transcript: "what's the weather like",
     })
   })
 })
