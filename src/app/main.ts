@@ -58,7 +58,11 @@ import {
 } from '../features/timer/service'
 import { parseVoiceCommand } from '../features/timer/voiceCommand'
 import { registerVoiceDispatch } from '../core/voiceDispatch'
-import { preload as preloadWhisper } from '../features/jarvis/whisper'
+import { preload as preloadWhisper } from '../core/whisper'
+import {
+  finishListening as finishJarvisListening,
+  onDone as onJarvisDone,
+} from '../features/jarvis/tool'
 import { formatDuration } from '../shared/duration'
 
 // The shell. Owns which page is showing, builds pages, and routes input. It knows
@@ -66,6 +70,13 @@ import { formatDuration } from '../shared/duration'
 // in the TOOLS array rather than a new branch in here.
 
 let screen: Screen = { kind: 'menu' }
+
+// Where the wearer was before Jarvis took over the screen, so it can hand
+// them back afterward instead of stranding them on its own result screen or
+// dumping them at the menu regardless of where they actually started (see
+// enterJarvis below). Set only by enterJarvis, cleared once consumed by the
+// onJarvisDone handler near the bottom of this file.
+let screenBeforeJarvis: Screen | null = null
 
 function activeTool() {
   return screen.kind === 'tool' ? TOOLS[screen.index] : null
@@ -378,6 +389,28 @@ function menuContainers() {
 
 // --- Navigation -----------------------------------------------------------
 
+// Computed once: -1 would mean Jarvis is missing from TOOLS entirely, which
+// would be a registry.ts bug, not something to silently tolerate here.
+const JARVIS_INDEX = TOOLS.findIndex(t => t.name === 'Jarvis')
+
+// Reaches Jarvis from wherever the wearer currently is - the menu, or any
+// tool's own page - rather than only from the menu the way every other
+// tool is opened. Called both by the global long-press handler (see
+// LONG_PRESS_EVENT below) and by the menu's own click handling when Jarvis
+// is selected the ordinary way, so entering it always remembers where to
+// return to afterward (see onJarvisDone near the bottom of this file).
+function enterJarvis() {
+  if (screen.kind === 'tool' && TOOLS[screen.index].name === 'Jarvis') return
+  screenBeforeJarvis = screen
+  // openTool does not call the outgoing tool's onClose - it never needed to
+  // before, since every existing path into it went through the menu, whose
+  // own click handling already closes nothing (there is no tool open to
+  // close). Jarvis is the first thing that can be entered directly from
+  // another tool's page, so this is the one call site that has to do it.
+  activeTool()?.onClose?.()
+  openTool(JARVIS_INDEX)
+}
+
 async function openTool(index: number) {
   if (index < 0 || index >= TOOLS.length) return
   // Any navigation clears the prompt. Cheaper to reset unconditionally here than
@@ -556,8 +589,41 @@ registerVoiceDispatch(transcript => {
 // starting it during startup gives it a head start against the moment the
 // wearer actually opens Jarvis, rather than starting cold at that moment. A
 // slow or failed load must not block startup, which is exactly what
-// preload() itself already guarantees (see features/jarvis/whisper.ts).
+// preload() itself already guarantees (see core/whisper.ts).
 preloadWhisper()
+
+// How long the result stays on screen before Jarvis hands the wearer back
+// to whatever they were doing. Long enough to actually read a short
+// confirmation ("Started a 5:00 timer."), not so long that "it just does
+// it" starts to feel like "and now I am stuck here."
+const JARVIS_RETURN_DELAY_MS = 2500
+
+// Fires once per Jarvis session, success or failure (see
+// features/jarvis/tool.ts's onDone) - the return trip only happens for a
+// session enterJarvis actually started (screenBeforeJarvis is set), so a
+// session begun by tapping to Jarvis is not this handler's concern.
+// Rechecks that Jarvis is still the screen on show before returning: the
+// wearer may have already double-tapped away during the delay, and pulling
+// them back to screenBeforeJarvis at that point would undo a navigation
+// they made on purpose.
+onJarvisDone(() => {
+  if (!screenBeforeJarvis) return
+  const target = screenBeforeJarvis
+  screenBeforeJarvis = null
+  setTimeout(() => {
+    if (!(screen.kind === 'tool' && TOOLS[screen.index].name === 'Jarvis')) return
+    if (target.kind === 'menu') {
+      // returnToMenu() closes the outgoing tool (Jarvis) itself.
+      returnToMenu()
+    } else {
+      // openTool does not close the tool it is replacing - see enterJarvis's
+      // own comment on the same gap - so Jarvis's onClose needs calling here
+      // explicitly, same as there.
+      activeTool()?.onClose?.()
+      openTool(target.index)
+    }
+  }, JARVIS_RETURN_DELAY_MS)
+})
 
 // --- Input ----------------------------------------------------------------
 
@@ -696,7 +762,15 @@ const unsubscribe = bridge.onEvenHubEvent(event => {
   // default INSIDE the branch where we already know listEvent exists and the
   // event is a click.
   if (listEvent && listType === OsEventTypeList.CLICK_EVENT && screen.kind === 'menu') {
-    openTool(listEvent.currentSelectItemIndex ?? 0)
+    const index = listEvent.currentSelectItemIndex ?? 0
+    // Selecting Jarvis by hand goes through the same entry point as the
+    // global long-press gesture, so it gets the same "return to where I
+    // was" behaviour afterward rather than always landing back at the menu.
+    if (index === JARVIS_INDEX) {
+      enterJarvis()
+    } else {
+      openTool(index)
+    }
     return
   }
 
@@ -727,12 +801,32 @@ const unsubscribe = bridge.onEvenHubEvent(event => {
     }
   }
 
-  // Long press on a tool page. Free for a tool to claim (see the gesture
-  // rules): neither forward nor back, so it is where an action that is
-  // genuinely neither belongs. LONG_PRESS_EVENT is 9, non-zero, so the
-  // zero-elision trap does not apply here either.
+  // Long press, reserved globally for Jarvis: from any screen - the menu or
+  // any tool's own page - holding down starts listening. Per direct
+  // decision, this takes plain long press away from every tool that used to
+  // be free to claim it (only Notes did, moved to its own contextual menu
+  // item - see features/notes/tool.ts). The one carve-out is Lab, dev-only
+  // and never shipped, whose several probes (stop mic/IMU, cycle icons,
+  // replace a partial update line) still need it for real hardware
+  // verification work. LONG_PRESS_EVENT is 9, non-zero, so the zero-elision
+  // trap does not apply here either.
   if (sysType === OsEventTypeList.LONG_PRESS_EVENT) {
-    activeTool()?.onLongPress?.()
+    if (activeTool()?.name === 'Lab') {
+      activeTool()?.onLongPress?.()
+    } else {
+      enterJarvis()
+    }
+    return
+  }
+
+  // The release half of the gesture above. Only meaningful while Jarvis's
+  // own page is the one on screen - a release with no matching press reaching
+  // here (the event arrived out of order, or landed while some other screen
+  // was showing for any reason) has nothing to end.
+  if (sysType === OsEventTypeList.LONG_PRESS_RELEASE_EVENT) {
+    if (screen.kind === 'tool' && TOOLS[screen.index].name === 'Jarvis') {
+      finishJarvisListening()
+    }
     return
   }
 

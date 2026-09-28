@@ -137,11 +137,15 @@ export type Tool = {
   // which is why no tool needs to check whether it is the one on screen.
   onScroll?(delta: 1 | -1): void
 
-  // Long press while this tool is showing. Free for a tool to claim: per the
-  // gesture rules, tap is always forward and double tap is always back, so
-  // long press is the one gesture left for an action that is neither -
-  // Notes uses it to reset a checklist's done state, which is not navigation
-  // in either direction. Unassigned until a tool needs it; most never will.
+  // Long press while this tool is showing. The shell (app/main.ts) now
+  // reserves plain long press globally to reach Jarvis from any screen -
+  // see LONG_PRESS_EVENT there - so this only ever reaches a tool that the
+  // shell explicitly carves out (currently just the dev-only Lab tool, for
+  // its own probes). Notes used to use this for resetting a checklist;
+  // that moved to a contextual menu item once long press stopped reaching
+  // it. Left in the interface for that one carve-out rather than removed,
+  // since a real per-tool use may come back if the global reservation is
+  // ever narrowed (e.g. to a different physical input source).
   onLongPress?(): void
 
   // Custom contextual-menu items for this tool's CURRENT open (opened by

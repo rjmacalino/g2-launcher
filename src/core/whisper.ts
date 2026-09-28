@@ -1,7 +1,12 @@
 // The on-device speech-to-text engine, confirmed working end to end by
 // Lab's "Whisper WASM init" probe (model load + inference both succeed in
-// this WebView). Kept separate from service.ts (which owns audio capture)
-// so this file's only job is turning samples into text.
+// this WebView). Lives in core/, not features/jarvis, because more than one
+// feature needs it (Jarvis's one-shot commands, Captions' running
+// transcript) and features/* modules never import each other in this
+// codebase - see core/rebuild.ts and core/voiceDispatch.ts for the same
+// reasoning applied to other cross-feature infrastructure. Each caller's own
+// service.ts still owns audio capture; this file's only job is turning
+// samples into text.
 const WHISPER_MODEL = 'Xenova/whisper-tiny.en'
 
 function createPipeline() {

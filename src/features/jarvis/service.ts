@@ -1,6 +1,6 @@
 import { AudioInputSource } from '@evenrealities/even_hub_sdk'
 import { bridge } from '../../platform/bridge'
-import { transcribe } from './whisper'
+import { transcribe } from '../../core/whisper'
 
 // Browser SpeechRecognition looked available (Lab's presence-check probe
 // constructed it without throwing) but actually using it fails with
@@ -14,34 +14,27 @@ import { transcribe } from './whisper'
 export type VoiceResult =
   { kind: 'transcript'; transcript: string } | { kind: 'error'; message: string }
 
-// How long to record if the wearer never long-presses to end it early (see
-// the tool's onLongPress). Long enough for a real command ("Jarvis, set a
-// timer for twenty five minutes") without leaving the mic running
-// indefinitely if nothing happens.
-const MAX_RECORD_MS = 8000
+// Driven by the SDK's own LONG_PRESS_EVENT / LONG_PRESS_RELEASE_EVENT (see
+// app/main.ts) rather than a fixed recording window: start() begins
+// capturing the moment the wearer presses and holds, stop() ends it the
+// moment they let go. MAX_RECORD_MS only exists as a safety net for a
+// release event that never arrives for some reason - the normal end of a
+// recording is always the wearer's own release, not this timer.
+const MAX_RECORD_MS = 15_000
 
-// PCM chunks accumulate here while recording, cleared at the start of each
-// recordAndTranscribe() call so a stale chunk from a previous session can
-// never leak into a new one.
+// How often to re-transcribe everything captured so far and report it as an
+// interim caption while still recording. Whisper has no true streaming mode
+// here - each tick re-runs on the whole buffer, which is why this is a few
+// seconds apart rather than continuous: much tighter and a long hold would
+// mean overlapping transcribe calls competing for the same CPU.
+const INTERIM_INTERVAL_MS = 2500
+
 let chunks: Uint8Array[] = []
 let unsubscribe: (() => void) | null = null
-let stopEarly: (() => void) | null = null
-
-function startCapture(): Promise<boolean> {
-  chunks = []
-  unsubscribe = bridge.onEvenHubEvent(event => {
-    const audio = event.audioEvent
-    if (!audio || audio.source !== AudioInputSource.Glasses) return
-    chunks.push(audio.audioPcm)
-  })
-  return bridge.audioControl(true, AudioInputSource.Glasses)
-}
-
-function stopCapture() {
-  unsubscribe?.()
-  unsubscribe = null
-  bridge.audioControl(false)
-}
+let interimTimer: ReturnType<typeof setInterval> | null = null
+let safetyTimer: ReturnType<typeof setTimeout> | null = null
+let onInterim: ((text: string) => void) | null = null
+let interimInFlight = false
 
 // Signed 16-bit little-endian PCM (see docs/platform.md, Device APIs) ->
 // Float32 samples in [-1, 1], the shape every Transformers.js ASR pipeline
@@ -66,26 +59,76 @@ function concat(parts: readonly Uint8Array[]): Uint8Array {
   return out
 }
 
-// Records from the glasses mic until either the wearer long-presses to end
-// it early or MAX_RECORD_MS passes, then runs the result through Whisper.
-// One call, one result - matches the tool's own push-to-talk shape (opening
-// the page IS the push).
-export async function recordAndTranscribe(): Promise<VoiceResult> {
-  const ok = await startCapture()
-  if (!ok) return { kind: 'error', message: 'could not start the glasses microphone' }
+// Skipped, not queued, when a previous tick is still running - a hold long
+// enough to fall behind should catch up by skipping stale ticks, not by
+// piling up transcribe() calls that all eventually land out of order.
+async function transcribeSoFar() {
+  if (interimInFlight || chunks.length === 0) return
+  interimInFlight = true
+  try {
+    const audio = toFloat32(concat(chunks))
+    const text = await transcribe(audio)
+    if (text) onInterim?.(text)
+  } catch {
+    // Interim failures are silent - the final transcribe in stop() is the
+    // one that actually matters, and surfacing every mid-hold hiccup on
+    // screen would be noise the wearer cannot act on anyway.
+  } finally {
+    interimInFlight = false
+  }
+}
 
-  await new Promise<void>(resolve => {
-    const timer = setTimeout(resolve, MAX_RECORD_MS)
-    stopEarly = () => {
-      clearTimeout(timer)
-      resolve()
-    }
+// Starts capturing from the glasses mic and begins reporting interim
+// transcriptions to onCaptionUpdate every INTERIM_INTERVAL_MS. Resolves once
+// capture has actually started (or failed to). onSafetyTimeout fires once,
+// MAX_RECORD_MS after starting, only if stop() has not already been called
+// by then - a release event that never arrives should still end the
+// recording, the same way a real release would. The caller's onSafetyTimeout
+// is expected to call stop() itself, exactly as it would on a real release.
+export async function start(
+  onCaptionUpdate: (text: string) => void,
+  onSafetyTimeout: () => void,
+): Promise<boolean> {
+  chunks = []
+  onInterim = onCaptionUpdate
+  unsubscribe = bridge.onEvenHubEvent(event => {
+    const audio = event.audioEvent
+    if (!audio || audio.source !== AudioInputSource.Glasses) return
+    chunks.push(audio.audioPcm)
   })
-  stopEarly = null
-  stopCapture()
+  const ok = await bridge.audioControl(true, AudioInputSource.Glasses)
+  if (!ok) {
+    unsubscribe?.()
+    unsubscribe = null
+    onInterim = null
+    return false
+  }
+  interimTimer = setInterval(transcribeSoFar, INTERIM_INTERVAL_MS)
+  safetyTimer = setTimeout(onSafetyTimeout, MAX_RECORD_MS)
+  return true
+}
 
+function teardownCapture() {
+  if (interimTimer !== null) {
+    clearInterval(interimTimer)
+    interimTimer = null
+  }
+  if (safetyTimer !== null) {
+    clearTimeout(safetyTimer)
+    safetyTimer = null
+  }
+  unsubscribe?.()
+  unsubscribe = null
+  onInterim = null
+  bridge.audioControl(false)
+}
+
+// Ends capture and runs one final transcription over everything recorded,
+// for the best accuracy the model can give rather than whatever an interim
+// tick happened to catch mid-word.
+export async function stop(): Promise<VoiceResult> {
+  teardownCapture()
   if (chunks.length === 0) return { kind: 'error', message: 'no audio captured' }
-
   try {
     const audio = toFloat32(concat(chunks))
     const transcript = await transcribe(audio)
@@ -96,15 +139,10 @@ export async function recordAndTranscribe(): Promise<VoiceResult> {
   }
 }
 
-// Ends recording early - the wearer long-pressed to say "that's my command."
-export function stopNow() {
-  stopEarly?.()
-}
-
-// Abandons a session outright: the tool closed or the app suspended
-// mid-recording. Same early-stop plus a capture teardown, since there is no
-// result worth transcribing once the page that would show it is gone.
+// Abandons a session outright with no final transcription: the tool closed
+// or the app suspended mid-recording, so there is no page left to show a
+// result on even if one were computed.
 export function cancel() {
-  stopEarly?.()
-  stopCapture()
+  teardownCapture()
+  chunks = []
 }
