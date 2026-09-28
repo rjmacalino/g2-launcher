@@ -1,37 +1,58 @@
-import {
-  cancelTimer,
-  isExpired,
-  pauseTimer,
-  remainingMs,
-  resumeTimer,
-  startTimer,
-  timerStore,
-  type TimerState,
-} from './store'
+import { cancel, getTimer, hydrate, onUpdate, pause, remainingMs, resume, start } from './service'
 import { setContent } from '../../platform/page'
 import { status } from '../../platform/bridge'
+import { formatDuration } from '../../shared/duration'
+import { requestRebuild } from '../../core/rebuild'
 import type { Tool } from '../../core/tool'
 
 // Two pickers, then a running/paused display, then back to the pickers.
-// Nothing here is nameable as Notes' or Teleprompter's picker/reading split -
-// unlike those, "leaving" this tool never has anything to lose: a running
-// timer is persisted independently of whether this screen is open (see
-// setWeather/status bar for the same idea - the countdown keeps going and
-// shows on the status bar with this tool closed entirely), so there is no
-// confirmOnExit here at all.
+// Unlike Notes' or Teleprompter's picker/reading split, leaving this tool
+// never has anything to lose: a running timer is persisted and keeps
+// counting down independently of whether this screen is open (see
+// features/timer/service.ts - the same background-ticking shape as weather's
+// own service, which is what lets the status bar show it with this tool
+// closed entirely), so there is no confirmOnExit here at all.
 type PickerStage = 'hour' | 'minute'
 let pickerStage: PickerStage = 'hour'
 let selectedHours = 0
 
-// True right after a running timer's remaining time hits zero, until the
-// wearer double-taps past it. Not part of TimerState: expiry is purely a
-// display concern here, the store itself just goes back to idle the moment
-// it happens (see tick() below), same as an alarm clock's own state has
-// nothing left to say once it has rung.
+// Whether THIS tool's page is the one on screen, same reasoning as Weather's
+// own isOpen: the service's background tick can land at any time, including
+// while some other tool is open, and only this flag says whether reacting to
+// it is this tool's business right now.
+let isOpen = false
+
+// True from the moment a running timer's remaining time hits zero while this
+// screen is open, until the wearer double-taps past it. Purely a display
+// concern - the service itself has already gone back to idle by the time
+// this is noticed - so it lives here, not in TimerState. Opening the tool
+// fresh after an expiry that happened off-screen skips straight to idle's
+// picker instead of a stale "time's up", the same "only while the app is
+// open" scope alarms already have (see docs/roadmap.md decision D2).
 let expired = false
 
-let timerState: TimerState = { status: 'idle' }
-let tickId: ReturnType<typeof setInterval> | null = null
+// Tracks whether the timer was active last time the onUpdate handler below
+// ran, so it can tell "it just expired on its own" (was active, now is not)
+// apart from a deliberate cancel, which resets this itself first.
+let wasActive = false
+
+// What is ACTUALLY on screen right now, as opposed to "what should it be for
+// the current state." The two disagree for one instant after onListSelect
+// calls start(): getTimer().status flips to 'running' immediately, but the
+// container on screen is still the list built for the picker until the
+// shell's rebuild lands a moment later. Reacting to the service's own
+// synchronous notify() during that instant would send a text upgrade
+// (setContent) at what is still a list container. suppressNextNotify skips
+// exactly that one notification, since the shell's own rebuild (triggered by
+// onListSelect returning, not by this tool) already repaints correctly via
+// initialContent().
+let suppressNextNotify = false
+
+// Same "what is actually on screen" idea, kept in sync explicitly rather than
+// derived from contentKind() for the same reason: contentKind() answers what
+// SHOULD be on screen for the current state, which can be ahead of what
+// actually is.
+let renderedKind: 'list' | 'text' = 'list'
 
 const HOURS_MAX = 9
 const MINUTE_STEP = 5
@@ -44,66 +65,32 @@ function minuteLabel(m: number): string {
   return `${m} min`
 }
 
-// h:mm:ss once there is an hour to show, m:ss otherwise - a plain stopwatch
-// read, not zero-padded to a fixed width the way the status bar's clock is,
-// since this is the one number filling the whole content area on its own.
-function formatRemaining(ms: number): string {
-  const totalSeconds = Math.ceil(ms / 1000)
-  const h = Math.floor(totalSeconds / 3600)
-  const m = Math.floor((totalSeconds % 3600) / 60)
-  const s = totalSeconds % 60
-  const mm = String(m).padStart(2, '0')
-  const ss = String(s).padStart(2, '0')
-  return h > 0 ? `${h}:${mm}:${ss}` : `${m}:${ss}`
-}
-
 function runningContent(): string {
   if (expired) return "Time's up!\n\nDouble-tap to continue"
-  const remaining = formatRemaining(remainingMs(timerState, Date.now()))
-  if (timerState.status === 'paused') {
-    return `${remaining}\nPaused\n\nTap+hold for menu`
-  }
+  const state = getTimer()
+  const remaining = formatDuration(remainingMs(Date.now()))
+  if (state.status === 'paused') return `${remaining}\nPaused\n\nTap+hold for menu`
   return `${remaining}\n\nTap+hold for menu`
 }
 
-// Repaints the on-screen countdown once a second. This is a display refresh
-// only - it does not decide whether the timer has expired on its own; that
-// check happens once here per tick and writes the result back to the store,
-// same single-writer shape as everywhere else in this app that owns a
-// setInterval (see app/statusbar.ts's own refresh()).
-function tick() {
-  if (timerState.status === 'running' && isExpired(timerState, Date.now())) {
-    timerState = cancelTimer()
-    timerStore.write(timerState)
-    expired = true
-    stopTicking()
-  }
-  setContent(runningContent())
-}
-
-function startTicking() {
-  if (tickId !== null) return
-  tick()
-  tickId = setInterval(tick, 1000)
-}
-
-function stopTicking() {
-  if (tickId === null) return
-  clearInterval(tickId)
-  tickId = null
-}
-
 async function refresh(): Promise<void> {
-  timerState = await timerStore.read()
   expired = false
+  wasActive = getTimer().status !== 'idle'
+  renderedKind = wasActive ? 'text' : 'list'
   pickerStage = 'hour'
   selectedHours = 0
 }
 
 export const timerTool: Tool = {
   name: 'Timer',
+  // Loads the persisted TimerState once at startup, same Promise.all the
+  // shell already awaits for every tool's own hydrate before deciding what
+  // screen to restore into - Timer needs this done first for the same reason
+  // Notes and Teleprompter do: contentKind/initialContent read it
+  // synchronously and have no other chance to wait for it.
+  hydrate,
   beforeOpen: refresh,
-  contentKind: () => (timerState.status === 'idle' && !expired ? 'list' : 'text'),
+  contentKind: () => (getTimer().status === 'idle' && !expired ? 'list' : 'text'),
   listItems: () =>
     pickerStage === 'hour'
       ? Array.from({ length: HOURS_MAX + 1 }, (_, h) => hourLabel(h))
@@ -120,52 +107,74 @@ export const timerTool: Tool = {
       status('Timer: pick at least 5 minutes')
       return
     }
-    timerState = startTimer(durationMs, Date.now())
-    timerStore.write(timerState)
+    suppressNextNotify = true
+    start(durationMs)
+    wasActive = true
     pickerStage = 'hour'
   },
-  // Only fires on a rebuild THIS tool triggered (the hour->minute step stays
-  // 'list' the whole time, so the only internal transition that lands here is
-  // minute picked -> running). onOpen covers the other way into 'running': the
-  // tool opened straight into an already-active timer from a previous open.
+  // Fires after the shell's rebuild from onListSelect (picker -> running)
+  // lands, which is the moment the on-screen container actually becomes text.
   onContentReady: () => {
-    if (timerState.status !== 'idle') startTicking()
+    renderedKind = 'text'
   },
   onOpen: () => {
-    if (timerState.status !== 'idle') startTicking()
+    isOpen = true
   },
-  onClose: stopTicking,
-  onResume: () => {
-    if (timerState.status !== 'idle') startTicking()
+  onClose: () => {
+    isOpen = false
   },
-  onSuspend: stopTicking,
   contextMenu: () => {
-    if (timerState.status === 'idle') return []
+    if (getTimer().status === 'idle') return []
     return [
-      { itemName: timerState.status === 'paused' ? 'Resume' : 'Pause', itemID: 1 },
+      { itemName: getTimer().status === 'paused' ? 'Resume' : 'Pause', itemID: 1 },
       { itemName: 'Cancel', itemID: 2 },
     ]
   },
   onMenuItemClick: itemID => {
-    if (timerState.status === 'idle') return
+    if (getTimer().status === 'idle') return
     if (itemID === 1) {
-      timerState =
-        timerState.status === 'paused'
-          ? resumeTimer(timerState, Date.now())
-          : pauseTimer(timerState, Date.now())
-      timerStore.write(timerState)
-      setContent(runningContent())
+      if (getTimer().status === 'paused') resume()
+      else pause()
       return
     }
     if (itemID === 2) {
-      timerState = cancelTimer()
-      timerStore.write(timerState)
+      // Cleared before cancel(), not after: cancel()'s own notify() fires
+      // synchronously, and the onUpdate handler below must see wasActive
+      // already false to know this is a deliberate stop, not an expiry.
+      wasActive = false
       expired = false
-      stopTicking()
+      cancel()
       status('Timer cancelled')
     }
   },
-  // Never actually rendered: contentKind is 'list' whenever this would be
-  // used. Required by the interface regardless, same as Notes.
-  initialContent: () => '',
+  // Read whenever a page is built or rebuilt with contentKind 'text' -
+  // including the very first paint of the picker -> running transition,
+  // before any tick has had a chance to call setContent. Blank whenever
+  // contentKind is actually 'list' instead; never rendered there.
+  initialContent: () => (getTimer().status !== 'idle' || expired ? runningContent() : ''),
 }
+
+// The service's own background tick (see features/timer/service.ts) is what
+// actually counts down; this only repaints the currently-open page when it
+// does, same split as Weather's tool.ts and its onUpdate. Three outcomes per
+// notification: the timer just expired on its own (switch to "Time's up!"),
+// the picker/running split changed some other way, i.e. a menu cancel
+// (rebuild - a list and a text container are not interchangeable via
+// setContent), or neither (repaint the countdown in place).
+onUpdate(() => {
+  if (suppressNextNotify) {
+    suppressNextNotify = false
+    return
+  }
+  if (!isOpen) return
+  const active = getTimer().status !== 'idle'
+  if (wasActive && !active) expired = true
+  wasActive = active
+  const desiredKind: 'list' | 'text' = getTimer().status === 'idle' && !expired ? 'list' : 'text'
+  if (desiredKind !== renderedKind) {
+    renderedKind = desiredKind
+    requestRebuild(timerTool)
+    return
+  }
+  if (renderedKind === 'text') setContent(runningContent())
+})

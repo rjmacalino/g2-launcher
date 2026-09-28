@@ -107,7 +107,16 @@ const NO_DATA_TEXT = 'N/A'
 
 let weather: CurrentWeather | null = null
 
+// Set by the app shell whenever the Timer feature's active timer changes (see
+// features/timer/service.ts), non-null exactly while a timer is running or
+// paused. Overrides the centre slot's usual weather reading rather than
+// taking a fourth slot: a countdown you started on purpose is more worth a
+// glance than the temperature, and per docs/roadmap.md this platform's list
+// of things worth re-measuring slot widths for does not include this.
+let timerText: string | null = null
+
 function renderWeather(): string {
+  if (timerText) return timerText
   if (!weather) return NO_DATA_TEXT
   return `${currentConditionWord(weather)} ${Math.round(weather.celsius)}C`
 }
@@ -124,6 +133,11 @@ function renderWeather(): string {
 // hardware check, not a drive-by change alongside a measurement library swap.
 const WIDEST_DATE_PX = Math.max(...DAY_NAMES.map((_, i) => getTextWidth(`${DAY_NAMES[i]} 30 Sep`)))
 const WIDEST_TIME_PX = getTextWidth('12:30 PM')
+// Matches the exact string shape the app shell builds for setTimer() (see
+// app/main.ts's timerBarText): "Paused " plus the longest duration this
+// tool's own hour picker allows (9 hours, see features/timer/tool.ts's
+// HOURS_MAX), formatted h:mm:ss.
+const WIDEST_TIMER_PX = getTextWidth('Paused 9:59:59')
 
 const SLOTS: readonly Slot[] = [
   {
@@ -168,6 +182,12 @@ if (dateSlot && WIDEST_DATE_PX > dateSlot.width - 2 * PADDING) {
 if (timeSlot && WIDEST_TIME_PX > timeSlot.width - 2 * PADDING) {
   status(
     `Status bar time slot may be too narrow: ${WIDEST_TIME_PX}px content in ${timeSlot.width}px`,
+  )
+}
+const centreSlot = SLOTS.find(s => s.field === 'temperature')
+if (centreSlot && WIDEST_TIMER_PX > centreSlot.width - 2 * PADDING) {
+  status(
+    `Status bar centre slot may be too narrow for a paused timer: ${WIDEST_TIMER_PX}px content in ${centreSlot.width}px`,
   )
 }
 
@@ -283,6 +303,14 @@ function refresh() {
 // format stays a decision this file owns and the weather tool cannot drift from it.
 export function setWeather(next: CurrentWeather | null) {
   weather = next
+  refresh()
+}
+
+// Called by the app shell whenever the timer service notifies (every tick
+// while running, and on pause/resume/cancel), same wiring shape as
+// setWeather above. null hands the centre slot back to weather.
+export function setTimer(text: string | null) {
+  timerText = text
   refresh()
 }
 
