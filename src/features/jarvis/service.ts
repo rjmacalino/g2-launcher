@@ -14,20 +14,24 @@ import { transcribe } from '../../core/whisper'
 export type VoiceResult =
   { kind: 'transcript'; transcript: string } | { kind: 'error'; message: string }
 
-// Driven by the SDK's own LONG_PRESS_EVENT / LONG_PRESS_RELEASE_EVENT (see
-// app/main.ts) rather than a fixed recording window: start() begins
-// capturing the moment the wearer presses and holds, stop() ends it the
-// moment they let go. MAX_RECORD_MS only exists as a safety net for a
-// release event that never arrives for some reason - the normal end of a
-// recording is always the wearer's own release, not this timer.
+// Driven by the SDK's own LONG_PRESS_EVENT to start (see app/main.ts) and a
+// double-press to end - not a release, tried first and dropped: holding down
+// the whole time a command was spoken meant releasing ended the recording
+// before an interim caption ever had a chance to appear. MAX_RECORD_MS only
+// exists as a safety net for a wearer who never double-presses at all - the
+// normal end of a recording is always the deliberate double-press, not this
+// timer.
 const MAX_RECORD_MS = 15_000
 
 // How often to re-transcribe everything captured so far and report it as an
 // interim caption while still recording. Whisper has no true streaming mode
-// here - each tick re-runs on the whole buffer, which is why this is a few
-// seconds apart rather than continuous: much tighter and a long hold would
-// mean overlapping transcribe calls competing for the same CPU.
-const INTERIM_INTERVAL_MS = 2500
+// here - each tick re-runs on the whole buffer, which is why this is a
+// second or two apart rather than continuous: much tighter and a long
+// recording would mean overlapping transcribe calls competing for the same
+// CPU. Short enough that even a quick command ("timer 5 minutes", spoken in
+// under 2 seconds) has a real chance of showing at least one interim caption
+// before the wearer double-presses.
+const INTERIM_INTERVAL_MS = 1500
 
 let chunks: Uint8Array[] = []
 let unsubscribe: (() => void) | null = null
@@ -82,9 +86,9 @@ async function transcribeSoFar() {
 // transcriptions to onCaptionUpdate every INTERIM_INTERVAL_MS. Resolves once
 // capture has actually started (or failed to). onSafetyTimeout fires once,
 // MAX_RECORD_MS after starting, only if stop() has not already been called
-// by then - a release event that never arrives should still end the
-// recording, the same way a real release would. The caller's onSafetyTimeout
-// is expected to call stop() itself, exactly as it would on a real release.
+// by then - a wearer who never double-presses should still get the
+// recording ended for them. The caller's onSafetyTimeout is expected to
+// call stop() itself, exactly as it would on a real double-press.
 export async function start(
   onCaptionUpdate: (text: string) => void,
   onSafetyTimeout: () => void,

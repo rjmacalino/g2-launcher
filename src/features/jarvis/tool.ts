@@ -4,15 +4,19 @@ import { setContent } from '../../platform/page'
 import type { Tool } from '../../core/tool'
 
 // No longer a plain push-to-talk tool the wearer navigates into: the shell
-// (app/main.ts) reserves the SDK's LONG_PRESS_EVENT / LONG_PRESS_RELEASE_EVENT
-// globally to reach Jarvis from ANY screen, not only when this tool's own
-// page is already open. This file still defines the tool itself - what the
-// page shows, and what onOpen/onClose do - but starting and ending a
-// recording now happen through beginListening() (called from onOpen) and
-// finishListening() (called directly by the shell on the release event),
+// (app/main.ts) reserves the SDK's LONG_PRESS_EVENT globally to reach Jarvis
+// from ANY screen, not only when this tool's own page is already open. This
+// file still defines the tool itself - what the page shows, and what
+// onOpen/onClose do - but starting and ending a recording now happen through
+// beginListening() (called from onOpen) and finishListening() (called
+// directly by the shell on a double-press while Jarvis is on screen),
 // rather than through Tool.onLongPress, which the shell no longer routes to
 // any tool at all (see the Notes reset menu item for where its own
 // long-press use moved once plain long-press became Jarvis's globally).
+// Ending on release was tried first and dropped - per direct report, holding
+// the whole time a command was spoken meant releasing ended the recording
+// before an interim caption ever had a chance to show. Long press now only
+// starts it; the wearer is free to let go immediately.
 //
 // Guards a session still in flight when the tool closes, reopens, or the
 // safety timeout fires. Each call captures the session id current when it
@@ -38,7 +42,7 @@ function notifyDone() {
 }
 
 function renderInterim(text: string): string {
-  return `${text}\n\n(release to send)`
+  return `${text}\n\n(double-press when done)`
 }
 
 // Starts capturing the moment the page is on screen - called from onOpen
@@ -64,8 +68,8 @@ async function beginListening() {
 }
 
 // Ends the current recording and dispatches whatever it heard. Called by
-// the shell on LONG_PRESS_RELEASE_EVENT, and by the safety timeout above if
-// a release event never arrives.
+// the shell on a double-press while Jarvis is on screen, and by the safety
+// timeout above if the wearer never double-presses at all.
 export async function finishListening() {
   const mySession = sessionId
   const result = await stop()
@@ -87,7 +91,7 @@ export async function finishListening() {
 export const jarvisTool: Tool = {
   name: 'Jarvis',
   contentKind: () => 'text',
-  initialContent: () => 'Listening...',
+  initialContent: () => 'Listening...\n\n(double-press when done)',
   onOpen: beginListening,
   onClose: () => {
     sessionId++

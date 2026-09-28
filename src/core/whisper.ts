@@ -35,9 +35,29 @@ export function preload() {
   getPipeline().catch(() => {})
 }
 
-export async function transcribe(audio: Float32Array): Promise<string> {
+// Serialized through a single queue: a caller with a running recording
+// (Jarvis) can have an interim transcribe() tick still in flight the moment
+// it wants a final one on double-press, and running two inference calls
+// against the same pipeline instance concurrently is not something ONNX
+// Runtime Web is known to handle safely here - found the hard way, as a
+// silent hang with no thrown error, rather than assumed up front. Every
+// caller now waits its turn instead.
+let queue: Promise<unknown> = Promise.resolve()
+
+async function runTranscribe(audio: Float32Array): Promise<string> {
   const transcriber = await getPipeline()
   const result = await transcriber(audio)
   const first = Array.isArray(result) ? result[0] : result
   return first?.text?.trim() ?? ''
+}
+
+export function transcribe(audio: Float32Array): Promise<string> {
+  const result = queue.then(() => runTranscribe(audio))
+  // Keeps the queue moving even if this call rejects - a failed transcribe
+  // must not permanently wedge every later call behind it.
+  queue = result.then(
+    () => undefined,
+    () => undefined,
+  )
+  return result
 }

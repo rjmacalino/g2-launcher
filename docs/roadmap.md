@@ -155,28 +155,38 @@ then on hardware by RJ. Results go back into platform.md with a [HW] tag.
       menu-item push-to-talk tool (G2-46 parser, G2-48 tool, G2-49 switched
       the engine to on-device Whisper after browser SpeechRecognition turned
       out not to actually work on real hardware - see D1): heard "timer 5
-      minutes", started a 5:00 timer. Redesigned same day (G2-51) into a
-      global gesture per direct request: plain long press now reaches Jarvis
-      from ANY screen, not only its own menu item - press to start listening
-      (live, incrementally-transcribed captions appear while held, not just
-      a static "Listening..."), release (the SDK's own
-      LONG_PRESS_RELEASE_EVENT, previously unused anywhere in this app) to
-      end it and dispatch, then auto-return to whatever screen was active
-      before the press once the result has been shown for a couple of
-      seconds - closer to "it just does it" than needing to navigate into
-      Jarvis and back out again. Reserving plain long press globally took it
-      away from Notes' own long-press-to-reset, moved to a contextual menu
-      item instead (tap-then-long-press, same shape as Timer's own
-      Pause/Cancel). Not yet [x]: the automation API cannot script a
-      long-press/release pair at all, so this redesign is only verified via
-      its safety-timeout fallback path (a real hold with no release event)
-      in the simulator - the actual hold-to-talk gesture itself, and its
-      real-hardware timing, both still need a real-hardware run. Always-listen
-      mode (a dedicated wake-word model, since continuous Whisper is too
-      slow/battery-heavy for that - see the Jarvis/Porcupine discussion
-      below) is a separate, larger, and currently blocked track: it needs
-      RJ to create a free Picovoice account and report back its actual
-      free-tier terms, which could not be verified from documentation alone
+      minutes", started a 5:00 timer. Redesigned twice the same day into a
+      global gesture per direct request, reachable from ANY screen rather
+      than only its own menu item:
+      - G2-51's first cut: press to start listening (live,
+        incrementally-transcribed captions while held), release (the SDK's
+        own LONG_PRESS_RELEASE_EVENT, previously unused anywhere in this app)
+        to end and dispatch. Tested on real hardware [HW]: listening started
+        correctly from any screen, but holding the whole time a command was
+        spoken meant releasing ended the recording before an interim caption
+        ever had a chance to show.
+      - G2-52 fixed that by decoupling start from end: long press only
+        starts listening now, freeing the wearer to let go immediately; a
+        double-press is the deliberate "I'm done" signal instead
+        (LONG_PRESS_RELEASE_EVENT is unhandled again as a result). The
+        interim re-transcribe interval also dropped from 2.5s to 1.5s so a
+        quick command has a real chance of showing at least one caption.
+      Either way, once a result shows, Jarvis auto-returns to whatever
+      screen was active before the press after a couple of seconds - closer
+      to "it just does it" than needing to navigate into Jarvis and back out
+      again. Reserving plain long press globally took it away from Notes'
+      own long-press-to-reset, moved to a contextual menu item instead
+      (tap-then-long-press, same shape as Timer's own Pause/Cancel). Not yet
+      [x]: the double-press-to-end redesign itself still needs a
+      real-hardware confirmation (fixed in response to hardware feedback,
+      not yet re-tested on hardware), and real-hardware timing (model load +
+      inference speed) is still unmeasured outside a dev machine.
+      Always-listen mode (a dedicated wake-word model, since continuous
+      Whisper is too slow/battery-heavy for that - see the Jarvis/Porcupine
+      discussion below) is a separate, larger, and currently blocked track:
+      it needs RJ to create a free Picovoice account and report back its
+      actual free-tier terms, which could not be verified from documentation
+      alone
 - [ ] Live conversation captions ("Conversate"-inspired): continuously
       transcribe a conversation with another person and show live captions,
       not a command. Distinct from Jarvis (a command executor) - raised

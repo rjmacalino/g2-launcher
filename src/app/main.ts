@@ -718,6 +718,21 @@ const unsubscribe = bridge.onEvenHubEvent(event => {
     return
   }
 
+  // Double-press ends a Jarvis session, instead of the usual "leave to
+  // menu" - checked before the generic isDoubleTap branch below for the
+  // same reason the confirm-prompt block above is: a double-press means
+  // something different here and must not fall through to the universal
+  // meaning. Per direct request: holding down the whole time a command is
+  // being spoken turned out to be the wrong shape (release ended the
+  // recording too early to ever get an interim caption on screen) - long
+  // press now only starts listening, freeing the wearer to let go
+  // immediately, and a double-press is the deliberate "I'm done" signal
+  // instead.
+  if (isDoubleTap && screen.kind === 'tool' && TOOLS[screen.index].name === 'Jarvis') {
+    finishJarvisListening()
+    return
+  }
+
   if (isDoubleTap) {
     if (screen.kind === 'tool') {
       const tool = TOOLS[screen.index]
@@ -802,30 +817,29 @@ const unsubscribe = bridge.onEvenHubEvent(event => {
   }
 
   // Long press, reserved globally for Jarvis: from any screen - the menu or
-  // any tool's own page - holding down starts listening. Per direct
-  // decision, this takes plain long press away from every tool that used to
-  // be free to claim it (only Notes did, moved to its own contextual menu
-  // item - see features/notes/tool.ts). The one carve-out is Lab, dev-only
-  // and never shipped, whose several probes (stop mic/IMU, cycle icons,
-  // replace a partial update line) still need it for real hardware
-  // verification work. LONG_PRESS_EVENT is 9, non-zero, so the zero-elision
-  // trap does not apply here either.
+  // any tool's own page - it starts listening. Per direct decision, this
+  // takes plain long press away from every tool that used to be free to
+  // claim it (only Notes did, moved to its own contextual menu item - see
+  // features/notes/tool.ts). The one carve-out is Lab, dev-only and never
+  // shipped, whose several probes (stop mic/IMU, cycle icons, replace a
+  // partial update line) still need it for real hardware verification work.
+  // LONG_PRESS_EVENT is 9, non-zero, so the zero-elision trap does not apply
+  // here either.
+  //
+  // Ending the recording is a double-press (see the isDoubleTap branch
+  // above), not the matching LONG_PRESS_RELEASE_EVENT - tried release first,
+  // and per direct report holding the whole time a command was spoken meant
+  // releasing (correctly) ended the recording before an interim caption ever
+  // had a chance to appear on screen. Starting on press and freeing the
+  // wearer to let go immediately gives the recording room to actually run
+  // long enough to show something. LONG_PRESS_RELEASE_EVENT is deliberately
+  // unhandled here now - nothing in this app currently needs the moment of
+  // release itself, only the start.
   if (sysType === OsEventTypeList.LONG_PRESS_EVENT) {
     if (activeTool()?.name === 'Lab') {
       activeTool()?.onLongPress?.()
     } else {
       enterJarvis()
-    }
-    return
-  }
-
-  // The release half of the gesture above. Only meaningful while Jarvis's
-  // own page is the one on screen - a release with no matching press reaching
-  // here (the event arrived out of order, or landed while some other screen
-  // was showing for any reason) has nothing to end.
-  if (sysType === OsEventTypeList.LONG_PRESS_RELEASE_EVENT) {
-    if (screen.kind === 'tool' && TOOLS[screen.index].name === 'Jarvis') {
-      finishJarvisListening()
     }
     return
   }
