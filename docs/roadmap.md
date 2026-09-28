@@ -150,22 +150,58 @@ then on hardware by RJ. Results go back into platform.md with a [HW] tag.
       before this is [x]
 - [ ] Alarm: visual only (no speaker), only while the app is open
 - [ ] Voice notes: dictate a checklist item
-- [x] Voice commands ("JARVIS"): "Jarvis, timer 5 minutes", parsed on our
-      side. Push-to-talk shipped (G2-46 parser, G2-48 tool, G2-49 switched
+- [~] Voice commands ("JARVIS"): "Jarvis, timer 5 minutes", parsed on our
+      side. Confirmed working end to end [HW] on 2026-09-28 as a
+      menu-item push-to-talk tool (G2-46 parser, G2-48 tool, G2-49 switched
       the engine to on-device Whisper after browser SpeechRecognition turned
-      out not to actually work on real hardware - see D1) and confirmed
-      working end to end [HW] on 2026-09-28: open Jarvis, it records from
-      the glasses mic, a long-press ends it early, transcribes on-device,
-      dispatches to Timer. RJ's actual run: heard "timer 5 minutes", started
-      a 5:00 timer. Real hardware timing (model load + inference speed) is
-      still not separately measured - RJ used the long-press to end
-      recording deliberately rather than waiting for it, so how long the
-      transcribe-and-dispatch step itself took was not observed. Always-listen
-      mode (continuous recognition, watching every transcript for the wake
-      phrase, switchable once Settings grows a place for it) is deliberately
-      not built yet: continuous Whisper inference is a real battery cost,
-      and there is no data yet on whether RJ even wants it now that
-      push-to-talk works
+      out not to actually work on real hardware - see D1): heard "timer 5
+      minutes", started a 5:00 timer. Redesigned twice the same day into a
+      global gesture per direct request, reachable from ANY screen rather
+      than only its own menu item:
+      - G2-51's first cut: press to start listening (live,
+        incrementally-transcribed captions while held), release (the SDK's
+        own LONG_PRESS_RELEASE_EVENT, previously unused anywhere in this app)
+        to end and dispatch. Tested on real hardware [HW]: listening started
+        correctly from any screen, but holding the whole time a command was
+        spoken meant releasing ended the recording before an interim caption
+        ever had a chance to show.
+      - G2-52 fixed that by decoupling start from end: long press only
+        starts listening now, freeing the wearer to let go immediately; a
+        double-press is the deliberate "I'm done" signal instead
+        (LONG_PRESS_RELEASE_EVENT is unhandled again as a result). The
+        interim re-transcribe interval also dropped from 2.5s to 1.5s so a
+        quick command has a real chance of showing at least one caption.
+      Either way, once a result shows, Jarvis auto-returns to whatever
+      screen was active before the press after a couple of seconds - closer
+      to "it just does it" than needing to navigate into Jarvis and back out
+      again. Reserving plain long press globally took it away from Notes'
+      own long-press-to-reset, moved to a contextual menu item instead
+      (tap-then-long-press, same shape as Timer's own Pause/Cancel). Not yet
+      [x]: the double-press-to-end redesign itself still needs a
+      real-hardware confirmation (fixed in response to hardware feedback,
+      not yet re-tested on hardware), and real-hardware timing (model load +
+      inference speed) is still unmeasured outside a dev machine.
+      Always-listen mode (a dedicated wake-word model, since continuous
+      Whisper is too slow/battery-heavy for that - see the Jarvis/Porcupine
+      discussion below) is a separate, larger, and currently blocked track:
+      it needs RJ to create a free Picovoice account and report back its
+      actual free-tier terms, which could not be verified from documentation
+      alone
+- [ ] Live conversation captions ("Conversate"-inspired): continuously
+      transcribe a conversation with another person and show live captions,
+      not a command. Distinct from Jarvis (a command executor) - raised
+      2026-09-28 as part of RJ's larger goal of a full AI companion
+      (transcription + commands + contextual cues, eventually). Deliberately
+      not started: the immediate ask (make Jarvis reachable without opening
+      it, see above) turned out to satisfy most of what prompted this, so it
+      is on hold until that is confirmed working well on real hardware.
+      Would reuse core/whisper.ts's engine (already relocated out of
+      features/jarvis specifically so more than one feature could use it).
+      AI cues/summarization (real Conversate's other half) needs an actual
+      LLM - a good one is realistically a cloud service, which means
+      revisiting the "no paid services" stance in D1 - or a much
+      lower-quality fully on-device one, at a package-size cost likely
+      dwarfing even Whisper's
 - [ ] Photo viewer: album image on the glasses
 
 ## Decisions
@@ -185,3 +221,10 @@ then on hardware by RJ. Results go back into platform.md with a [HW] tag.
   stays out unless this decision is revisited.
 - D2 Alarms (2026-09-24): visual only, while the app is open. No native phone
   companion for now.
+- D3 Long press (2026-09-28): reserved globally for Jarvis (press to start
+  listening, release to send), taking it away from every tool's own use.
+  Only Notes was actually using it (reset a checklist, moved to a contextual
+  menu item); Lab keeps its own long-press probes as the one carve-out,
+  since it is dev-only and never ships. Any future tool needing a "neither
+  forward nor back" action has to use its own contextual menu instead (see
+  Timer and Notes for the shape) - plain long press is Jarvis's now.

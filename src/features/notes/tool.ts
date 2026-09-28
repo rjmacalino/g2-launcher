@@ -1,5 +1,6 @@
 import { notes as notesStore, NOTE_ITEM_MAX_CHARS, type ChecklistItem, type NoteDoc } from './store'
 import { status } from '../../platform/bridge'
+import { requestRebuild } from '../../core/rebuild'
 import type { Tool } from '../../core/tool'
 
 // A checklist tool, not a text editor. Authoring is phone-only, same as
@@ -108,21 +109,27 @@ export const notesTool: Tool = {
       if (!ok) status('Failed to save checklist')
     })
   },
-  // Long press resets a checklist's done state, per direct request. No
-  // confirmation: this app now confirms every ordinary exit, but a reset is
-  // not leaving anything, and a wearer who long-presses by accident loses
-  // check marks rather than their place in a script or a live GPS session.
-  // Recorded as a deliberate choice, not an oversight - the same "ask if you
-  // meant it" reasoning behind every other confirmation in this app would
-  // argue for one here too, and this can gain one later if losing progress
-  // to a mistimed long press turns out to matter in practice.
-  onLongPress: () => {
-    if (depth !== 'checklist') return
+  // Resets a checklist's done state. Used to be plain long-press, per direct
+  // request and with no confirmation - reasoning being that a reset is not
+  // leaving anything, so a wearer who triggered it by accident loses check
+  // marks rather than their place in a script or a live session. Moved into
+  // the contextual menu (tap-then-long-press) once plain long-press became
+  // Jarvis's global invocation gesture across every screen (see app/main.ts)
+  // - nothing else shipped was still using it. The two-step tap-then-select
+  // this now takes is itself enough friction that the original "no
+  // confirmation" call still holds; a bare list of one item was not worth a
+  // second dialog on top of it.
+  contextMenu: () => (depth === 'checklist' ? [{ itemName: 'Reset', itemID: 1 }] : []),
+  onMenuItemClick: itemID => {
+    if (itemID !== 1 || depth !== 'checklist') return
     const note = currentNote()
     if (!note) return
     for (const item of note.items) item.done = false
     note.updatedAt = Date.now()
     status('List reset')
+    // Unlike onListSelect, a menu item click gets no automatic rebuild from
+    // the shell - the list still shows the pre-reset checkmarks otherwise.
+    requestRebuild(notesTool)
     notesStore.resetItems(note.id).then(ok => {
       if (!ok) status('Failed to save reset')
     })
