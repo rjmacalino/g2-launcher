@@ -150,43 +150,72 @@ then on hardware by RJ. Results go back into platform.md with a [HW] tag.
       before this is [x]
 - [ ] Alarm: visual only (no speaker), only while the app is open
 - [ ] Voice notes: dictate a checklist item
-- [~] Voice commands ("JARVIS"): "Jarvis, timer 5 minutes", parsed on our
+- [x] Voice commands ("JARVIS"): "Jarvis, timer 5 minutes", parsed on our
       side. Confirmed working end to end [HW] on 2026-09-28 as a
       menu-item push-to-talk tool (G2-46 parser, G2-48 tool, G2-49 switched
       the engine to on-device Whisper after browser SpeechRecognition turned
       out not to actually work on real hardware - see D1): heard "timer 5
-      minutes", started a 5:00 timer. Redesigned twice the same day into a
-      global gesture per direct request, reachable from ANY screen rather
-      than only its own menu item:
-      - G2-51's first cut: press to start listening (live,
-        incrementally-transcribed captions while held), release (the SDK's
-        own LONG_PRESS_RELEASE_EVENT, previously unused anywhere in this app)
-        to end and dispatch. Tested on real hardware [HW]: listening started
-        correctly from any screen, but holding the whole time a command was
-        spoken meant releasing ended the recording before an interim caption
-        ever had a chance to show.
-      - G2-52 fixed that by decoupling start from end: long press only
-        starts listening now, freeing the wearer to let go immediately; a
-        double-press is the deliberate "I'm done" signal instead
-        (LONG_PRESS_RELEASE_EVENT is unhandled again as a result). The
-        interim re-transcribe interval also dropped from 2.5s to 1.5s so a
-        quick command has a real chance of showing at least one caption.
-      Either way, once a result shows, Jarvis auto-returns to whatever
-      screen was active before the press after a couple of seconds - closer
-      to "it just does it" than needing to navigate into Jarvis and back out
-      again. Reserving plain long press globally took it away from Notes'
-      own long-press-to-reset, moved to a contextual menu item instead
-      (tap-then-long-press, same shape as Timer's own Pause/Cancel). Not yet
-      [x]: the double-press-to-end redesign itself still needs a
-      real-hardware confirmation (fixed in response to hardware feedback,
-      not yet re-tested on hardware), and real-hardware timing (model load +
-      inference speed) is still unmeasured outside a dev machine.
-      Always-listen mode (a dedicated wake-word model, since continuous
-      Whisper is too slow/battery-heavy for that - see the Jarvis/Porcupine
-      discussion below) is a separate, larger, and currently blocked track:
-      it needs RJ to create a free Picovoice account and report back its
-      actual free-tier terms, which could not be verified from documentation
-      alone
+      minutes", started a 5:00 timer. Redesigned three times the same day
+      into a global gesture per direct request, reachable from ANY screen
+      rather than only its own menu item:
+      - G2-51: press to start listening (live, incrementally-transcribed
+        captions while held), release to end and dispatch. Tested on real
+        hardware [HW]: listening started correctly from any screen, but
+        holding the whole time a command was spoken meant releasing ended
+        the recording before an interim caption ever showed.
+      - G2-52: decoupled start from end - long press only starts listening,
+        freeing the wearer to let go immediately; a double-press is the
+        deliberate "I'm done" signal instead.
+      - G2-53, after a second real-hardware report [HW] that neither the
+        captions nor the double-press worked reliably: removed live interim
+        captions entirely. Likely cause, not fully confirmed but consistent
+        with both symptoms together - Whisper inference is CPU-bound WASM on
+        the main thread, and re-running it on the whole growing recording
+        every 1.5s (no true streaming mode exists here) means later ticks
+        take progressively longer; on hardware slower than the dev machine
+        this was built against, that can block the thread long enough to
+        stall event processing itself, which would explain a double-press
+        never registering, not just captions never appearing. Back to one
+        clean transcription at the end and nothing running while the mic is
+        open - the shape already confirmed working (G2-49). True live
+        captions would need inference moved off the main thread (a Web
+        Worker) to be safe to run repeatedly during a recording - real,
+        separate work, not a tweak to this design.
+      Once a result shows, Jarvis auto-returns to whatever screen was active
+      before the press after a couple of seconds - closer to "it just does
+      it" than needing to navigate into Jarvis and back out again. Reserving
+      plain long press globally took it away from Notes' own
+      long-press-to-reset, moved to a contextual menu item instead
+      (tap-then-long-press, same shape as Timer's own Pause/Cancel).
+      - G2-54, from a third real-hardware report [HW] that the app opened
+        already listening with no long press at all, and double-tap did
+        neither ("doesn't stop the listening, doesn't exit the app"). Two
+        separate bugs, both from treating Jarvis like a normal destination:
+        (1) openTool persisted Jarvis as "the current screen" like any
+        other tool, so the next cold start or resume restored straight into
+        it and called onOpen (which starts listening) with no gesture to
+        explain why - fixed by never persisting Jarvis as current, and by
+        making the cold-start restore path refuse to land on it even if an
+        old stored value still names it (self-healing an already-corrupted
+        device without needing storage cleared by hand); (2) double-press
+        was intercepted unconditionally whenever Jarvis was the active
+        screen, with no fallback to the normal "leave" gesture once a
+        session had already finished - a wearer stuck showing a completed
+        result had no way out at all. Fixed with an isListening() check: a
+        double-press only means "stop and process" while a recording is
+        actually in flight; otherwise it falls through to the same
+        leave-to-previous-screen behaviour every other tool already has.
+      Confirmed working end to end [HW] on 2026-09-28, RJ's own words: "long
+      press, it will listen; double tap, it will end (there is a delay on
+      the end), then it will show the words, and will exit after a sec." The
+      delay between double-tap and the result showing is the on-device
+      transcription itself (no cloud round-trip) - expected, not a bug;
+      exact timing still not separately measured. Always-listen mode (a
+      dedicated wake-word model, since continuous Whisper is too
+      slow/battery-heavy for that - see the Jarvis/Porcupine discussion
+      below) is a separate, larger, and currently blocked track: it needs RJ
+      to create a free Picovoice account and report back its actual
+      free-tier terms, which could not be verified from documentation alone
 - [ ] Live conversation captions ("Conversate"-inspired): continuously
       transcribe a conversation with another person and show live captions,
       not a command. Distinct from Jarvis (a command executor) - raised
