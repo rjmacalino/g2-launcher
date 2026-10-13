@@ -98,13 +98,14 @@ function renderMenu() {
 // The plain, detail-free mapping from a tool's name to its companion page -
 // what clicking a row in the companion's OWN menu uses (no glasses detail
 // to go on, just "open this tool's page"), and the fallback the
-// glasses-follow sync below uses for every tool except Chat, which has its
-// own richer, async-aware version (see syncToGlassesScreen).
+// glasses-follow sync below uses for every tool except Gemini (the chat
+// tool - renamed from "Chat"), which has its own richer, async-aware
+// version (see syncToGlassesScreen).
 function baselineViewForTool(name: string | undefined): View {
   if (name === 'Teleprompter') return { kind: 'list', collection: 'scripts' }
   if (name === 'Notes') return { kind: 'list', collection: 'notes' }
   if (name === 'Jarvis') return { kind: 'jarvis-settings' }
-  if (name === 'Chat') return { kind: 'chat-list' }
+  if (name === 'Gemini') return { kind: 'chat-list' }
   return { kind: 'stub', label: name ?? '' }
 }
 
@@ -116,8 +117,8 @@ function baselineViewForTool(name: string | undefined): View {
 // the glasses, not the other way around - see docs/roadmap.md for the
 // companion-steers-glasses direction, not built yet.
 //
-// Chat is the one tool with a richer sync today: its own detail (see
-// features/chat/tool.ts's ChatScreenDetail) says not just "Chat is open"
+// Gemini is the one tool with a richer sync today: its own detail (see
+// features/chat/tool.ts's ChatScreenDetail) says not just "Gemini is open"
 // but which depth and which session, so the companion can jump straight to
 // reading the live conversation instead of always landing on the picker.
 // Every other tool only gets the baseline "this tool's page is open" sync,
@@ -130,7 +131,7 @@ async function syncToGlassesScreen(): Promise<void> {
     return
   }
 
-  if (screen.name === 'Chat') {
+  if (screen.name === 'Gemini') {
     const detail = screen.detail as ChatScreenDetail | undefined
     if (detail?.depth === 'conversation' && detail.sessionId) {
       const found = (await chatSessions.readAll()).find(s => s.id === detail.sessionId)
@@ -245,7 +246,7 @@ function formatWhen(ms: number): string {
 // a direct payoff of the glasses-to-companion sync built earlier.
 function isLiveOnGlasses(sessionId: string): boolean {
   const screen = getCurrentScreen()
-  if (screen.kind !== 'tool' || screen.name !== 'Chat') return false
+  if (screen.kind !== 'tool' || screen.name !== 'Gemini') return false
   const detail = screen.detail as ChatScreenDetail | undefined
   return detail?.depth === 'conversation' && detail.sessionId === sessionId
 }

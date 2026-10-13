@@ -104,19 +104,6 @@ export type Tool = {
   // leave to the launcher.
   onConfirmedExit?(): 'menu' | 'tool'
 
-  // Double-tap's answer when there is nothing to lose by backing out, so no
-  // leave prompt is warranted at all - unlike confirmOnExit/onConfirmedExit,
-  // which exist for a tool like Teleprompter where leaving mid-read is worth
-  // asking about first. Checked BEFORE confirmOnExit, and when present takes
-  // over double-tap entirely for this tool: a tool with internal depth and
-  // nothing precious to protect (Chat's picker vs. an open conversation -
-  // every exchange is already saved to storage the moment it happens, so
-  // there is nothing a prompt would be protecting) returns 'tool' to step
-  // back one level, or 'menu' once there is no further level left. Called
-  // BEFORE the shell rebuilds, same as onListSelect and onConfirmedExit, so
-  // the tool should update its own depth first.
-  onBack?(): 'menu' | 'tool'
-
   // The page is now on screen. Start subscriptions and timers here rather than in
   // initialContent, because anything that updates the content area needs the
   // container to exist first.

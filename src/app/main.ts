@@ -69,6 +69,8 @@ import {
 import {
   finishListening as finishChatListening,
   isListening as isChatListening,
+  canRetry as canRetryChat,
+  retry as retryChat,
 } from '../features/chat/tool'
 import { getApiKey as getGeminiApiKey } from '../core/geminiSettings'
 import { formatDuration } from '../shared/duration'
@@ -185,8 +187,8 @@ function cancelConfirm(index: number) {
   })
 }
 
-// Rebuilds the same tool slot in place rather than leaving it - what both
-// "Yes" on a leave prompt and a tool's own onBack use once they have decided
+// Rebuilds the same tool slot in place rather than leaving it - what "Yes"
+// on a leave prompt uses once a tool's own onConfirmedExit has decided
 // double-tap means "step back one level", not "exit". The tool's own state
 // (depth, selection, whatever) is assumed already updated by the caller
 // before this runs, same as any other rebuild triggered by a tool's own hook.
@@ -850,22 +852,29 @@ const unsubscribe = bridge.onEvenHubEvent(event => {
     }
   }
 
-  // Chat ends its own recording on a single tap, not a double-press like
-  // Jarvis - per direct request, double-tap felt wrong here. Checked before
-  // the isDoubleTap branch below for the same reason as Jarvis's carve-out
-  // above: this must not fall through to the universal "tap does nothing on
-  // a text screen" default. isDoubleTap is excluded explicitly so a genuine
-  // double-tap still falls through to the normal "leave" behaviour below
-  // rather than also being read as "stop listening" - only intercepted
-  // while actually listening, so a tap on a conversation that is just
-  // sitting there read does nothing instead of trying to stop a recording
-  // that was never started.
+  // Gemini (the chat tool - renamed from "Chat") gives a single tap two
+  // meanings, neither of which is "leave" - per direct request, double-tap
+  // felt wrong for ending a recording, and re-speaking a question just to
+  // retry after a Gemini failure is the wrong recovery path. Checked
+  // before the isDoubleTap branch below for the same reason as Jarvis's
+  // carve-out above: this must not fall through to the universal "tap
+  // does nothing on a text screen" default. isDoubleTap is excluded
+  // explicitly so a genuine double-tap still falls through to the normal
+  // leave-confirmation behaviour below. Listening takes priority over
+  // retry - canRetryChat() can only be true when NOT listening anyway
+  // (see features/chat/tool.ts's lastErrorQuestion lifecycle), so the
+  // order here does not actually matter, but checking the active state
+  // first reads more naturally.
   const isSingleTap =
     !isDoubleTap &&
     (sysType === OsEventTypeList.CLICK_EVENT || textType === OsEventTypeList.CLICK_EVENT)
-  if (isSingleTap && screen.kind === 'tool' && TOOLS[screen.index].name === 'Chat') {
+  if (isSingleTap && screen.kind === 'tool' && TOOLS[screen.index].name === 'Gemini') {
     if (isChatListening()) {
       finishChatListening()
+      return
+    }
+    if (canRetryChat()) {
+      retryChat()
       return
     }
   }
@@ -873,20 +882,6 @@ const unsubscribe = bridge.onEvenHubEvent(event => {
   if (isDoubleTap) {
     if (screen.kind === 'tool') {
       const tool = TOOLS[screen.index]
-      // onBack, when a tool declares it, takes over double-tap entirely for
-      // that tool - no leave prompt either way, since the whole point of
-      // this hook is "nothing here needs asking about" (see core/tool.ts).
-      // confirmOnExit is only checked for a tool that has NOT declared
-      // onBack, same as before this existed.
-      if (tool.onBack) {
-        const destination = tool.onBack()
-        if (destination === 'tool') {
-          rebuildToolInPlace(tool, screen.index)
-        } else {
-          returnToMenu()
-        }
-        return
-      }
       if (tool.confirmOnExit?.()) {
         enterConfirm(tool)
         return
@@ -994,7 +989,7 @@ const unsubscribe = bridge.onEvenHubEvent(event => {
   // release itself, only the start.
   if (sysType === OsEventTypeList.LONG_PRESS_EVENT) {
     const name = activeTool()?.name
-    if (name === 'Lab' || name === 'Chat') {
+    if (name === 'Lab' || name === 'Gemini') {
       activeTool()?.onLongPress?.()
     } else {
       enterJarvis()

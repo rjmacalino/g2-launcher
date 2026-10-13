@@ -17,13 +17,14 @@ import type { Tool } from '../../core/tool'
 //
 // Two depths, same shape as Notes/Teleprompter's own picker/detail split:
 // 'picker' lists "New chat" plus every saved session by title, 'conversation'
-// is the transcript. Unlike Teleprompter, there is no confirmOnExit/leave
-// prompt here - nothing is lost by backing out, since each exchange is
-// saved to storage the moment Gemini answers, not in a single batch on
-// exit. Double-tap still steps back one level before leaving entirely,
-// matching what "back" means everywhere else in this app - just through
-// onBack (see core/tool.ts) rather than the confirm-prompt dance, since
-// there is nothing here worth asking about first.
+// is the transcript. Same confirm-before-leaving convention as
+// Teleprompter, per direct request to always follow it consistently:
+// double-tap always backs up exactly one level, and always asks first,
+// regardless of whether anything would actually be lost (everything here
+// is already saved to storage the moment it happens - the prompt is about
+// "did you mean that", not "is data at risk"). See confirmOnExit,
+// confirmPrompt and onConfirmedExit below, which mirror Teleprompter's own
+// implementation exactly.
 //
 // Voice capture is local to this tool, not global like Jarvis's: long press
 // only starts listening HERE while Chat's own conversation screen is
@@ -65,6 +66,20 @@ export function isListening(): boolean {
   return listening
 }
 
+// The question Gemini most recently failed to answer, so a single tap can
+// retry it without making the wearer re-record the same thing - per
+// direct request, re-speaking a question just to get the same network
+// error again is the wrong recovery path. null whenever there is nothing
+// to retry: cleared on a successful answer, on leaving the conversation
+// (onBack), on picking a different session, and before starting a fresh
+// recording - a retry only ever means "try this exact failed question
+// again", never "retry whatever happens to be last".
+let lastErrorQuestion: string | null = null
+
+export function canRetry(): boolean {
+  return lastErrorQuestion !== null
+}
+
 // What companion/main.ts reads back out of core/currentScreen.ts's opaque
 // `detail` field to decide what the companion's own, richer Chat view
 // should show - exported as a type so companion can read it with no
@@ -88,7 +103,7 @@ function publishScreen(): void {
     depth === 'picker'
       ? { depth: 'picker' }
       : { depth: 'conversation', sessionId: currentSessionId }
-  setCurrentScreen({ kind: 'tool', name: 'Chat', detail })
+  setCurrentScreen({ kind: 'tool', name: 'Gemini', detail })
 }
 
 // List containers have a firmware hard limit of 20 items (docs/platform.md).
@@ -249,6 +264,10 @@ function startThinkingAnimation(question: string, mySession: number): () => void
 async function beginListening() {
   const mySession = ++sessionToken
   listening = true
+  // A new recording means a new question, not a retry of the old one -
+  // once the wearer starts speaking again, whatever failed before is no
+  // longer what a tap should resend.
+  lastErrorQuestion = null
   const ok = await start(() => {
     if (mySession !== sessionToken) return
     finishListening()
@@ -260,6 +279,66 @@ async function beginListening() {
     return
   }
   setContent(`${LIVE_MARKER}Listening...\n\n(tap when done)`)
+}
+
+// Sends currentMessages (already ending with the question to answer - see
+// the two callers below) to Gemini and renders whatever comes back. Shared
+// by finishListening (a fresh question, just appended) and retry (the same
+// failed question, already sitting at the end of currentMessages from the
+// first attempt - NOT re-appended, that would duplicate it in history).
+// question is passed separately only for what to show while waiting and on
+// a repeat failure; the actual request body is currentMessages itself.
+async function askGemini(question: string, mySession: number) {
+  const apiKey = await getGeminiApiKey()
+  if (mySession !== sessionToken) return
+  if (!apiKey) {
+    setContent(
+      'No Gemini API key set up yet.\n\n' +
+        'Add one on the companion page (Gemini or Jarvis), then try again.',
+    )
+    return
+  }
+
+  // Shows the question immediately, before Gemini has answered, rather than
+  // leaving the wearer staring at the old screen during the wait, and
+  // keeps showing something is happening with a cycling ". .. ..." rather
+  // than a static word - safe to animate, unlike live captions (see the
+  // Jarvis history this session): this is a fixed, short string on a
+  // timer, not Whisper inference running repeatedly on the main thread, so
+  // there is nothing here that can block input processing the way that did.
+  // Stops itself the moment this session goes stale (closed/suspended
+  // while waiting), so a tick never lands on a container that moved on.
+  const stopThinkingAnimation = startThinkingAnimation(question, mySession)
+
+  // concise: false - this is Chat's whole point, a real conversation read by
+  // scrolling, not Jarvis's glance-and-go fallback. See core/gemini.ts.
+  const reply = await converse(apiKey, toGeminiTurns(currentMessages), false)
+  stopThinkingAnimation()
+  if (mySession !== sessionToken) return
+
+  if (reply.kind === 'error') {
+    lastErrorQuestion = question
+    setContent(
+      clampToBudget(
+        `You: ${question}${DIVIDER}Couldn't reach Gemini (${reply.message}).` +
+          '\n\n(tap to retry, double-tap to go back)',
+        LIVE_CHAR_BUDGET,
+      ),
+    )
+    return
+  }
+
+  lastErrorQuestion = null
+  const answer: ChatMessage = { role: 'model', text: reply.text, timestamp: Date.now() }
+  const sessionAfterAnswer = await chatSessions.appendMessage(currentSessionId, answer)
+  if (mySession !== sessionToken) return
+  currentSessionTitle = sessionAfterAnswer.title
+  currentMessages = sessionAfterAnswer.messages
+  setContent(renderConversation(LIVE_CHAR_BUDGET))
+  // Republishes the same session id - still worth it, since the companion
+  // page re-fetches on every publish and this is the moment the full
+  // answer actually lands in storage for it to read.
+  publishScreen()
 }
 
 // Ends the current recording, transcribes it, and sends the WHOLE
@@ -280,33 +359,9 @@ export async function finishListening() {
     return
   }
 
-  const apiKey = await getGeminiApiKey()
-  if (mySession !== sessionToken) return
-  if (!apiKey) {
-    setContent(
-      'No Gemini API key set up yet.\n\n' +
-        'Add one on the companion page (Chat or Jarvis), then try again.',
-    )
-    return
-  }
-
-  // Shows the question immediately, before Gemini has answered, rather than
-  // leaving the wearer staring at the old screen during the wait, and
-  // keeps showing something is happening with a cycling ". .. ..." rather
-  // than a static word - safe to animate, unlike live captions (see the
-  // Jarvis history this session): this is a fixed, short string on a
-  // timer, not Whisper inference running repeatedly on the main thread, so
-  // there is nothing here that can block input processing the way that did.
-  // Stops itself the moment this session goes stale (closed/suspended
-  // while waiting), so a tick never lands on a container that moved on.
-  const stopThinkingAnimation = startThinkingAnimation(result.transcript, mySession)
-
   const question: ChatMessage = { role: 'user', text: result.transcript, timestamp: Date.now() }
   const sessionAfterQuestion = await chatSessions.appendMessage(currentSessionId, question)
-  if (mySession !== sessionToken) {
-    stopThinkingAnimation()
-    return
-  }
+  if (mySession !== sessionToken) return
   currentSessionId = sessionAfterQuestion.id
   currentSessionTitle = sessionAfterQuestion.title
   currentMessages = sessionAfterQuestion.messages
@@ -315,32 +370,22 @@ export async function finishListening() {
   // it exists, rather than only once Gemini has actually answered.
   publishScreen()
 
-  // concise: false - this is Chat's whole point, a real conversation read by
-  // scrolling, not Jarvis's glance-and-go fallback. See core/gemini.ts.
-  const reply = await converse(apiKey, toGeminiTurns(currentMessages), false)
-  stopThinkingAnimation()
-  if (mySession !== sessionToken) return
+  await askGemini(result.transcript, mySession)
+}
 
-  if (reply.kind === 'error') {
-    setContent(
-      clampToBudget(
-        `You: ${result.transcript}${DIVIDER}Couldn't reach Gemini (${reply.message}).`,
-        LIVE_CHAR_BUDGET,
-      ),
-    )
-    return
-  }
-
-  const answer: ChatMessage = { role: 'model', text: reply.text, timestamp: Date.now() }
-  const sessionAfterAnswer = await chatSessions.appendMessage(currentSessionId, answer)
-  if (mySession !== sessionToken) return
-  currentSessionTitle = sessionAfterAnswer.title
-  currentMessages = sessionAfterAnswer.messages
-  setContent(renderConversation(LIVE_CHAR_BUDGET))
-  // Republishes the same session id - still worth it, since the companion
-  // page re-fetches on every publish and this is the moment the full
-  // answer actually lands in storage for it to read.
-  publishScreen()
+// Tries the SAME question again with no new recording, triggered by a
+// single tap on the Gemini-error screen (see app/main.ts's isSingleTap
+// carve-out) - per direct request, re-speaking a question just to hit the
+// same network error again is the wrong recovery path. currentMessages
+// already ends with the unanswered question from the first attempt (see
+// finishListening above), so this calls askGemini directly rather than
+// going through finishListening - appending the question again would
+// duplicate it in history.
+export async function retry() {
+  if (lastErrorQuestion === null) return
+  const question = lastErrorQuestion
+  const mySession = ++sessionToken
+  await askGemini(question, mySession)
 }
 
 function stopListeningIfAny() {
@@ -352,7 +397,16 @@ function stopListeningIfAny() {
 }
 
 export const chatTool: Tool = {
-  name: 'Chat',
+  name: 'Gemini',
+  // Always, in both the picker and a conversation, per direct request to
+  // follow the same convention Teleprompter already settled on: an
+  // accidental double-tap should be double-checked no matter which screen
+  // it happens on, regardless of whether anything would actually be lost.
+  confirmOnExit: () => true,
+  // Matches onConfirmedExit's own logic exactly, same reasoning as
+  // Teleprompter's own pair of these two: one describes what pressing Yes
+  // says, the other is what it does.
+  confirmPrompt: () => (depth === 'conversation' ? 'Leave this conversation?' : 'Leave Gemini?'),
   beforeOpen: refresh,
   contentKind: () => (depth === 'picker' ? 'list' : 'text'),
   listItems: () => ['New chat', ...pickerSessions.map(s => s.title)],
@@ -370,13 +424,14 @@ export const chatTool: Tool = {
       currentSessionTitle = picked.title
     }
     depth = 'conversation'
+    lastErrorQuestion = null
     publishScreen()
   },
   // Re-asserts this tool's own detail after the shell's generic baseline
   // publish (see app/main.ts's setCurrentScreen calls in openTool/restore,
   // both of which call onOpen AFTER that baseline) - onListSelect and
-  // onBack publish their own detail directly and need no help, since
-  // nothing the shell does between them and their rebuild touches
+  // onConfirmedExit publish their own detail directly and need no help,
+  // since nothing the shell does between them and their rebuild touches
   // currentScreen at all; a fresh open is the one path with no such hook
   // of its own until now.
   onOpen: publishScreen,
@@ -384,13 +439,15 @@ export const chatTool: Tool = {
     if (depth !== 'conversation' || listening) return
     beginListening()
   },
-  // Double-tap steps back to the picker from a conversation, same as
-  // "back" everywhere else in this app, rather than jumping straight past
-  // it to the launcher menu - see core/tool.ts. No leave prompt: stops a
+  // Confirming "leave" backs up exactly one level, matching what "back"
+  // means everywhere else in this app and exactly mirroring Teleprompter's
+  // own onConfirmedExit: from a conversation, Yes steps back to the
+  // picker rather than leaving Gemini entirely; from the picker itself,
+  // there is nowhere shallower left, so Yes really does leave. Stops a
   // recording in progress if there was one (same cleanup onClose/onSuspend
-  // already do), syncs the picker so it reflects whatever was just said
-  // (see syncPickerFromCurrent above), and steps back one level.
-  onBack: () => {
+  // already do), and syncs the picker so it reflects whatever was just
+  // said (see syncPickerFromCurrent above).
+  onConfirmedExit: () => {
     if (depth !== 'conversation') return 'menu'
     stopListeningIfAny()
     syncPickerFromCurrent()
@@ -398,6 +455,7 @@ export const chatTool: Tool = {
     currentSessionId = null
     currentMessages = []
     currentSessionTitle = null
+    lastErrorQuestion = null
     publishScreen()
     return 'tool'
   },
