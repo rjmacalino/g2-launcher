@@ -16,13 +16,13 @@ import type { Tool } from '../../core/tool'
 //
 // Two depths, same shape as Notes/Teleprompter's own picker/detail split:
 // 'picker' lists "New chat" plus every saved session by title, 'conversation'
-// is the transcript. Unlike those two, there is no confirmOnExit here -
-// nothing is lost by leaving, since each exchange is saved to storage the
-// moment Gemini answers, not in a single batch on exit. Double-tap always
-// goes straight to the menu rather than stepping back to the picker first;
-// accepted as the simpler shape, matching Jarvis's own "no intermediate
-// confirm, no step-back" precedent, over building a second navigation level
-// for a "back to the chat list" nicety nothing has asked for yet.
+// is the transcript. Unlike Teleprompter, there is no confirmOnExit/leave
+// prompt here - nothing is lost by backing out, since each exchange is
+// saved to storage the moment Gemini answers, not in a single batch on
+// exit. Double-tap still steps back one level before leaving entirely,
+// matching what "back" means everywhere else in this app - just through
+// onBack (see core/tool.ts) rather than the confirm-prompt dance, since
+// there is nothing here worth asking about first.
 //
 // Voice capture is local to this tool, not global like Jarvis's: long press
 // only starts listening HERE while Chat's own conversation screen is
@@ -50,6 +50,13 @@ let pickerSessions: ChatSession[] = []
 let currentSessionId: string | null = null
 let currentMessages: ChatMessage[] = []
 
+// Mirrors chatSessions.appendMessage's own title choice (see store.ts) for
+// whichever session is currently open, so onBack can fold it back into
+// pickerSessions without an async storage read - onBack runs synchronously,
+// same requirement as onListSelect (see the Tool interface). Stays null
+// until the first exchange actually creates or touches a session.
+let currentSessionTitle: string | null = null
+
 let sessionToken = 0
 let listening = false
 
@@ -62,15 +69,38 @@ async function refresh(): Promise<void> {
   depth = 'picker'
   currentSessionId = null
   currentMessages = []
+  currentSessionTitle = null
 }
 
-// Newest first, not oldest first - a real platform constraint, not a design
-// preference: text containers have no programmatic scroll position (see
-// docs/platform.md), and any content update resets scroll to the top. The
-// only way "the latest exchange is what you see by default" can actually be
-// true here is for it to BE the top. Older messages are still there, a
-// swipe-down away instead of a swipe-up, up to the budget below.
+// Folds the currently open session back into pickerSessions in memory, no
+// storage read needed - every exchange is already written to storage the
+// moment it happens (see chatSessions.appendMessage in store.ts), this just
+// keeps the in-memory picker list from showing stale data (a missing new
+// session, or an old title/position) on the way back to it. Called from
+// onBack, which must be synchronous (same requirement as onListSelect), so
+// this cannot simply re-run refresh()'s own async readAll.
+function syncPickerFromCurrent(): void {
+  if (currentSessionId === null) return
+  const updated: ChatSession = {
+    id: currentSessionId,
+    title: currentSessionTitle ?? '(untitled)',
+    messages: currentMessages,
+    updatedAt: Date.now(),
+  }
+  const index = pickerSessions.findIndex(s => s.id === currentSessionId)
+  const withoutCurrent =
+    index === -1 ? pickerSessions : pickerSessions.filter((_, i) => i !== index)
+  pickerSessions = [updated, ...withoutCurrent]
+}
 
+// Only the latest exchange, not the running history - per direct request,
+// after older messages were still eating most of the room Gemini's own
+// (now much longer) answer needed. The glasses screen shows the question
+// that produced the CURRENT answer and that answer, nothing further back;
+// the full history, every older exchange included, is what the companion
+// page's chat-view is for (see companion/main.ts) - a real browser view
+// with no size limit at all, unlike this one.
+//
 // The firmware rejects a text container update outright past its own hard
 // character ceiling (docs/platform.md: 1000 chars on create/rebuild, 2000 on
 // textContainerUpgrade). initialContent and every later setContent() call
@@ -78,39 +108,34 @@ async function refresh(): Promise<void> {
 // the one that has to hold everywhere it's used. Left under 1000 rather than
 // riding right up to it, since this is a firmware figure we measured, not a
 // guarantee it is exact to the byte.
-const CONTENT_CHAR_BUDGET = 900
-const TRUNCATION_NOTE =
-  '\n\n---\n(older messages hidden - read the full conversation on the companion page)'
+const CONTENT_CHAR_BUDGET = 950
+const TRUNCATION_NOTE = '\n\n(continued - read the rest on the companion page)'
 
 function formatMessage(m: ChatMessage): string {
   return `${m.role === 'user' ? 'You' : 'Gemini'}: ${m.text}`
 }
 
-// Gemini answers are no longer kept artificially short (see
-// core/gemini.ts's full-length system instruction for Chat), so a single
-// reply can now run past what one update can carry on its own. header is
-// always the thing that must show in full if anything does - the newest
-// exchange - and only gets clamped itself in the edge case where it alone
-// already blows the whole budget. rest is everything older, included only
-// as far as it still fits, cut at a message boundary rather than mid-reply,
-// with a note pointing at the companion page's own full, unclamped history
-// (see companion/main.ts's chat-view) for the rest.
-function composeContent(header: string, rest: string): string {
-  if (header.length >= CONTENT_CHAR_BUDGET) return header.slice(0, CONTENT_CHAR_BUDGET)
-  if (rest.length === 0) return header
-  const remaining = CONTENT_CHAR_BUDGET - header.length - TRUNCATION_NOTE.length - 2
-  if (remaining <= 0) return `${header}${TRUNCATION_NOTE}`
-  if (rest.length <= remaining) return `${header}\n\n${rest}`
-  const cut = rest.slice(0, remaining)
-  const lastBreak = cut.lastIndexOf('\n\n')
-  const trimmed = lastBreak > 0 ? cut.slice(0, lastBreak) : cut
-  return `${header}\n\n${trimmed}${TRUNCATION_NOTE}`
+function clampToBudget(text: string): string {
+  if (text.length <= CONTENT_CHAR_BUDGET) return text
+  return text.slice(0, Math.max(CONTENT_CHAR_BUDGET - TRUNCATION_NOTE.length, 0)) + TRUNCATION_NOTE
 }
 
+// The last message, plus the one before it if that is the question which
+// produced it (always true in normal use - messages strictly alternate
+// user/model) - not the whole array. Handles the one case where the last
+// two entries are NOT a question-then-answer pair (picking a session whose
+// final message happens to be a user question with no reply yet, e.g. a
+// prior attempt that never got a Gemini answer) by only pairing them up
+// when the roles actually differ.
 function renderConversation(): string {
   if (currentMessages.length === 0) return 'No messages yet.\n\nLong-press to ask something.'
-  const [latest, ...older] = [...currentMessages].reverse()
-  return composeContent(formatMessage(latest), older.map(formatMessage).join('\n\n'))
+  const last = currentMessages[currentMessages.length - 1]
+  const secondLast = currentMessages[currentMessages.length - 2]
+  const parts =
+    secondLast && secondLast.role !== last.role
+      ? [formatMessage(secondLast), formatMessage(last)]
+      : [formatMessage(last)]
+  return clampToBudget(parts.join('\n\n'))
 }
 
 function toGeminiTurns(messages: readonly ChatMessage[]): GeminiTurn[] {
@@ -162,19 +187,14 @@ export async function finishListening() {
   }
 
   // Shows the question immediately, before Gemini has answered, rather than
-  // leaving the wearer staring at the old conversation during the wait -
-  // placed at the top with the rest of the history below, matching exactly
-  // where it will land once saved (see renderConversation's own newest-first
-  // reasoning above). Captured once, before the question is appended, so
-  // both this and the error path below share the same "everything prior to
-  // this exchange" history instead of recomputing it twice.
-  const priorHistory = currentMessages.map(formatMessage).join('\n\n')
-  setContent(composeContent(`You: ${result.transcript}\n\nThinking...`, priorHistory))
+  // leaving the wearer staring at the old screen during the wait.
+  setContent(clampToBudget(`You: ${result.transcript}\n\nThinking...`))
 
   const question: ChatMessage = { role: 'user', text: result.transcript, timestamp: Date.now() }
   const sessionAfterQuestion = await chatSessions.appendMessage(currentSessionId, question)
   if (mySession !== sessionToken) return
   currentSessionId = sessionAfterQuestion.id
+  currentSessionTitle = sessionAfterQuestion.title
   currentMessages = sessionAfterQuestion.messages
 
   // concise: false - this is Chat's whole point, a real conversation read by
@@ -183,15 +203,8 @@ export async function finishListening() {
   if (mySession !== sessionToken) return
 
   if (reply.kind === 'error') {
-    // Same layout as the "Thinking..." state above (question on top, older
-    // history below) rather than renderConversation()'s own ordering, which
-    // would put the error notice after the OLDER messages instead of right
-    // under the question it is actually about.
     setContent(
-      composeContent(
-        `You: ${result.transcript}\n\nCouldn't reach Gemini (${reply.message}).`,
-        priorHistory,
-      ),
+      clampToBudget(`You: ${result.transcript}\n\nCouldn't reach Gemini (${reply.message}).`),
     )
     return
   }
@@ -199,6 +212,7 @@ export async function finishListening() {
   const answer: ChatMessage = { role: 'model', text: reply.text, timestamp: Date.now() }
   const sessionAfterAnswer = await chatSessions.appendMessage(currentSessionId, answer)
   if (mySession !== sessionToken) return
+  currentSessionTitle = sessionAfterAnswer.title
   currentMessages = sessionAfterAnswer.messages
   setContent(renderConversation())
 }
@@ -221,17 +235,35 @@ export const chatTool: Tool = {
     if (index === 0) {
       currentSessionId = null
       currentMessages = []
+      currentSessionTitle = null
     } else {
       const picked = pickerSessions[index - 1]
       if (!picked) return
       currentSessionId = picked.id
       currentMessages = picked.messages
+      currentSessionTitle = picked.title
     }
     depth = 'conversation'
   },
   onLongPress: () => {
     if (depth !== 'conversation' || listening) return
     beginListening()
+  },
+  // Double-tap steps back to the picker from a conversation, same as
+  // "back" everywhere else in this app, rather than jumping straight past
+  // it to the launcher menu - see core/tool.ts. No leave prompt: stops a
+  // recording in progress if there was one (same cleanup onClose/onSuspend
+  // already do), syncs the picker so it reflects whatever was just said
+  // (see syncPickerFromCurrent above), and steps back one level.
+  onBack: () => {
+    if (depth !== 'conversation') return 'menu'
+    stopListeningIfAny()
+    syncPickerFromCurrent()
+    depth = 'picker'
+    currentSessionId = null
+    currentMessages = []
+    currentSessionTitle = null
+    return 'tool'
   },
   onClose: stopListeningIfAny,
   onSuspend: stopListeningIfAny,

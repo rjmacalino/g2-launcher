@@ -184,6 +184,22 @@ function cancelConfirm(index: number) {
   })
 }
 
+// Rebuilds the same tool slot in place rather than leaving it - what both
+// "Yes" on a leave prompt and a tool's own onBack use once they have decided
+// double-tap means "step back one level", not "exit". The tool's own state
+// (depth, selection, whatever) is assumed already updated by the caller
+// before this runs, same as any other rebuild triggered by a tool's own hook.
+function rebuildToolInPlace(tool: Tool, index: number) {
+  bridge.rebuildPageContainer(new RebuildPageContainer(toolContainers(index))).then(ok => {
+    if (ok) {
+      status(`Tool: ${tool.name}`)
+      tool.onContentReady?.()
+    } else {
+      status(`Failed to update ${tool.name}`)
+    }
+  })
+}
+
 // Yes: ask the tool where "leaving" actually goes. Most tools have no answer
 // for this and default to the menu; Teleprompter uses it to step back to its
 // own picker instead of exiting itself entirely (see onConfirmedExit in
@@ -196,14 +212,7 @@ function confirmExit(tool: Tool, index: number) {
     returnToMenu()
     return
   }
-  bridge.rebuildPageContainer(new RebuildPageContainer(toolContainers(index))).then(ok => {
-    if (ok) {
-      status(`Tool: ${tool.name}`)
-      tool.onContentReady?.()
-    } else {
-      status(`Failed to update ${tool.name}`)
-    }
-  })
+  rebuildToolInPlace(tool, index)
 }
 
 // Ceiling on the restore rebuild. Anything awaited between page creation and
@@ -807,6 +816,20 @@ const unsubscribe = bridge.onEvenHubEvent(event => {
   if (isDoubleTap) {
     if (screen.kind === 'tool') {
       const tool = TOOLS[screen.index]
+      // onBack, when a tool declares it, takes over double-tap entirely for
+      // that tool - no leave prompt either way, since the whole point of
+      // this hook is "nothing here needs asking about" (see core/tool.ts).
+      // confirmOnExit is only checked for a tool that has NOT declared
+      // onBack, same as before this existed.
+      if (tool.onBack) {
+        const destination = tool.onBack()
+        if (destination === 'tool') {
+          rebuildToolInPlace(tool, screen.index)
+        } else {
+          returnToMenu()
+        }
+        return
+      }
       if (tool.confirmOnExit?.()) {
         enterConfirm(tool)
         return

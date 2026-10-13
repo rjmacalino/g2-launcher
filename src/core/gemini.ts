@@ -96,6 +96,21 @@ async function requestOnce(
       },
       generationConfig: {
         maxOutputTokens: concise ? MAX_OUTPUT_TOKENS_CONCISE : MAX_OUTPUT_TOKENS_FULL,
+        // gemini-3.8-flash "thinks" before answering, and that thinking
+        // spends tokens out of the SAME maxOutputTokens budget as the
+        // visible reply - confirmed by symptom, not by a doc or a test with
+        // a real key: raising the cap from 120 to 350 should have produced
+        // several real sentences, but answers kept coming back only ~10
+        // words long everywhere, including the companion page, which has no
+        // display-side limit at all to blame instead. That only makes sense
+        // if most of the 350-token budget was being spent on invisible
+        // thinking tokens before the model got to the actual answer text.
+        // thinkingBudget: 0 turns thinking off - a short conversational
+        // reply has no real use for it anyway - so the whole cap goes to
+        // text that actually gets shown. Needs a real-key check to confirm,
+        // same as every other Gemini behaviour here that was not just taken
+        // from documentation.
+        thinkingConfig: { thinkingBudget: 0 },
       },
     }),
   })
