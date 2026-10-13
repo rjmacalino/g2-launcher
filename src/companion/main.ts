@@ -239,12 +239,24 @@ function formatWhen(ms: number): string {
   })
 }
 
+// Matches the glasses' own currently-open conversation, if any (see
+// core/currentScreen.ts and features/chat/tool.ts's ChatScreenDetail) -
+// this is what lets the picker point out which session is live right now,
+// a direct payoff of the glasses-to-companion sync built earlier.
+function isLiveOnGlasses(sessionId: string): boolean {
+  const screen = getCurrentScreen()
+  if (screen.kind !== 'tool' || screen.name !== 'Chat') return false
+  const detail = screen.detail as ChatScreenDetail | undefined
+  return detail?.depth === 'conversation' && detail.sessionId === sessionId
+}
+
 function chatRow(session: ChatSession): string {
   const title = escapeHtml(session.title || '(untitled)')
   const count = session.messages.length
+  const live = isLiveOnGlasses(session.id)
   return `
-    <li class="item" data-id="${escapeHtml(session.id)}">
-      <div class="item-title">${title}</div>
+    <li class="item" data-id="${escapeHtml(session.id)}" data-title="${title}">
+      <div class="item-title">${title}${live ? ' <span class="badge">Live on glasses</span>' : ''}</div>
       <div class="item-sub">${count} message${count === 1 ? '' : 's'} - ${formatWhen(session.updatedAt)}</div>
       <div class="item-actions">
         <button class="open">Open</button>
@@ -289,7 +301,16 @@ async function renderChatList() {
       render()
     })
 
+    // Deleting a conversation is permanent and, unlike Notes or Scripts,
+    // this is the ONLY place it can happen at all - the glasses never get
+    // a delete gesture for Chat (see docs/roadmap.md principle 5, it would
+    // collide with the long-press-to-ask gesture there). One accidental
+    // tap here loses history nowhere else can recover, which is worth a
+    // native confirm() for - no custom dialog needed, the companion is
+    // already a real browser.
     el.querySelector('.delete')?.addEventListener('click', async () => {
+      const title = el.dataset.title || 'this conversation'
+      if (!window.confirm(`Delete "${title}"? This cannot be undone.`)) return
       await chatSessions.remove(id)
       render()
     })
@@ -320,9 +341,23 @@ function renderChatView(session: ChatSession) {
     </div>
   `
 
+  // Opens on the newest message, not the oldest - the glasses screen
+  // already shows the latest exchange by default (see
+  // features/chat/tool.ts's own newest-first reasoning); the companion's
+  // full, oldest-first transcript should land the reader in the same
+  // place, not make them scroll down through everything first. #companion
+  // (this element) is the actual scroll container - see index.html's
+  // overflow-y: auto on it, not body.
+  root.scrollTop = root.scrollHeight
+
   attachBack({ kind: 'chat-list' })
 
+  // Same reasoning as the picker's own delete (see chatRow above) - this
+  // is permanent, and the glasses have no equivalent action to fall back
+  // on, so a confirm is worth the one extra tap.
   root.querySelector('.delete')?.addEventListener('click', async () => {
+    if (!window.confirm(`Delete "${session.title || 'this conversation'}"? This cannot be undone.`))
+      return
     await chatSessions.remove(session.id)
     view = { kind: 'chat-list' }
     render()
