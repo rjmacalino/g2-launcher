@@ -221,6 +221,28 @@ function confirmExit(tool: Tool, index: number) {
 // and root double-tap does nothing, which is the documented rejection trigger.
 const RESTORE_REBUILD_TIMEOUT_MS = 5000
 
+// Same ceiling, for a tool's own beforeOpen - awaited in openTool (and the
+// restore path above) before the container is even built, with nothing
+// bounding how long that wait can run. Found the hard way [HW]: Chat's own
+// beforeOpen reads one storage key holding every saved session as a single
+// JSON blob (see features/chat/store.ts), and once that grew large enough,
+// tapping Chat did NOTHING AT ALL - not even a "Failed to open" status,
+// because the await never returned to reach the code that would have shown
+// one. The real fix is bounding that blob (store.ts now prunes old
+// sessions on every write); this is the generic backstop so the SAME
+// silent hang, from this or any future tool's beforeOpen, fails loudly
+// instead of looking like a dead launcher entry with no error anywhere to
+// explain why.
+function beforeOpenWithTimeout(tool: Tool): Promise<boolean> {
+  if (!tool.beforeOpen) return Promise.resolve(true)
+  return Promise.race([
+    tool.beforeOpen().then(() => true),
+    new Promise<boolean>(resolve => {
+      setTimeout(() => resolve(false), RESTORE_REBUILD_TIMEOUT_MS)
+    }),
+  ]).catch(() => false)
+}
+
 // --- Pages ----------------------------------------------------------------
 //
 // Every page is the status bar plus exactly one content container. The bar is
@@ -439,7 +461,13 @@ async function openTool(index: number) {
   // Awaited before the page is built, so contentKind/listItems/initialContent
   // (all synchronous, see core/tool.ts) have current data the instant they run.
   // Teleprompter uses this to read the latest saved scripts for its picker.
-  await tool.beforeOpen?.()
+  // Bounded (see beforeOpenWithTimeout above) so a stuck read fails loudly
+  // instead of leaving the tap looking like it did nothing at all.
+  const ready = await beforeOpenWithTimeout(tool)
+  if (!ready) {
+    status(`Failed to open ${tool.name}`)
+    return
+  }
 
   bridge.rebuildPageContainer(new RebuildPageContainer(toolContainers(index))).then(ok => {
     if (ok) {
@@ -553,14 +581,18 @@ if (
   const tool = TOOLS[restoredScreen.index]
   // Same reason as openTool: contentKind/listItems/initialContent need fresh
   // data before toolContainers reads them, and this is the other place that
-  // reads them.
-  await tool.beforeOpen?.()
-  const ok = await Promise.race([
-    bridge.rebuildPageContainer(new RebuildPageContainer(toolContainers(restoredScreen.index))),
-    new Promise<boolean>(resolve => {
-      setTimeout(() => resolve(false), RESTORE_REBUILD_TIMEOUT_MS)
-    }),
-  ])
+  // reads them. Bounded the same way (see beforeOpenWithTimeout) - this is
+  // cold start, before the menu has even settled, so a hang here is the
+  // worst place for one to go unnoticed.
+  const beforeOpenReady = await beforeOpenWithTimeout(tool)
+  const ok =
+    beforeOpenReady &&
+    (await Promise.race([
+      bridge.rebuildPageContainer(new RebuildPageContainer(toolContainers(restoredScreen.index))),
+      new Promise<boolean>(resolve => {
+        setTimeout(() => resolve(false), RESTORE_REBUILD_TIMEOUT_MS)
+      }),
+    ]))
   if (ok) {
     screen = restoredScreen
     status(`Restored: ${tool.name}`)

@@ -49,6 +49,24 @@ const STORAGE_KEY = 'chat.sessions'
 // features/notes/store.ts) - a list item holds at most 64 characters.
 const TITLE_MAX_CHARS = 64
 
+// Every session's FULL message history lives in this one storage key as a
+// single JSON blob (see readAllSessions/writeAllSessions below) - there is
+// no per-session key, no pagination, nothing bounding how big that blob can
+// get on its own. Confirmed the hard way [HW]: after enough real testing,
+// Chat stopped opening at all, with no error anywhere to explain why -
+// features/chat/tool.ts's own picker was already capped at 19 *displayed*
+// items by that point, which did not help, and the fix that did was
+// deleting every saved session, which only makes sense if something about
+// reading or writing that one blob back was failing once it grew large
+// enough (most likely the bridge's own local-storage read/write, which
+// nothing here has a documented size limit for). Pruning the oldest
+// sessions here, on every write, keeps that blob bounded permanently
+// instead of trusting it to stay small. The companion page's own
+// chat-view still reads whatever is left under this cap; nothing about
+// this changes what a session looks like once saved, only how many can
+// pile up before the oldest start getting dropped.
+const MAX_STORED_SESSIONS = 40
+
 async function readAllSessions(): Promise<ChatSession[]> {
   try {
     const raw = await bridge.getLocalStorage(STORAGE_KEY)
@@ -60,8 +78,14 @@ async function readAllSessions(): Promise<ChatSession[]> {
   }
 }
 
+// Pruned to MAX_STORED_SESSIONS here, the one place every write goes
+// through, rather than in each caller - keeps the oldest-first drop rule in
+// exactly one place regardless of which path (a new session, an existing
+// one growing by a message, a future bulk import) produced the array being
+// saved.
 function writeAllSessions(all: ChatSession[]): Promise<boolean> {
-  return bridge.setLocalStorage(STORAGE_KEY, JSON.stringify(all)).then(ok => {
+  const bounded = [...all].sort((a, b) => b.updatedAt - a.updatedAt).slice(0, MAX_STORED_SESSIONS)
+  return bridge.setLocalStorage(STORAGE_KEY, JSON.stringify(bounded)).then(ok => {
     if (!ok) status('Failed to save chat history')
     return ok
   })
