@@ -160,6 +160,24 @@ const ENTRY_CHAR_BUDGET = 900
 const LIVE_CHAR_BUDGET = 1900
 const TRUNCATION_NOTE = '\n\n(continued - read the rest on the companion page)'
 
+// A short horizontal rule between the question and the answer - U+2500,
+// confirmed available in the firmware font (docs/platform.md's glyph
+// table). A blank line alone looks identical to a paragraph break INSIDE a
+// longer answer, which makes a multi-paragraph reply hard to tell apart
+// from the question above it; this divider is the one mark on screen that
+// only ever means "new speaker", never "new paragraph". Kept short (12
+// chars) rather than spanning the line - a measured, intentional rule
+// reads more clearly at this size than a long one that may not even line
+// up with the text's own wrapped width, which this app has no way to
+// measure exactly (see docs/platform.md, proportional font).
+const DIVIDER = '\n\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\n'
+
+// U+25CF, also confirmed available - a small filled-circle marker that
+// means "something is actively happening" (recording, waiting on a
+// reply), distinct from the plain text used once something has actually
+// finished and is just sitting on screen to be read.
+const LIVE_MARKER = '\u25CF '
+
 function formatMessage(m: ChatMessage): string {
   return `${m.role === 'user' ? 'You' : 'Gemini'}: ${m.text}`
 }
@@ -184,7 +202,7 @@ function renderConversation(budget: number): string {
     secondLast && secondLast.role !== last.role
       ? [formatMessage(secondLast), formatMessage(last)]
       : [formatMessage(last)]
-  return clampToBudget(parts.join('\n\n'), budget)
+  return clampToBudget(parts.join(DIVIDER), budget)
 }
 
 function toGeminiTurns(messages: readonly ChatMessage[]): GeminiTurn[] {
@@ -206,7 +224,10 @@ function startThinkingAnimation(question: string, mySession: number): () => void
   let frame = 0
   const renderFrame = () => {
     setContent(
-      clampToBudget(`You: ${question}\n\nThinking${THINKING_FRAMES[frame]}`, LIVE_CHAR_BUDGET),
+      clampToBudget(
+        `You: ${question}${DIVIDER}${LIVE_MARKER}Thinking${THINKING_FRAMES[frame]}`,
+        LIVE_CHAR_BUDGET,
+      ),
     )
     frame = (frame + 1) % THINKING_FRAMES.length
   }
@@ -238,7 +259,7 @@ async function beginListening() {
     setContent('Could not start the glasses microphone.\n\nLong-press to try again.')
     return
   }
-  setContent('Listening...\n\n(tap when done)')
+  setContent(`${LIVE_MARKER}Listening...\n\n(tap when done)`)
 }
 
 // Ends the current recording, transcribes it, and sends the WHOLE
@@ -303,7 +324,7 @@ export async function finishListening() {
   if (reply.kind === 'error') {
     setContent(
       clampToBudget(
-        `You: ${result.transcript}\n\nCouldn't reach Gemini (${reply.message}).`,
+        `You: ${result.transcript}${DIVIDER}Couldn't reach Gemini (${reply.message}).`,
         LIVE_CHAR_BUDGET,
       ),
     )
