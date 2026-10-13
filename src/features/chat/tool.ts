@@ -64,8 +64,19 @@ export function isListening(): boolean {
   return listening
 }
 
+// List containers have a firmware hard limit of 20 items (docs/platform.md).
+// "New chat" is always the first row, leaving 19 for saved sessions - after
+// enough testing/real use to pass that count, listItems() returning more
+// than 20 total made the firmware reject the rebuild outright, which looked
+// like Chat silently refusing to open at all [HW], not like a list that
+// needed trimming. Only the picker is capped; nothing is deleted, and the
+// companion page's own chat-view (see companion/main.ts) has no such limit
+// and still shows every session.
+const PICKER_MAX_SESSIONS = 19
+
 async function refresh(): Promise<void> {
-  pickerSessions = (await chatSessions.readAll()).sort((a, b) => b.updatedAt - a.updatedAt)
+  const all = (await chatSessions.readAll()).sort((a, b) => b.updatedAt - a.updatedAt)
+  pickerSessions = all.slice(0, PICKER_MAX_SESSIONS)
   depth = 'picker'
   currentSessionId = null
   currentMessages = []
@@ -90,7 +101,12 @@ function syncPickerFromCurrent(): void {
   const index = pickerSessions.findIndex(s => s.id === currentSessionId)
   const withoutCurrent =
     index === -1 ? pickerSessions : pickerSessions.filter((_, i) => i !== index)
-  pickerSessions = [updated, ...withoutCurrent]
+  // Capped the same way refresh() is (see PICKER_MAX_SESSIONS above) - a
+  // brand new session landing here via "New chat" could otherwise push the
+  // in-memory list back past the firmware's 20-item limit without a full
+  // tool reopen (which is the only other place this gets capped) ever
+  // running to catch it.
+  pickerSessions = [updated, ...withoutCurrent].slice(0, PICKER_MAX_SESSIONS)
 }
 
 // Only the latest exchange, not the running history - per direct request,
