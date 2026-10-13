@@ -95,29 +95,35 @@ function syncPickerFromCurrent(): void {
 
 // Only the latest exchange, not the running history - per direct request,
 // after older messages were still eating most of the room Gemini's own
-// (now much longer) answer needed. The glasses screen shows the question
-// that produced the CURRENT answer and that answer, nothing further back;
-// the full history, every older exchange included, is what the companion
-// page's chat-view is for (see companion/main.ts) - a real browser view
-// with no size limit at all, unlike this one.
+// answer needed. The glasses screen shows the question that produced the
+// CURRENT answer and that answer, nothing further back; the full history,
+// every older exchange included, is what the companion page's chat-view is
+// for (see companion/main.ts) - a real browser view with no size limit at
+// all, unlike this one.
 //
-// The firmware rejects a text container update outright past its own hard
-// character ceiling (docs/platform.md: 1000 chars on create/rebuild, 2000 on
-// textContainerUpgrade). initialContent and every later setContent() call
-// share this one renderConversation(), so the stricter of the two limits is
-// the one that has to hold everywhere it's used. Left under 1000 rather than
-// riding right up to it, since this is a firmware figure we measured, not a
-// guarantee it is exact to the byte.
-const CONTENT_CHAR_BUDGET = 950
+// Two budgets, not one, because the firmware's own hard character ceiling
+// (docs/platform.md) is NOT the same for every call: 1000 on create/rebuild
+// (what initialContent feeds into), 2000 on a later textContainerUpgrade
+// (what every setContent() call during an active session uses). Using the
+// stricter number everywhere would cut an answer in half for no reason on
+// every call except the very first one. Both numbers are left with a little
+// margin rather than riding right up to the measured figure, since this is
+// a firmware limit we measured, not a guarantee it is exact to the byte.
+// Per direct request, this is meant to let an answer run as long as it
+// actually needs and be read by scrolling, not be cut short on purpose -
+// LIVE_CHAR_BUDGET is set as close to the real 2000-char ceiling as that
+// margin allows, which is what every answer actually renders through.
+const ENTRY_CHAR_BUDGET = 900
+const LIVE_CHAR_BUDGET = 1900
 const TRUNCATION_NOTE = '\n\n(continued - read the rest on the companion page)'
 
 function formatMessage(m: ChatMessage): string {
   return `${m.role === 'user' ? 'You' : 'Gemini'}: ${m.text}`
 }
 
-function clampToBudget(text: string): string {
-  if (text.length <= CONTENT_CHAR_BUDGET) return text
-  return text.slice(0, Math.max(CONTENT_CHAR_BUDGET - TRUNCATION_NOTE.length, 0)) + TRUNCATION_NOTE
+function clampToBudget(text: string, budget: number): string {
+  if (text.length <= budget) return text
+  return text.slice(0, Math.max(budget - TRUNCATION_NOTE.length, 0)) + TRUNCATION_NOTE
 }
 
 // The last message, plus the one before it if that is the question which
@@ -127,7 +133,7 @@ function clampToBudget(text: string): string {
 // final message happens to be a user question with no reply yet, e.g. a
 // prior attempt that never got a Gemini answer) by only pairing them up
 // when the roles actually differ.
-function renderConversation(): string {
+function renderConversation(budget: number): string {
   if (currentMessages.length === 0) return 'No messages yet.\n\nLong-press to ask something.'
   const last = currentMessages[currentMessages.length - 1]
   const secondLast = currentMessages[currentMessages.length - 2]
@@ -135,7 +141,7 @@ function renderConversation(): string {
     secondLast && secondLast.role !== last.role
       ? [formatMessage(secondLast), formatMessage(last)]
       : [formatMessage(last)]
-  return clampToBudget(parts.join('\n\n'))
+  return clampToBudget(parts.join('\n\n'), budget)
 }
 
 function toGeminiTurns(messages: readonly ChatMessage[]): GeminiTurn[] {
@@ -187,8 +193,9 @@ export async function finishListening() {
   }
 
   // Shows the question immediately, before Gemini has answered, rather than
-  // leaving the wearer staring at the old screen during the wait.
-  setContent(clampToBudget(`You: ${result.transcript}\n\nThinking...`))
+  // leaving the wearer staring at the old screen during the wait. A live
+  // setContent call, not the initial build, so this gets the larger budget.
+  setContent(clampToBudget(`You: ${result.transcript}\n\nThinking...`, LIVE_CHAR_BUDGET))
 
   const question: ChatMessage = { role: 'user', text: result.transcript, timestamp: Date.now() }
   const sessionAfterQuestion = await chatSessions.appendMessage(currentSessionId, question)
@@ -204,7 +211,10 @@ export async function finishListening() {
 
   if (reply.kind === 'error') {
     setContent(
-      clampToBudget(`You: ${result.transcript}\n\nCouldn't reach Gemini (${reply.message}).`),
+      clampToBudget(
+        `You: ${result.transcript}\n\nCouldn't reach Gemini (${reply.message}).`,
+        LIVE_CHAR_BUDGET,
+      ),
     )
     return
   }
@@ -214,7 +224,7 @@ export async function finishListening() {
   if (mySession !== sessionToken) return
   currentSessionTitle = sessionAfterAnswer.title
   currentMessages = sessionAfterAnswer.messages
-  setContent(renderConversation())
+  setContent(renderConversation(LIVE_CHAR_BUDGET))
 }
 
 function stopListeningIfAny() {
@@ -269,6 +279,8 @@ export const chatTool: Tool = {
   onSuspend: stopListeningIfAny,
   // Never actually rendered for the picker (contentKind is 'list' there);
   // for 'conversation' this is what a fresh rebuild into the depth reads
-  // (see onListSelect above) before any listening has happened yet.
-  initialContent: () => renderConversation(),
+  // (see onListSelect above) before any listening has happened yet. Goes
+  // through create/rebuild, the stricter of the two firmware limits, hence
+  // the smaller budget (see ENTRY_CHAR_BUDGET above).
+  initialContent: () => renderConversation(ENTRY_CHAR_BUDGET),
 }

@@ -48,15 +48,17 @@ const SYSTEM_INSTRUCTION_FULL =
 
 // Jarvis's cap keeps a glance-read answer from running past what a single
 // unscrolled screen can show. Chat's is generous rather than absent, so a
-// reply isn't artificially cut short and the free tier's quota isn't spent
-// on a runaway essay either - 350 tokens is a few real paragraphs, well past
-// a one-liner but short of needing the model to ramble to get there. The
+// reply isn't artificially cut short, matching the direct request that
+// Chat's answers run as long as they actually need to and be read by
+// scrolling - 600 tokens comfortably covers a full multi-paragraph answer
+// without leaving the free tier's quota open to a runaway essay. The
 // glasses text container itself still caps what one update can carry
-// (features/chat/tool.ts clamps to that and points to the companion page for
-// anything that doesn't fit); this cap is about the model's own output, not
-// the display.
+// (features/chat/tool.ts clamps to that, as close to the real firmware
+// ceiling as a safety margin allows, and points to the companion page -
+// which has no such limit at all - for the rare answer too long even for
+// that); this cap is about the model's own output, not the display.
 const MAX_OUTPUT_TOKENS_CONCISE = 120
-const MAX_OUTPUT_TOKENS_FULL = 350
+const MAX_OUTPUT_TOKENS_FULL = 600
 
 export type GeminiResult = { kind: 'answer'; text: string } | { kind: 'error'; message: string }
 
