@@ -233,14 +233,26 @@ const RESTORE_REBUILD_TIMEOUT_MS = 5000
 // silent hang, from this or any future tool's beforeOpen, fails loudly
 // instead of looking like a dead launcher entry with no error anywhere to
 // explain why.
-function beforeOpenWithTimeout(tool: Tool): Promise<boolean> {
-  if (!tool.beforeOpen) return Promise.resolve(true)
+//
+// Reports WHY, not just whether, it failed - a plain boolean here would
+// have hidden the exact thing that mattered when Chat's open from the menu
+// failed again even after the storage cap above landed: whether beforeOpen
+// genuinely ran past the timeout, or threw something specific and fast.
+// Those point at completely different bugs, and guessing between them
+// without hardware access to test against is how a fix misses twice.
+type BeforeOpenOutcome = { ok: true } | { ok: false; reason: string }
+
+function beforeOpenWithTimeout(tool: Tool): Promise<BeforeOpenOutcome> {
+  if (!tool.beforeOpen) return Promise.resolve({ ok: true })
   return Promise.race([
-    tool.beforeOpen().then(() => true),
-    new Promise<boolean>(resolve => {
-      setTimeout(() => resolve(false), RESTORE_REBUILD_TIMEOUT_MS)
+    tool.beforeOpen().then((): BeforeOpenOutcome => ({ ok: true })),
+    new Promise<BeforeOpenOutcome>(resolve => {
+      setTimeout(() => resolve({ ok: false, reason: 'timed out' }), RESTORE_REBUILD_TIMEOUT_MS)
     }),
-  ]).catch(() => false)
+  ]).catch((e: unknown): BeforeOpenOutcome => ({
+    ok: false,
+    reason: e instanceof Error ? e.message : String(e),
+  }))
 }
 
 // --- Pages ----------------------------------------------------------------
@@ -463,9 +475,9 @@ async function openTool(index: number) {
   // Teleprompter uses this to read the latest saved scripts for its picker.
   // Bounded (see beforeOpenWithTimeout above) so a stuck read fails loudly
   // instead of leaving the tap looking like it did nothing at all.
-  const ready = await beforeOpenWithTimeout(tool)
-  if (!ready) {
-    status(`Failed to open ${tool.name}`)
+  const beforeOpenResult = await beforeOpenWithTimeout(tool)
+  if (!beforeOpenResult.ok) {
+    status(`Failed to open ${tool.name}: ${beforeOpenResult.reason}`)
     return
   }
 
@@ -584,9 +596,9 @@ if (
   // reads them. Bounded the same way (see beforeOpenWithTimeout) - this is
   // cold start, before the menu has even settled, so a hang here is the
   // worst place for one to go unnoticed.
-  const beforeOpenReady = await beforeOpenWithTimeout(tool)
+  const beforeOpenResult = await beforeOpenWithTimeout(tool)
   const ok =
-    beforeOpenReady &&
+    beforeOpenResult.ok &&
     (await Promise.race([
       bridge.rebuildPageContainer(new RebuildPageContainer(toolContainers(restoredScreen.index))),
       new Promise<boolean>(resolve => {
@@ -597,6 +609,8 @@ if (
     screen = restoredScreen
     status(`Restored: ${tool.name}`)
     tool.onOpen?.()
+  } else if (!beforeOpenResult.ok) {
+    status(`Failed to restore ${tool.name}: ${beforeOpenResult.reason}`)
   } else {
     status(`Failed to restore ${tool.name}`)
   }
