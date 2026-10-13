@@ -187,12 +187,6 @@ const TRUNCATION_NOTE = '\n\n(continued - read the rest on the companion page)'
 // measure exactly (see docs/platform.md, proportional font).
 const DIVIDER = '\n\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\n'
 
-// U+25CF, also confirmed available - a small filled-circle marker that
-// means "something is actively happening" (recording, waiting on a
-// reply), distinct from the plain text used once something has actually
-// finished and is just sitting on screen to be read.
-const LIVE_MARKER = '\u25CF '
-
 function formatMessage(m: ChatMessage): string {
   return `${m.role === 'user' ? 'You' : 'Gemini'}: ${m.text}`
 }
@@ -224,41 +218,52 @@ function toGeminiTurns(messages: readonly ChatMessage[]): GeminiTurn[] {
   return messages.map(m => ({ role: m.role, text: m.text }))
 }
 
-const THINKING_FRAMES = ['.', '..', '...']
-const THINKING_FRAME_MS = 500
+const STATUS_FRAMES = ['.', '..', '...']
+// Per direct request: update every second, showing elapsed time, not a
+// faster cosmetic flicker - the counter itself is the "is this alive"
+// signal now, the cycling dots are secondary.
+const STATUS_TICK_MS = 1000
 
-// A cycling ". .. ..." while waiting on Gemini - just a fixed string on a
-// setInterval, nothing running repeated model inference on the main thread
-// (that is what made live captions unsafe, see the comment at this
-// function's call site). mySession is the same staleness token every other
-// async step here already checks; the timer checks it too so a tick can
-// never land after the session that started it has moved on, and the
-// returned stop function lets the normal success/error paths cancel it one
-// tick earlier, before writing the real content over it.
-function startThinkingAnimation(question: string, mySession: number): () => void {
+// A cycling ". .. ..." plus an elapsed-seconds counter, both just a fixed
+// string on a setInterval - nothing running repeated model inference on
+// the main thread (that is what made live captions unsafe, see the
+// comment at this function's call sites). mySession is the same staleness
+// token every other async step here already checks; the timer checks it
+// too so a tick can never land after the session that started it has
+// moved on.
+//
+// Only one of these may run at a time (Listening and Thinking are never
+// both active together), but this guards that invariant defensively
+// anyway rather than trusting every call site to get it right: starting a
+// new one always stops whatever the last one left running first. A
+// leaked interval here would not just look wrong on screen - it is a real
+// background cost (a setContent/bridge call every tick, forever) that
+// could add up across a long session.
+let stopActiveStatus: (() => void) | null = null
+
+function startLiveStatus(
+  mySession: number,
+  render: (dots: string, elapsedSeconds: number) => void,
+): () => void {
+  stopActiveStatus?.()
+  const startedAt = Date.now()
   let frame = 0
-  const renderFrame = () => {
-    setContent(
-      clampToBudget(
-        `You: ${question}${DIVIDER}${LIVE_MARKER}Thinking${THINKING_FRAMES[frame]}`,
-        LIVE_CHAR_BUDGET,
-      ),
-    )
-    frame = (frame + 1) % THINKING_FRAMES.length
-  }
-  renderFrame()
-  // Declared after the first renderFrame() call above, not before - the
-  // tick callback below only ever runs later, once setInterval itself has
-  // had a chance to return and assign this, so there is no risk of the
-  // callback reading `interval` before it exists.
-  const interval = setInterval(() => {
+  const tick = () => {
     if (mySession !== sessionToken) {
-      clearInterval(interval)
+      stop()
       return
     }
-    renderFrame()
-  }, THINKING_FRAME_MS)
-  return () => clearInterval(interval)
+    render(STATUS_FRAMES[frame], Math.floor((Date.now() - startedAt) / 1000))
+    frame = (frame + 1) % STATUS_FRAMES.length
+  }
+  tick()
+  const interval = setInterval(tick, STATUS_TICK_MS)
+  const stop = () => {
+    clearInterval(interval)
+    if (stopActiveStatus === stop) stopActiveStatus = null
+  }
+  stopActiveStatus = stop
+  return stop
 }
 
 async function beginListening() {
@@ -278,7 +283,9 @@ async function beginListening() {
     setContent('Could not start the glasses microphone.\n\nLong-press to try again.')
     return
   }
-  setContent(`${LIVE_MARKER}Listening...\n\n(tap when done)`)
+  startLiveStatus(mySession, (dots, elapsedSeconds) => {
+    setContent(`Listening${dots} (${elapsedSeconds}s)\n\n(tap when done)`)
+  })
 }
 
 // Sends currentMessages (already ending with the question to answer - see
@@ -299,21 +306,27 @@ async function askGemini(question: string, mySession: number) {
     return
   }
 
-  // Shows the question immediately, before Gemini has answered, rather than
-  // leaving the wearer staring at the old screen during the wait, and
-  // keeps showing something is happening with a cycling ". .. ..." rather
-  // than a static word - safe to animate, unlike live captions (see the
-  // Jarvis history this session): this is a fixed, short string on a
-  // timer, not Whisper inference running repeatedly on the main thread, so
-  // there is nothing here that can block input processing the way that did.
-  // Stops itself the moment this session goes stale (closed/suspended
-  // while waiting), so a tick never lands on a container that moved on.
-  const stopThinkingAnimation = startThinkingAnimation(question, mySession)
+  // Shows the question immediately, before Gemini has answered, and keeps
+  // showing elapsed time rather than a static word - safe to animate,
+  // unlike live captions (see the Jarvis history this session): this is a
+  // fixed string on a timer, not Whisper inference running repeatedly on
+  // the main thread, so there is nothing here that can block input
+  // processing the way that did. Stops itself the moment this session
+  // goes stale (closed/suspended while waiting), so a tick never lands on
+  // a container that moved on.
+  startLiveStatus(mySession, (dots, elapsedSeconds) => {
+    setContent(
+      clampToBudget(
+        `You: ${question}${DIVIDER}Thinking${dots} (${elapsedSeconds}s)`,
+        LIVE_CHAR_BUDGET,
+      ),
+    )
+  })
 
   // concise: false - this is Chat's whole point, a real conversation read by
   // scrolling, not Jarvis's glance-and-go fallback. See core/gemini.ts.
   const reply = await converse(apiKey, toGeminiTurns(currentMessages), false)
-  stopThinkingAnimation()
+  stopActiveStatus?.()
   if (mySession !== sessionToken) return
 
   if (reply.kind === 'error') {
@@ -351,6 +364,12 @@ async function askGemini(question: string, mySession: number) {
 export async function finishListening() {
   const mySession = sessionToken
   listening = false
+  // Stop the Listening counter now, not whenever the next startLiveStatus
+  // call happens to land - otherwise it keeps ticking (and overwriting
+  // the screen) all through transcription, and would overwrite the
+  // "Didn't catch that" error below entirely, since nothing else would
+  // ever stop it on that path.
+  stopActiveStatus?.()
   const result = await stop()
   if (mySession !== sessionToken) return
 
@@ -390,6 +409,12 @@ export async function retry() {
 
 function stopListeningIfAny() {
   sessionToken++
+  // Unconditional, not just while listening - this also runs on
+  // close/suspend while waiting on Gemini (Thinking), and a leaked
+  // interval still ticking against a container that is being torn down
+  // is worth killing immediately rather than waiting up to a second for
+  // its own staleness check to catch up.
+  stopActiveStatus?.()
   if (listening) {
     listening = false
     cancel()
