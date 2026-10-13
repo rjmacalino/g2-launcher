@@ -1,6 +1,6 @@
 import { AudioInputSource } from '@evenrealities/even_hub_sdk'
-import { bridge } from '../../platform/bridge'
-import { transcribe } from '../../core/whisper'
+import { bridge } from '../platform/bridge'
+import { transcribe } from './whisper'
 
 // Browser SpeechRecognition looked available (Lab's presence-check probe
 // constructed it without throwing) but actually using it fails with
@@ -11,11 +11,19 @@ import { transcribe } from '../../core/whisper'
 // not go through getUserMedia at all and is already proven working (Lab's
 // microphone probe: real streamed PCM frames). See docs/roadmap.md
 // decision D1.
+//
+// Lives in core/, not features/jarvis, because more than one feature needs
+// it now (Jarvis's one-shot commands/questions, and Chat's ongoing
+// conversation) - same reasoning as core/whisper.ts, which this already
+// depended on. Each caller (jarvis/tool.ts, chat/tool.ts) owns its own
+// long-press-to-start / double-press-to-end gesture wiring and session
+// bookkeeping; this file only owns capturing PCM and turning it into text.
 export type VoiceResult =
   { kind: 'transcript'; transcript: string } | { kind: 'error'; message: string }
 
-// Driven by the SDK's own LONG_PRESS_EVENT to start (see app/main.ts) and a
-// double-press to end. MAX_RECORD_MS only exists as a safety net for a
+// Driven by the caller's own long-press-to-start / double-press-to-end
+// wiring (see app/main.ts for how each tool claims that gesture while it is
+// the active screen). MAX_RECORD_MS only exists as a safety net for a
 // wearer who never double-presses at all - the normal end of a recording is
 // always the deliberate double-press, not this timer.
 const MAX_RECORD_MS = 15_000

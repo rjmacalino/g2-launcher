@@ -1,4 +1,5 @@
 import type { Tool } from '../core/tool'
+import { chatTool } from '../features/chat/tool'
 import { jarvisTool } from '../features/jarvis/tool'
 import { notesTool } from '../features/notes/tool'
 import { settingsTool } from '../features/settings/tool'
@@ -20,7 +21,15 @@ import { weatherTool } from '../features/weather/tool'
 // screen index, and imported behind import.meta.env.DEV so a production
 // build tree-shakes the whole features/lab module out rather than merely
 // hiding a menu entry that is still sitting in the package.
-const tools: Tool[] = [weatherTool, notesTool, teleprompter, timerTool, settingsTool, jarvisTool]
+const tools: Tool[] = [
+  weatherTool,
+  notesTool,
+  teleprompter,
+  timerTool,
+  settingsTool,
+  jarvisTool,
+  chatTool,
+]
 
 if (import.meta.env.DEV) {
   const { labTool } = await import('../features/lab/tool')

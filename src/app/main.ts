@@ -65,7 +65,11 @@ import {
   isListening as isJarvisListening,
   onDone as onJarvisDone,
 } from '../features/jarvis/tool'
-import { getApiKey as getGeminiApiKey } from '../features/jarvis/settings'
+import {
+  finishListening as finishChatListening,
+  isListening as isChatListening,
+} from '../features/chat/tool'
+import { getApiKey as getGeminiApiKey } from '../core/geminiSettings'
 import { formatDuration } from '../shared/duration'
 
 // The shell. Owns which page is showing, builds pages, and routes input. It knows
@@ -600,7 +604,7 @@ setStatusBarTimer(timerBarText())
 // command at all ("what's the capital of France") still gets an answer
 // instead of "Didn't recognize a command" - but only if the wearer has
 // actually entered a Gemini API key on the companion page (see
-// features/jarvis/settings.ts). No key means the fallback is skipped
+// core/geminiSettings.ts). No key means the fallback is skipped
 // entirely, same behaviour as before Gemini existed: local parsing has no
 // dependency on network or a key, and unconfigured Jarvis should still work
 // for the one thing it always could.
@@ -780,6 +784,18 @@ const unsubscribe = bridge.onEvenHubEvent(event => {
     }
   }
 
+  // Same shape as Jarvis just above, for Chat's own local long-press
+  // gesture (see the LONG_PRESS_EVENT carve-out below): only intercepted
+  // while actually listening, so a double-press on a conversation that is
+  // just sitting there read falls through to the normal "leave" behaviour
+  // instead of trying to stop a recording that was never started.
+  if (isDoubleTap && screen.kind === 'tool' && TOOLS[screen.index].name === 'Chat') {
+    if (isChatListening()) {
+      finishChatListening()
+      return
+    }
+  }
+
   if (isDoubleTap) {
     if (screen.kind === 'tool') {
       const tool = TOOLS[screen.index]
@@ -867,9 +883,15 @@ const unsubscribe = bridge.onEvenHubEvent(event => {
   // any tool's own page - it starts listening. Per direct decision, this
   // takes plain long press away from every tool that used to be free to
   // claim it (only Notes did, moved to its own contextual menu item - see
-  // features/notes/tool.ts). The one carve-out is Lab, dev-only and never
+  // features/notes/tool.ts). Two carve-outs: Lab, dev-only and never
   // shipped, whose several probes (stop mic/IMU, cycle icons, replace a
-  // partial update line) still need it for real hardware verification work.
+  // partial update line) still need it for real hardware verification work;
+  // and Chat, which needs long press for its OWN local "ask a question"
+  // gesture while its own conversation screen is active - unlike Jarvis,
+  // entering Chat happens through the ordinary menu, not this global
+  // reservation, so there is no conflict between the two meanings. Both
+  // route through Tool.onLongPress rather than a bespoke call, the same
+  // mechanism Lab already used before Chat needed it too.
   // LONG_PRESS_EVENT is 9, non-zero, so the zero-elision trap does not apply
   // here either.
   //
@@ -883,7 +905,8 @@ const unsubscribe = bridge.onEvenHubEvent(event => {
   // unhandled here now - nothing in this app currently needs the moment of
   // release itself, only the start.
   if (sysType === OsEventTypeList.LONG_PRESS_EVENT) {
-    if (activeTool()?.name === 'Lab') {
+    const name = activeTool()?.name
+    if (name === 'Lab' || name === 'Chat') {
       activeTool()?.onLongPress?.()
     } else {
       enterJarvis()

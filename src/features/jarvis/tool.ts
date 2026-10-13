@@ -1,4 +1,4 @@
-import { cancel, start, stop } from './service'
+import { cancel, start, stop } from '../../core/voiceCapture'
 import { dispatchVoiceCommand } from '../../core/voiceDispatch'
 import { setContent } from '../../platform/page'
 import type { Tool } from '../../core/tool'

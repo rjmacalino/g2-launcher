@@ -6,10 +6,7 @@ import {
   type Script,
 } from '../features/teleprompter/store'
 import { setActiveScriptContent, clearActiveScriptIfCurrent } from '../features/teleprompter/tool'
-import {
-  getApiKey as getGeminiApiKey,
-  setApiKey as setGeminiApiKey,
-} from '../features/jarvis/settings'
+import { getApiKey as getGeminiApiKey, setApiKey as setGeminiApiKey } from '../core/geminiSettings'
 import { TOOL_NAMES } from '../app/registry'
 
 // The phone companion page: browse the same tools the glasses menu shows, and
@@ -90,20 +87,22 @@ function renderMenu() {
       const name = el.dataset.name
       if (name === 'Teleprompter') view = { kind: 'list', collection: 'scripts' }
       else if (name === 'Notes') view = { kind: 'list', collection: 'notes' }
-      else if (name === 'Jarvis') view = { kind: 'jarvis-settings' }
+      else if (name === 'Jarvis' || name === 'Chat') view = { kind: 'jarvis-settings' }
       else view = { kind: 'stub', label: name ?? '' }
       render()
     })
   })
 }
 
-// --- Jarvis settings ------------------------------------------------------
+// --- Gemini settings (shared by Jarvis and Chat) ---------------------------
 
 // A key entered here is never bundled in the build - it is read at runtime
-// off this device's own local storage (see features/jarvis/settings.ts),
-// the same way an API key ships in any app that calls a paid or
-// rate-limited third-party service: brought by the wearer, not shipped in
-// the package for anyone who downloads it to find.
+// off this device's own local storage (see core/geminiSettings.ts), the
+// same way an API key ships in any app that calls a paid or rate-limited
+// third-party service: brought by the wearer, not shipped in the package
+// for anyone who downloads it to find. Both Jarvis (its open-ended-question
+// fallback) and Chat (every question) use the same key, so both menu items
+// route here rather than each growing its own copy of this screen.
 // Confirms the save actually round-tripped rather than trusting that
 // setLocalStorage's own `ok` result means the value is really readable back
 // - per direct report, a key entered here was not being found by Jarvis

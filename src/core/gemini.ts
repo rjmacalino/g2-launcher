@@ -40,6 +40,13 @@ const SYSTEM_INSTRUCTION =
 
 export type GeminiResult = { kind: 'answer'; text: string } | { kind: 'error'; message: string }
 
+// Gemini's own role names, not ours to invent - "model" rather than the more
+// common "assistant" seen elsewhere, which is why features/chat/store.ts
+// stores messages with this exact union rather than a generic one, so a
+// stored conversation can be replayed straight into a request with no
+// translation step.
+export type GeminiTurn = { role: 'user' | 'model'; text: string }
+
 // One retry, specifically for a 503 - seen twice in a row testing this
 // against the real API with a real key, and Google's own error text calls
 // it "usually temporary". Not retried for any other status: a bad request
@@ -51,7 +58,7 @@ function delay(ms: number): Promise<void> {
   return new Promise(resolve => setTimeout(resolve, ms))
 }
 
-async function requestOnce(apiKey: string, question: string): Promise<Response> {
+async function requestOnce(apiKey: string, turns: readonly GeminiTurn[]): Promise<Response> {
   return fetch(ENDPOINT, {
     method: 'POST',
     headers: {
@@ -59,19 +66,28 @@ async function requestOnce(apiKey: string, question: string): Promise<Response> 
       'x-goog-api-key': apiKey,
     },
     body: JSON.stringify({
-      contents: [{ parts: [{ text: question }] }],
+      contents: turns.map(turn => ({ role: turn.role, parts: [{ text: turn.text }] })),
       systemInstruction: { parts: [{ text: SYSTEM_INSTRUCTION }] },
       generationConfig: { maxOutputTokens: 120 },
     }),
   })
 }
 
-export async function ask(apiKey: string, question: string): Promise<GeminiResult> {
+// The full conversation so far (see GeminiTurn above), oldest first, ending
+// with the new question as the last 'user' turn - this is what makes a
+// follow-up a follow-up: Gemini has no memory of its own between requests,
+// every prior exchange has to be resent each time. Used by both Jarvis
+// (a single-turn conversation, see ask() below) and Chat (a real multi-turn
+// one, see features/chat/service.ts).
+export async function converse(
+  apiKey: string,
+  turns: readonly GeminiTurn[],
+): Promise<GeminiResult> {
   try {
-    let response = await requestOnce(apiKey, question)
+    let response = await requestOnce(apiKey, turns)
     if (response.status === 503) {
       await delay(RETRY_DELAY_MS)
-      response = await requestOnce(apiKey, question)
+      response = await requestOnce(apiKey, turns)
     }
     if (!response.ok) {
       return { kind: 'error', message: `Gemini returned ${response.status}` }
@@ -83,6 +99,13 @@ export async function ask(apiKey: string, question: string): Promise<GeminiResul
   } catch (e) {
     return { kind: 'error', message: e instanceof Error ? e.message : String(e) }
   }
+}
+
+// A single question, no history - what Jarvis's one-shot command fallback
+// needs (see core/voiceDispatch.ts). A thin wrapper over converse() rather
+// than a separate request shape, so the two never drift apart.
+export function ask(apiKey: string, question: string): Promise<GeminiResult> {
+  return converse(apiKey, [{ role: 'user', text: question }])
 }
 
 // Reaches into candidates[0].content.parts[0].text without trusting the

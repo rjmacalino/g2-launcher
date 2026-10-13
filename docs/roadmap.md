@@ -216,21 +216,52 @@ then on hardware by RJ. Results go back into platform.md with a [HW] tag.
       below) is a separate, larger, and currently blocked track: it needs RJ
       to create a free Picovoice account and report back its actual
       free-tier terms, which could not be verified from documentation alone
+- [~] Chat (G2-58, see decision D4): a real multi-turn conversation with
+      Gemini, deliberately separate from Jarvis per direct decision rather
+      than folded into it - Jarvis's value is instant global reach for a
+      quick answer with auto-return, a sit-down conversation with history is
+      a different shape of interaction that would only get in the way of
+      that. Own menu entry; a picker lists "New chat" plus every saved
+      session by title (newest first), selecting one opens its transcript.
+      Reuses Jarvis's exact gesture shape (long press to start listening,
+      double-press to end) but scoped locally to Chat's own conversation
+      screen instead of reserved globally - the shell carves Chat out of the
+      global long-press-reaches-Jarvis reservation the same way it already
+      did for the dev-only Lab tool. Every exchange is saved to storage the
+      moment Gemini answers (features/chat/store.ts), and the full history
+      is resent on every follow-up so Gemini actually remembers the
+      conversation, not just the latest message - it has no memory of its
+      own between requests. One real, unavoidable platform constraint, not a
+      design choice: text containers have no programmatic scroll and any
+      content update resets scroll to the top (see docs/platform.md), so
+      "always see the latest message" can only be true if the newest message
+      is shown FIRST, with older history further down a swipe-down away -
+      the opposite of a typical chat app's bottom-anchored layout, confirmed
+      explicitly acceptable with RJ before building it this way. core/
+      gained three more shared modules supporting both Jarvis and Chat:
+      core/voiceCapture.ts (moved out of features/jarvis, generic mic
+      capture + transcription), core/geminiSettings.ts (moved out of
+      features/jarvis, the API key), and core/gemini.ts grew a converse()
+      function taking a full turn history, with ask() (Jarvis's one-shot
+      use) now a thin wrapper over it. Verified in the simulator: the
+      picker, the local long-press/double-press carve-out (confirmed via a
+      `long_press` automation action that works despite not being
+      documented in the simulator-automation skill), and the no-API-key
+      fallback message all behave correctly; a real multi-turn exchange with
+      an actual key has not been exercised yet - needs a real-hardware run
 - [ ] Live conversation captions ("Conversate"-inspired): continuously
       transcribe a conversation with another person and show live captions,
-      not a command. Distinct from Jarvis (a command executor) - raised
-      2026-09-28 as part of RJ's larger goal of a full AI companion
-      (transcription + commands + contextual cues, eventually). Deliberately
-      not started: the immediate ask (make Jarvis reachable without opening
-      it, see above) turned out to satisfy most of what prompted this, so it
-      is on hold until that is confirmed working well on real hardware.
-      Would reuse core/whisper.ts's engine (already relocated out of
-      features/jarvis specifically so more than one feature could use it).
-      AI cues/summarization (real Conversate's other half) needs an actual
-      LLM - a good one is realistically a cloud service, which means
-      revisiting the "no paid services" stance in D1 - or a much
-      lower-quality fully on-device one, at a package-size cost likely
-      dwarfing even Whisper's
+      not a command, distinct from both Jarvis (a command executor) and Chat
+      (a deliberate, explicitly-asked conversation) - raised 2026-09-28 as
+      part of RJ's larger goal of a full AI companion (transcription +
+      commands + contextual cues, eventually). Deliberately not started: the
+      immediate ask (an actual multi-turn chat, see above) turned out to
+      satisfy most of what prompted this, so it is on hold until that is
+      confirmed working well on real hardware. Would reuse core/whisper.ts's
+      engine. AI cues/summarization (real Conversate's other half) needs an
+      actual LLM - Gemini (now already integrated, see D4) could serve this
+      too, revisiting what "a much lower-quality fully on-device one" would
+      have meant before that was resolved
 - [ ] Photo viewer: album image on the glasses
 
 ## Decisions
@@ -277,4 +308,10 @@ then on hardware by RJ. Results go back into platform.md with a [HW] tag.
   see src/companion/main.ts), stored only in this device's own local
   storage. No key means Jarvis behaves exactly as before D4: local command
   parsing only, "Didn't recognise a command" for anything else - the
-  fallback is additive, never required.
+  fallback is additive, never required. Note: `gemini-2.5-flash` was
+  retired for new API keys shortly after this was written, replaced with
+  `gemini-3.8-flash` (G2-56) - see core/gemini.ts for the current model
+  name rather than trusting this decision log to stay current on it.
+  Chat (G2-58) reuses this same API key and the same core/gemini.ts client
+  (grown a converse() function for a full turn history, not just one
+  question) rather than needing its own separate setup.
