@@ -29,14 +29,34 @@
 const MODEL = 'gemini-3.8-flash'
 const ENDPOINT = `https://generativelanguage.googleapis.com/v1beta/models/${MODEL}:generateContent`
 
-// Kept short on purpose: this answers a question relayed through a
-// push-to-talk voice command, read once off a tiny glasses display, not a
-// long-form chat. A short system instruction steers the model toward that
-// without spending a reply's worth of tokens on something too long to be
-// useful here anyway.
-const SYSTEM_INSTRUCTION =
+// Jarvis's fallback is read once, off a push-to-talk voice command, with no
+// scrolling built for it - so its answers stay short on purpose. Chat is a
+// real multi-turn conversation with its own scrollable history (see
+// features/chat/tool.ts), so it gets the opposite instruction: answer fully,
+// let the wearer scroll, same as any chat app would. Per docs/platform.md,
+// a text container cannot shrink its own font - "scroll more" is the only
+// knob here, not "show smaller text".
+const SYSTEM_INSTRUCTION_CONCISE =
   'You are a voice assistant on smart glasses with a small display. ' +
   'Answer in one or two short sentences, plain text, no markdown, no lists.'
+
+const SYSTEM_INSTRUCTION_FULL =
+  'You are a conversational assistant on smart glasses with a small, ' +
+  'scrollable text display. Answer fully and naturally, the way you would ' +
+  'in any chat conversation - do not cut yourself short to save space, the ' +
+  'wearer can scroll. Plain text only, no markdown, no bullet lists.'
+
+// Jarvis's cap keeps a glance-read answer from running past what a single
+// unscrolled screen can show. Chat's is generous rather than absent, so a
+// reply isn't artificially cut short and the free tier's quota isn't spent
+// on a runaway essay either - 350 tokens is a few real paragraphs, well past
+// a one-liner but short of needing the model to ramble to get there. The
+// glasses text container itself still caps what one update can carry
+// (features/chat/tool.ts clamps to that and points to the companion page for
+// anything that doesn't fit); this cap is about the model's own output, not
+// the display.
+const MAX_OUTPUT_TOKENS_CONCISE = 120
+const MAX_OUTPUT_TOKENS_FULL = 350
 
 export type GeminiResult = { kind: 'answer'; text: string } | { kind: 'error'; message: string }
 
@@ -58,7 +78,11 @@ function delay(ms: number): Promise<void> {
   return new Promise(resolve => setTimeout(resolve, ms))
 }
 
-async function requestOnce(apiKey: string, turns: readonly GeminiTurn[]): Promise<Response> {
+async function requestOnce(
+  apiKey: string,
+  turns: readonly GeminiTurn[],
+  concise: boolean,
+): Promise<Response> {
   return fetch(ENDPOINT, {
     method: 'POST',
     headers: {
@@ -67,8 +91,12 @@ async function requestOnce(apiKey: string, turns: readonly GeminiTurn[]): Promis
     },
     body: JSON.stringify({
       contents: turns.map(turn => ({ role: turn.role, parts: [{ text: turn.text }] })),
-      systemInstruction: { parts: [{ text: SYSTEM_INSTRUCTION }] },
-      generationConfig: { maxOutputTokens: 120 },
+      systemInstruction: {
+        parts: [{ text: concise ? SYSTEM_INSTRUCTION_CONCISE : SYSTEM_INSTRUCTION_FULL }],
+      },
+      generationConfig: {
+        maxOutputTokens: concise ? MAX_OUTPUT_TOKENS_CONCISE : MAX_OUTPUT_TOKENS_FULL,
+      },
     }),
   })
 }
@@ -78,16 +106,20 @@ async function requestOnce(apiKey: string, turns: readonly GeminiTurn[]): Promis
 // follow-up a follow-up: Gemini has no memory of its own between requests,
 // every prior exchange has to be resent each time. Used by both Jarvis
 // (a single-turn conversation, see ask() below) and Chat (a real multi-turn
-// one, see features/chat/service.ts).
+// one, see features/chat/tool.ts).
+//
+// concise defaults to true (Jarvis's own need) so ask() below needs no
+// change; Chat passes false explicitly.
 export async function converse(
   apiKey: string,
   turns: readonly GeminiTurn[],
+  concise = true,
 ): Promise<GeminiResult> {
   try {
-    let response = await requestOnce(apiKey, turns)
+    let response = await requestOnce(apiKey, turns, concise)
     if (response.status === 503) {
       await delay(RETRY_DELAY_MS)
-      response = await requestOnce(apiKey, turns)
+      response = await requestOnce(apiKey, turns, concise)
     }
     if (!response.ok) {
       return { kind: 'error', message: `Gemini returned ${response.status}` }

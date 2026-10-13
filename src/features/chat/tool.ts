@@ -66,12 +66,49 @@ async function refresh(): Promise<void> {
 // preference: text containers have no programmatic scroll position (see
 // docs/platform.md), and any content update resets scroll to the top. The
 // only way "the latest exchange is what you see by default" can actually be
-// true here is for it to BE the top. Older messages are still there, just a
-// swipe-down away instead of a swipe-up.
+// true here is for it to BE the top. Older messages are still there, a
+// swipe-down away instead of a swipe-up, up to the budget below.
+
+// The firmware rejects a text container update outright past its own hard
+// character ceiling (docs/platform.md: 1000 chars on create/rebuild, 2000 on
+// textContainerUpgrade). initialContent and every later setContent() call
+// share this one renderConversation(), so the stricter of the two limits is
+// the one that has to hold everywhere it's used. Left under 1000 rather than
+// riding right up to it, since this is a firmware figure we measured, not a
+// guarantee it is exact to the byte.
+const CONTENT_CHAR_BUDGET = 900
+const TRUNCATION_NOTE =
+  '\n\n---\n(older messages hidden - read the full conversation on the companion page)'
+
+function formatMessage(m: ChatMessage): string {
+  return `${m.role === 'user' ? 'You' : 'Gemini'}: ${m.text}`
+}
+
+// Gemini answers are no longer kept artificially short (see
+// core/gemini.ts's full-length system instruction for Chat), so a single
+// reply can now run past what one update can carry on its own. header is
+// always the thing that must show in full if anything does - the newest
+// exchange - and only gets clamped itself in the edge case where it alone
+// already blows the whole budget. rest is everything older, included only
+// as far as it still fits, cut at a message boundary rather than mid-reply,
+// with a note pointing at the companion page's own full, unclamped history
+// (see companion/main.ts's chat-view) for the rest.
+function composeContent(header: string, rest: string): string {
+  if (header.length >= CONTENT_CHAR_BUDGET) return header.slice(0, CONTENT_CHAR_BUDGET)
+  if (rest.length === 0) return header
+  const remaining = CONTENT_CHAR_BUDGET - header.length - TRUNCATION_NOTE.length - 2
+  if (remaining <= 0) return `${header}${TRUNCATION_NOTE}`
+  if (rest.length <= remaining) return `${header}\n\n${rest}`
+  const cut = rest.slice(0, remaining)
+  const lastBreak = cut.lastIndexOf('\n\n')
+  const trimmed = lastBreak > 0 ? cut.slice(0, lastBreak) : cut
+  return `${header}\n\n${trimmed}${TRUNCATION_NOTE}`
+}
+
 function renderConversation(): string {
   if (currentMessages.length === 0) return 'No messages yet.\n\nLong-press to ask something.'
-  const newestFirst = [...currentMessages].reverse()
-  return newestFirst.map(m => `${m.role === 'user' ? 'You' : 'Gemini'}: ${m.text}`).join('\n\n')
+  const [latest, ...older] = [...currentMessages].reverse()
+  return composeContent(formatMessage(latest), older.map(formatMessage).join('\n\n'))
 }
 
 function toGeminiTurns(messages: readonly ChatMessage[]): GeminiTurn[] {
@@ -126,9 +163,11 @@ export async function finishListening() {
   // leaving the wearer staring at the old conversation during the wait -
   // placed at the top with the rest of the history below, matching exactly
   // where it will land once saved (see renderConversation's own newest-first
-  // reasoning above).
-  const olderConversation = renderConversation()
-  setContent(`You: ${result.transcript}\n\nThinking...\n\n---\n\n${olderConversation}`)
+  // reasoning above). Captured once, before the question is appended, so
+  // both this and the error path below share the same "everything prior to
+  // this exchange" history instead of recomputing it twice.
+  const priorHistory = currentMessages.map(formatMessage).join('\n\n')
+  setContent(composeContent(`You: ${result.transcript}\n\nThinking...`, priorHistory))
 
   const question: ChatMessage = { role: 'user', text: result.transcript, timestamp: Date.now() }
   const sessionAfterQuestion = await chatSessions.appendMessage(currentSessionId, question)
@@ -136,7 +175,9 @@ export async function finishListening() {
   currentSessionId = sessionAfterQuestion.id
   currentMessages = sessionAfterQuestion.messages
 
-  const reply = await converse(apiKey, toGeminiTurns(currentMessages))
+  // concise: false - this is Chat's whole point, a real conversation read by
+  // scrolling, not Jarvis's glance-and-go fallback. See core/gemini.ts.
+  const reply = await converse(apiKey, toGeminiTurns(currentMessages), false)
   if (mySession !== sessionToken) return
 
   if (reply.kind === 'error') {
@@ -145,7 +186,10 @@ export async function finishListening() {
     // would put the error notice after the OLDER messages instead of right
     // under the question it is actually about.
     setContent(
-      `You: ${result.transcript}\n\nCouldn't reach Gemini (${reply.message}).\n\n---\n\n${olderConversation}`,
+      composeContent(
+        `You: ${result.transcript}\n\nCouldn't reach Gemini (${reply.message}).`,
+        priorHistory,
+      ),
     )
     return
   }
