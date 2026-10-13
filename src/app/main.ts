@@ -789,6 +789,22 @@ function eventTypeOf(envelope?: { eventType?: OsEventTypeList }): OsEventTypeLis
 // safe default (a tool that stops a subscription for a real background exit
 // stopping it for a menu open too is a conservative miss, not a bug).
 const unsubscribe = bridge.onEvenHubEvent(event => {
+  // Self-healing against the clock silently stopping forever. Reported
+  // directly [HW]: the status bar clock stuck several minutes behind
+  // while the app was otherwise clearly alive and responding to input -
+  // meaning startStatusBar's own setInterval had stopped (FOREGROUND_EXIT_
+  // EVENT fired, see below) with no matching FOREGROUND_ENTER_EVENT ever
+  // following to restart it. That pairing is already flagged elsewhere in
+  // this file as fragile - opening or closing the contextual menu fires
+  // the SAME pair of events, so a lost or doubled one during that is a
+  // real, plausible way to end up here, not just a theory. startStatusBar
+  // is already a no-op when its timer is running, so calling it on every
+  // single event this handler receives costs nothing in the normal case
+  // and guarantees the clock can never get stuck off while the app is
+  // still processing input at all - the actual trigger does not need to
+  // be pinned down for this to be the right fix.
+  startStatusBar()
+
   const sysType = eventTypeOf(event.sysEvent)
   const textType = eventTypeOf(event.textEvent)
   const listType = eventTypeOf(event.listEvent)
