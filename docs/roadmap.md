@@ -23,6 +23,24 @@ progress, `[x]` done, `[?]` waiting on a decision.
    see Chat (G2-58) below for the first real example.
 4. Time and state survive suspension. Persist to storage, derive from
    timestamps, never trust a running interval.
+5. Both surfaces drive the app; the glasses are the companion's extension.
+   The companion is not a separate settings page next to the "real" app -
+   it is the fuller version of whatever the glasses are showing. Whichever
+   tool is open on the glasses, the companion follows and shows that same
+   tool's richer page automatically (see core/currentScreen.ts, added
+   2026-10-14) - a wearer should never find the two surfaces on different
+   apps. Within that, some actions only make sense on the companion and
+   are deliberately left off the glasses entirely, not just hidden behind
+   an extra tap: editing a Teleprompter script (glasses only get the
+   picker), deleting a saved chat (glasses only get read/ask - a delete
+   gesture there would also risk colliding with Chat's own long-press-to-
+   ask), anything needing real text entry. The test for "glasses or
+   companion-only" is not "is this important" but "does this need a
+   keyboard, a destructive confirmation worth more screen than the
+   glasses have, or does it conflict with a gesture the glasses already
+   use for something else." Companion-to-glasses sync (companion
+   navigation steering what the glasses show) is not built yet - today
+   this is one-directional, glasses to companion only.
 
 ## Phase 0: foundations (no user-visible features)
 

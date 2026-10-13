@@ -39,6 +39,7 @@ import {
   stopStatusBar,
 } from './statusbar'
 import { registerRebuildHandler } from '../core/rebuild'
+import { setCurrentScreen } from '../core/currentScreen'
 import { persistScreen, readStoredScreen, type Screen } from './screen'
 import { TOOLS, TOOL_NAMES } from './registry'
 import type { Tool } from '../core/tool'
@@ -494,6 +495,12 @@ async function openTool(index: number) {
       // caller that can land here with tool.name === 'Jarvis'.
       if (tool.name !== 'Jarvis') persistScreen(screen)
       status(`Tool: ${tool.name}`)
+      // Baseline publish before onOpen, not after - a tool with its own
+      // internal depth worth mirroring (Chat; see core/currentScreen.ts)
+      // republishes with its own detail from onOpen, and that has to be
+      // the LAST write to land, not this one, or the companion would lose
+      // the detail moment it was just given.
+      setCurrentScreen({ kind: 'tool', name: tool.name })
       // Started only after the page is on screen. Anything a tool does to the
       // content area needs the container to exist first.
       tool.onOpen?.()
@@ -513,6 +520,7 @@ function returnToMenu() {
       screen = { kind: 'menu' }
       persistScreen(screen)
       status('Menu')
+      setCurrentScreen({ kind: 'menu' })
     } else {
       // Back failed. Exit rather than leave the wearer stuck.
       requestExit()
@@ -608,6 +616,9 @@ if (
   if (ok) {
     screen = restoredScreen
     status(`Restored: ${tool.name}`)
+    // Same ordering as openTool: baseline before onOpen, so a tool that
+    // republishes its own detail from onOpen (Chat) has the last word.
+    setCurrentScreen({ kind: 'tool', name: tool.name })
     tool.onOpen?.()
   } else if (!beforeOpenResult.ok) {
     status(`Failed to restore ${tool.name}: ${beforeOpenResult.reason}`)

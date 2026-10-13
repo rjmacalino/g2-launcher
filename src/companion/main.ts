@@ -8,6 +8,8 @@ import {
 import { setActiveScriptContent, clearActiveScriptIfCurrent } from '../features/teleprompter/tool'
 import { getApiKey as getGeminiApiKey, setApiKey as setGeminiApiKey } from '../core/geminiSettings'
 import { chatSessions, type ChatSession } from '../features/chat/store'
+import { type ChatScreenDetail } from '../features/chat/tool'
+import { onCurrentScreenChange, getCurrentScreen } from '../core/currentScreen'
 import { TOOL_NAMES } from '../app/registry'
 
 // The phone companion page: browse the same tools the glasses menu shows, and
@@ -87,15 +89,61 @@ function renderMenu() {
   `
   root.querySelectorAll<HTMLElement>('.menu-item').forEach(el => {
     el.addEventListener('click', () => {
-      const name = el.dataset.name
-      if (name === 'Teleprompter') view = { kind: 'list', collection: 'scripts' }
-      else if (name === 'Notes') view = { kind: 'list', collection: 'notes' }
-      else if (name === 'Jarvis') view = { kind: 'jarvis-settings' }
-      else if (name === 'Chat') view = { kind: 'chat-list' }
-      else view = { kind: 'stub', label: name ?? '' }
+      view = baselineViewForTool(el.dataset.name)
       render()
     })
   })
+}
+
+// The plain, detail-free mapping from a tool's name to its companion page -
+// what clicking a row in the companion's OWN menu uses (no glasses detail
+// to go on, just "open this tool's page"), and the fallback the
+// glasses-follow sync below uses for every tool except Chat, which has its
+// own richer, async-aware version (see syncToGlassesScreen).
+function baselineViewForTool(name: string | undefined): View {
+  if (name === 'Teleprompter') return { kind: 'list', collection: 'scripts' }
+  if (name === 'Notes') return { kind: 'list', collection: 'notes' }
+  if (name === 'Jarvis') return { kind: 'jarvis-settings' }
+  if (name === 'Chat') return { kind: 'chat-list' }
+  return { kind: 'stub', label: name ?? '' }
+}
+
+// Keeps the companion following wherever the glasses actually are - per
+// direct instruction, the glasses are the hands-free extension of the
+// companion, not a separate app with its own independent place to be, so
+// whichever app is open on the glasses, the companion should show that
+// same app's (richer) page. One-directional for now: the companion follows
+// the glasses, not the other way around - see docs/roadmap.md for the
+// companion-steers-glasses direction, not built yet.
+//
+// Chat is the one tool with a richer sync today: its own detail (see
+// features/chat/tool.ts's ChatScreenDetail) says not just "Chat is open"
+// but which depth and which session, so the companion can jump straight to
+// reading the live conversation instead of always landing on the picker.
+// Every other tool only gets the baseline "this tool's page is open" sync,
+// since none of them publish anything richer yet.
+async function syncToGlassesScreen(): Promise<void> {
+  const screen = getCurrentScreen()
+  if (screen.kind === 'menu') {
+    view = { kind: 'menu' }
+    render()
+    return
+  }
+
+  if (screen.name === 'Chat') {
+    const detail = screen.detail as ChatScreenDetail | undefined
+    if (detail?.depth === 'conversation' && detail.sessionId) {
+      const found = (await chatSessions.readAll()).find(s => s.id === detail.sessionId)
+      view = found ? { kind: 'chat-view', session: found } : { kind: 'chat-list' }
+    } else {
+      view = { kind: 'chat-list' }
+    }
+    render()
+    return
+  }
+
+  view = baselineViewForTool(screen.name)
+  render()
 }
 
 // --- Gemini settings (shared by Jarvis and Chat) ---------------------------
@@ -611,7 +659,13 @@ function render() {
 
 async function init() {
   activeScriptId = await getActiveScriptId()
-  render()
+  // Subscribes for every future glasses navigation, then syncs once to
+  // whatever the glasses are showing right now - covers both "the glasses
+  // already moved before this page loaded" and "they move after".
+  onCurrentScreenChange(() => {
+    syncToGlassesScreen()
+  })
+  await syncToGlassesScreen()
 }
 
 init()

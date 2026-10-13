@@ -3,6 +3,7 @@ import { converse, type GeminiTurn } from '../../core/gemini'
 import { getApiKey as getGeminiApiKey } from '../../core/geminiSettings'
 import { chatSessions, type ChatMessage, type ChatSession } from './store'
 import { setContent } from '../../platform/page'
+import { setCurrentScreen } from '../../core/currentScreen'
 import type { Tool } from '../../core/tool'
 
 // A real multi-turn conversation, unlike Jarvis's one-shot command/question
@@ -62,6 +63,32 @@ let listening = false
 
 export function isListening(): boolean {
   return listening
+}
+
+// What companion/main.ts reads back out of core/currentScreen.ts's opaque
+// `detail` field to decide what the companion's own, richer Chat view
+// should show - exported as a type so companion can read it with no
+// runtime coupling beyond the one setCurrentScreen call below. Per direct
+// instruction: the glasses are the extension, the companion is where the
+// same app shows its fuller page, so whichever depth Chat is actually in
+// on the glasses, the companion should be showing the matching page, not
+// whatever was last clicked into on the phone.
+export type ChatScreenDetail =
+  { depth: 'picker' } | { depth: 'conversation'; sessionId: string | null }
+
+// Called everywhere depth or currentSessionId changes: refresh, picking an
+// item in the picker, stepping back via onBack, and after a voice exchange
+// either creates a brand new session or continues an existing one. Also
+// called from onOpen/onContentReady so it is always the LAST write for
+// this tool's own screen entry, after the shell's own generic baseline
+// publish (see app/main.ts's setCurrentScreen calls) - that ordering is
+// what stops the baseline from clobbering this richer detail.
+function publishScreen(): void {
+  const detail: ChatScreenDetail =
+    depth === 'picker'
+      ? { depth: 'picker' }
+      : { depth: 'conversation', sessionId: currentSessionId }
+  setCurrentScreen({ kind: 'tool', name: 'Chat', detail })
 }
 
 // List containers have a firmware hard limit of 20 items (docs/platform.md).
@@ -219,6 +246,10 @@ export async function finishListening() {
   currentSessionId = sessionAfterQuestion.id
   currentSessionTitle = sessionAfterQuestion.title
   currentMessages = sessionAfterQuestion.messages
+  // "New chat" only gets a real id once this first message lands - publish
+  // now so the companion page can follow to the right session the moment
+  // it exists, rather than only once Gemini has actually answered.
+  publishScreen()
 
   // concise: false - this is Chat's whole point, a real conversation read by
   // scrolling, not Jarvis's glance-and-go fallback. See core/gemini.ts.
@@ -241,6 +272,10 @@ export async function finishListening() {
   currentSessionTitle = sessionAfterAnswer.title
   currentMessages = sessionAfterAnswer.messages
   setContent(renderConversation(LIVE_CHAR_BUDGET))
+  // Republishes the same session id - still worth it, since the companion
+  // page re-fetches on every publish and this is the moment the full
+  // answer actually lands in storage for it to read.
+  publishScreen()
 }
 
 function stopListeningIfAny() {
@@ -270,7 +305,16 @@ export const chatTool: Tool = {
       currentSessionTitle = picked.title
     }
     depth = 'conversation'
+    publishScreen()
   },
+  // Re-asserts this tool's own detail after the shell's generic baseline
+  // publish (see app/main.ts's setCurrentScreen calls in openTool/restore,
+  // both of which call onOpen AFTER that baseline) - onListSelect and
+  // onBack publish their own detail directly and need no help, since
+  // nothing the shell does between them and their rebuild touches
+  // currentScreen at all; a fresh open is the one path with no such hook
+  // of its own until now.
+  onOpen: publishScreen,
   onLongPress: () => {
     if (depth !== 'conversation' || listening) return
     beginListening()
@@ -289,6 +333,7 @@ export const chatTool: Tool = {
     currentSessionId = null
     currentMessages = []
     currentSessionTitle = null
+    publishScreen()
     return 'tool'
   },
   onClose: stopListeningIfAny,
