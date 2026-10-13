@@ -10,7 +10,17 @@ progress, `[x]` done, `[?]` waiting on a decision.
    the official templates and the simulator automation API come first.
 2. Verify, then build. Anything marked [UNVERIFIED] in platform.md gets a
    probe on the simulator, then on hardware, before a feature depends on it.
-3. Glasses first. Every flow must work with ring or temple input, phone locked.
+3. Glasses first for input and control, companion first for depth. Every
+   flow must still work with ring or temple input, phone locked - the
+   glasses are what makes this hands-free, and nothing can require the
+   phone to be unlocked and in hand to work at all. But the glasses screen
+   is a small, monochrome, no-scroll surface; the companion page runs in a
+   real WebView with no such limit. For anything with more to show than
+   fits that constraint (full conversation history, lists of past runs,
+   settings with explanation), the companion is where it is actually read
+   and managed - the glasses stay the quick way to act, not the only way to
+   see. Added 2026-10-13 after building Chat's companion history view;
+   see Chat (G2-58) below for the first real example.
 4. Time and state survive suspension. Persist to storage, derive from
    timestamps, never trust a running interval.
 
