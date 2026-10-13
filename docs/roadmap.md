@@ -342,4 +342,7 @@ then on hardware by RJ. Results go back into platform.md with a [HW] tag.
   name rather than trusting this decision log to stay current on it.
   Chat (G2-58) reuses this same API key and the same core/gemini.ts client
   (grown a converse() function for a full turn history, not just one
-  question) rather than needing its own separate setup.
+  question) rather than needing its own separate setup. Renamed to
+  "Gemini" later in the same ticket, per direct request - every reference
+  below to "Chat" predates that rename; the tool's `name` and every
+  `=== ` check against it now read "Gemini".
