@@ -191,6 +191,40 @@ function toGeminiTurns(messages: readonly ChatMessage[]): GeminiTurn[] {
   return messages.map(m => ({ role: m.role, text: m.text }))
 }
 
+const THINKING_FRAMES = ['.', '..', '...']
+const THINKING_FRAME_MS = 500
+
+// A cycling ". .. ..." while waiting on Gemini - just a fixed string on a
+// setInterval, nothing running repeated model inference on the main thread
+// (that is what made live captions unsafe, see the comment at this
+// function's call site). mySession is the same staleness token every other
+// async step here already checks; the timer checks it too so a tick can
+// never land after the session that started it has moved on, and the
+// returned stop function lets the normal success/error paths cancel it one
+// tick earlier, before writing the real content over it.
+function startThinkingAnimation(question: string, mySession: number): () => void {
+  let frame = 0
+  const renderFrame = () => {
+    setContent(
+      clampToBudget(`You: ${question}\n\nThinking${THINKING_FRAMES[frame]}`, LIVE_CHAR_BUDGET),
+    )
+    frame = (frame + 1) % THINKING_FRAMES.length
+  }
+  renderFrame()
+  // Declared after the first renderFrame() call above, not before - the
+  // tick callback below only ever runs later, once setInterval itself has
+  // had a chance to return and assign this, so there is no risk of the
+  // callback reading `interval` before it exists.
+  const interval = setInterval(() => {
+    if (mySession !== sessionToken) {
+      clearInterval(interval)
+      return
+    }
+    renderFrame()
+  }, THINKING_FRAME_MS)
+  return () => clearInterval(interval)
+}
+
 async function beginListening() {
   const mySession = ++sessionToken
   listening = true
@@ -236,13 +270,22 @@ export async function finishListening() {
   }
 
   // Shows the question immediately, before Gemini has answered, rather than
-  // leaving the wearer staring at the old screen during the wait. A live
-  // setContent call, not the initial build, so this gets the larger budget.
-  setContent(clampToBudget(`You: ${result.transcript}\n\nThinking...`, LIVE_CHAR_BUDGET))
+  // leaving the wearer staring at the old screen during the wait, and
+  // keeps showing something is happening with a cycling ". .. ..." rather
+  // than a static word - safe to animate, unlike live captions (see the
+  // Jarvis history this session): this is a fixed, short string on a
+  // timer, not Whisper inference running repeatedly on the main thread, so
+  // there is nothing here that can block input processing the way that did.
+  // Stops itself the moment this session goes stale (closed/suspended
+  // while waiting), so a tick never lands on a container that moved on.
+  const stopThinkingAnimation = startThinkingAnimation(result.transcript, mySession)
 
   const question: ChatMessage = { role: 'user', text: result.transcript, timestamp: Date.now() }
   const sessionAfterQuestion = await chatSessions.appendMessage(currentSessionId, question)
-  if (mySession !== sessionToken) return
+  if (mySession !== sessionToken) {
+    stopThinkingAnimation()
+    return
+  }
   currentSessionId = sessionAfterQuestion.id
   currentSessionTitle = sessionAfterQuestion.title
   currentMessages = sessionAfterQuestion.messages
@@ -254,6 +297,7 @@ export async function finishListening() {
   // concise: false - this is Chat's whole point, a real conversation read by
   // scrolling, not Jarvis's glance-and-go fallback. See core/gemini.ts.
   const reply = await converse(apiKey, toGeminiTurns(currentMessages), false)
+  stopThinkingAnimation()
   if (mySession !== sessionToken) return
 
   if (reply.kind === 'error') {
