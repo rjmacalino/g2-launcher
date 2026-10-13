@@ -7,6 +7,7 @@ import {
 } from '../features/teleprompter/store'
 import { setActiveScriptContent, clearActiveScriptIfCurrent } from '../features/teleprompter/tool'
 import { getApiKey as getGeminiApiKey, setApiKey as setGeminiApiKey } from '../core/geminiSettings'
+import { chatSessions, type ChatSession } from '../features/chat/store'
 import { TOOL_NAMES } from '../app/registry'
 
 // The phone companion page: browse the same tools the glasses menu shows, and
@@ -36,6 +37,8 @@ type View =
   | { kind: 'editor'; collection: 'scripts'; item: Script | null }
   | { kind: 'editor'; collection: 'notes'; item: NoteDoc | null }
   | { kind: 'jarvis-settings' }
+  | { kind: 'chat-list' }
+  | { kind: 'chat-view'; session: ChatSession }
   | { kind: 'stub'; label: string }
 
 let view: View = { kind: 'menu' }
@@ -87,7 +90,8 @@ function renderMenu() {
       const name = el.dataset.name
       if (name === 'Teleprompter') view = { kind: 'list', collection: 'scripts' }
       else if (name === 'Notes') view = { kind: 'list', collection: 'notes' }
-      else if (name === 'Jarvis' || name === 'Chat') view = { kind: 'jarvis-settings' }
+      else if (name === 'Jarvis') view = { kind: 'jarvis-settings' }
+      else if (name === 'Chat') view = { kind: 'chat-list' }
       else view = { kind: 'stub', label: name ?? '' }
       render()
     })
@@ -163,6 +167,117 @@ async function renderJarvisSettings(statusMessage?: string) {
   root.querySelector('.clear')?.addEventListener('click', async () => {
     await setGeminiApiKey('')
     await renderJarvisSettings('Cleared.')
+  })
+}
+
+// --- Chat (companion is the full-capability side of this tool) ------------
+//
+// The glasses' own Chat screen can only ever show one "page" of a
+// conversation at a time, newest message first, because that display has no
+// programmatic scroll (see features/chat/tool.ts). The companion has no
+// such limit - a real browser view with normal scrolling - so this is where
+// a conversation is actually read end to end, in the order it was spoken,
+// and where old sessions get cleaned up. The glasses stay the quick way to
+// ask a new question hands-free; the phone is the better way to read what
+// came back.
+
+function formatWhen(ms: number): string {
+  const d = new Date(ms)
+  return d.toLocaleString(undefined, {
+    month: 'short',
+    day: 'numeric',
+    hour: 'numeric',
+    minute: '2-digit',
+  })
+}
+
+function chatRow(session: ChatSession): string {
+  const title = escapeHtml(session.title || '(untitled)')
+  const count = session.messages.length
+  return `
+    <li class="item" data-id="${escapeHtml(session.id)}">
+      <div class="item-title">${title}</div>
+      <div class="item-sub">${count} message${count === 1 ? '' : 's'} - ${formatWhen(session.updatedAt)}</div>
+      <div class="item-actions">
+        <button class="open">Open</button>
+        <button class="delete">Delete</button>
+      </div>
+    </li>
+  `
+}
+
+async function renderChatList() {
+  if (!root) return
+  const items = (await chatSessions.readAll()).sort((a, b) => b.updatedAt - a.updatedAt)
+
+  root.innerHTML = `
+    ${backButton()}
+    <p class="stub-body">
+      Full conversations, easier to read here than on the glasses.
+      <a class="gemini-settings-link" href="#">Gemini API key settings</a>
+    </p>
+    <ul class="list">
+      ${items.length === 0 ? '<li class="empty">No conversations yet. Long-press Chat on the glasses to start one.</li>' : ''}
+      ${items.map(chatRow).join('')}
+    </ul>
+  `
+
+  attachBack({ kind: 'menu' })
+
+  root.querySelector('.gemini-settings-link')?.addEventListener('click', e => {
+    e.preventDefault()
+    view = { kind: 'jarvis-settings' }
+    render()
+  })
+
+  root.querySelectorAll<HTMLElement>('.item').forEach(el => {
+    const id = el.dataset.id
+    if (!id) return
+
+    el.querySelector('.open')?.addEventListener('click', async () => {
+      const found = (await chatSessions.readAll()).find(s => s.id === id)
+      if (!found) return
+      view = { kind: 'chat-view', session: found }
+      render()
+    })
+
+    el.querySelector('.delete')?.addEventListener('click', async () => {
+      await chatSessions.remove(id)
+      render()
+    })
+  })
+}
+
+function chatBubble(message: ChatSession['messages'][number]): string {
+  const who = message.role === 'user' ? 'You' : 'Gemini'
+  return `
+    <div class="chat-bubble chat-bubble-${message.role}">
+      <div class="chat-bubble-who">${who} - ${formatWhen(message.timestamp)}</div>
+      <div class="chat-bubble-text">${escapeHtml(message.text)}</div>
+    </div>
+  `
+}
+
+function renderChatView(session: ChatSession) {
+  if (!root) return
+
+  root.innerHTML = `
+    ${backButton()}
+    <div class="chat-transcript">
+      <div class="chat-transcript-title">${escapeHtml(session.title || '(untitled)')}</div>
+      ${session.messages.map(chatBubble).join('')}
+    </div>
+    <div class="editor-actions">
+      <button class="delete">Delete this conversation</button>
+    </div>
+  `
+
+  attachBack({ kind: 'chat-list' })
+
+  root.querySelector('.delete')?.addEventListener('click', async () => {
+    await chatSessions.remove(session.id)
+    view = { kind: 'chat-list' }
+    render()
   })
 }
 
@@ -484,6 +599,12 @@ function render() {
       return
     case 'jarvis-settings':
       renderJarvisSettings()
+      return
+    case 'chat-list':
+      renderChatList()
+      return
+    case 'chat-view':
+      renderChatView(view.session)
       return
   }
 }
