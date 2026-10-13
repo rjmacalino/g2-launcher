@@ -784,12 +784,20 @@ const unsubscribe = bridge.onEvenHubEvent(event => {
     }
   }
 
-  // Same shape as Jarvis just above, for Chat's own local long-press
-  // gesture (see the LONG_PRESS_EVENT carve-out below): only intercepted
-  // while actually listening, so a double-press on a conversation that is
-  // just sitting there read falls through to the normal "leave" behaviour
-  // instead of trying to stop a recording that was never started.
-  if (isDoubleTap && screen.kind === 'tool' && TOOLS[screen.index].name === 'Chat') {
+  // Chat ends its own recording on a single tap, not a double-press like
+  // Jarvis - per direct request, double-tap felt wrong here. Checked before
+  // the isDoubleTap branch below for the same reason as Jarvis's carve-out
+  // above: this must not fall through to the universal "tap does nothing on
+  // a text screen" default. isDoubleTap is excluded explicitly so a genuine
+  // double-tap still falls through to the normal "leave" behaviour below
+  // rather than also being read as "stop listening" - only intercepted
+  // while actually listening, so a tap on a conversation that is just
+  // sitting there read does nothing instead of trying to stop a recording
+  // that was never started.
+  const isSingleTap =
+    !isDoubleTap &&
+    (sysType === OsEventTypeList.CLICK_EVENT || textType === OsEventTypeList.CLICK_EVENT)
+  if (isSingleTap && screen.kind === 'tool' && TOOLS[screen.index].name === 'Chat') {
     if (isChatListening()) {
       finishChatListening()
       return

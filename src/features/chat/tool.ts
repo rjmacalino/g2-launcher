@@ -28,8 +28,10 @@ import type { Tool } from '../../core/tool'
 // only starts listening HERE while Chat's own conversation screen is
 // active (the shell carves this tool out from the global
 // long-press-reaches-Jarvis reservation the same way it already does for
-// Lab - see app/main.ts), and a double-press ends it, exactly like Jarvis's
-// own gesture shape, just scoped to one tool instead of every screen.
+// Lab - see app/main.ts). Ending it is a single tap, not Jarvis's
+// double-press - per direct request, double-tap felt wrong for a
+// conversation the wearer is actively having (see the isSingleTap carve-out
+// in app/main.ts).
 type Depth = 'picker' | 'conversation'
 let depth: Depth = 'picker'
 
@@ -128,16 +130,16 @@ async function beginListening() {
     setContent('Could not start the glasses microphone.\n\nLong-press to try again.')
     return
   }
-  setContent('Listening...\n\n(double-press when done)')
+  setContent('Listening...\n\n(tap when done)')
 }
 
 // Ends the current recording, transcribes it, and sends the WHOLE
 // conversation so far plus the new question to Gemini in one request -
 // Gemini has no memory of its own between calls, so every prior exchange
 // has to be resent each time for a follow-up to actually be a follow-up.
-// Exported so the shell can call it directly on a double-press while this
-// tool's conversation screen is actively listening (see app/main.ts) - same
-// shape as Jarvis's own exported finishListening.
+// Exported so the shell can call it directly on a tap while this tool's
+// conversation screen is actively listening (see app/main.ts) - same shape
+// as Jarvis's own exported finishListening, just a different gesture.
 export async function finishListening() {
   const mySession = sessionToken
   listening = false
