@@ -3,6 +3,7 @@ import { converse, type GeminiTurn } from '../../core/gemini'
 import { getApiKey as getGeminiApiKey } from '../../core/geminiSettings'
 import { chatSessions, type ChatMessage, type ChatSession } from './store'
 import { setContent } from '../../platform/page'
+import { PAGE_INNER_WIDTH, PAGE_TEXT_ROWS, paginate } from './paging'
 import { setCurrentScreen } from '../../core/currentScreen'
 import { requestRebuild } from '../../core/rebuild'
 import type { Tool } from '../../core/tool'
@@ -159,6 +160,7 @@ async function refresh(): Promise<void> {
   currentMessages = []
   currentSessionTitle = null
   lastErrorQuestion = null
+  pages = []
   const cached = chatSessions.peek()
   pickerSessions = sortForPicker(cached ?? [])
   if (cached === null) {
@@ -196,29 +198,47 @@ function syncPickerFromCurrent(): void {
   pickerSessions = [updated, ...withoutCurrent].slice(0, PICKER_MAX_SESSIONS)
 }
 
-// Only the latest exchange, not the running history - per direct request,
-// after older messages were still eating most of the room Gemini's own
-// answer needed. The glasses screen shows the question that produced the
-// CURRENT answer and that answer, nothing further back; the full history,
-// every older exchange included, is what the companion page's chat-view is
-// for (see companion/main.ts) - a real browser view with no size limit at
-// all, unlike this one.
+// THE FULL ANSWER, PAGED - per direct request: show all of it on the
+// glasses, never cut it, never send the wearer to the companion page.
 //
-// Two budgets, not one, because the firmware's own hard character ceiling
-// (docs/platform.md) is NOT the same for every call: 1000 on create/rebuild
-// (what initialContent feeds into), 2000 on a later textContainerUpgrade
-// (what every setContent() call during an active session uses). Using the
-// stricter number everywhere would cut an answer in half for no reason on
-// every call except the very first one. Both numbers are left with a little
-// margin rather than riding right up to the measured figure, since this is
-// a firmware limit we measured, not a guarantee it is exact to the byte.
-// Per direct request, this is meant to let an answer run as long as it
-// actually needs and be read by scrolling, not be cut short on purpose -
-// LIVE_CHAR_BUDGET is set as close to the real 2000-char ceiling as that
-// margin allows, which is what every answer actually renders through.
-const ENTRY_CHAR_BUDGET = 900
-const LIVE_CHAR_BUDGET = 1900
-const TRUNCATION_NOTE = '\n\n(continued - read the rest on the companion page)'
+// One screen update cannot carry an arbitrarily long answer: the firmware
+// rejects a text update past its own hard ceiling (docs/platform.md: 1000
+// characters on create/rebuild, 2000 on an in-place upgrade). So the latest
+// exchange (question, divider, answer) is laid out here into pages that
+// each fit exactly one screen, and swiping moves between them - down for
+// the next page, up for the previous one (see onScroll below). Each page is
+// a few hundred characters, far under either ceiling, so answer length is
+// unlimited.
+//
+// Pages fit ONE screen on purpose, never more: with nothing to scroll
+// inside a page, a swipe can only mean "change page". That holds whether
+// the firmware sends its scroll events on every swipe or only when a
+// container is already at its top or bottom - which has not been verified
+// either way on this hardware.
+//
+// Line breaks are decided here, not left to the firmware: words are laid
+// out with Even Realities' own LVGL-matching measurement (platform/text.ts),
+// with a small safety margin, and every line ends in an explicit newline,
+// so the firmware never wraps anything itself and a page cannot overflow.
+// The layout itself lives in features/chat/paging.ts (pure, and tested).
+
+// Questions can now run to three minutes of speech (core/voiceCapture.ts) -
+// thousands of characters. The full question is part of the paged view;
+// status screens (Thinking, errors) show just its start, so they stay well
+// inside one update and one screen.
+const STATUS_QUESTION_MAX_CHARS = 160
+
+function shortQuestion(question: string): string {
+  return question.length > STATUS_QUESTION_MAX_CHARS
+    ? `${question.slice(0, STATUS_QUESTION_MAX_CHARS - 3)}...`
+    : question
+}
+
+// The pages currently on screen, and which one is showing. Empty whenever
+// something other than the conversation is on screen (listening, thinking,
+// an error), so a swipe there does nothing.
+let pages: string[] = []
+let pageIndex = 0
 
 // A short horizontal rule between the question and the answer - U+2500,
 // confirmed available in the firmware font (docs/platform.md's glyph
@@ -236,27 +256,25 @@ function formatMessage(m: ChatMessage): string {
   return `${m.role === 'user' ? 'You' : 'Gemini'}: ${m.text}`
 }
 
-function clampToBudget(text: string, budget: number): string {
-  if (text.length <= budget) return text
-  return text.slice(0, Math.max(budget - TRUNCATION_NOTE.length, 0)) + TRUNCATION_NOTE
-}
-
-// The last message, plus the one before it if that is the question which
-// produced it (always true in normal use - messages strictly alternate
-// user/model) - not the whole array. Handles the one case where the last
-// two entries are NOT a question-then-answer pair (picking a session whose
-// final message happens to be a user question with no reply yet, e.g. a
-// prior attempt that never got a Gemini answer) by only pairing them up
-// when the roles actually differ.
-function renderConversation(budget: number): string {
-  if (currentMessages.length === 0) return 'No messages yet.\n\nLong-press to ask something.'
+// The latest exchange only - the last message, plus the one before it if
+// that is the question which produced it (always true in normal use -
+// messages strictly alternate user/model). Earlier exchanges in the same
+// conversation are on the companion page. Returns the FIRST page and
+// resets paging to it, so a new answer always opens at its start.
+function renderConversation(): string {
+  if (currentMessages.length === 0) {
+    pages = []
+    return 'No messages yet.\n\nLong-press to ask something.'
+  }
   const last = currentMessages[currentMessages.length - 1]
   const secondLast = currentMessages[currentMessages.length - 2]
   const parts =
     secondLast && secondLast.role !== last.role
       ? [formatMessage(secondLast), formatMessage(last)]
       : [formatMessage(last)]
-  return clampToBudget(parts.join(DIVIDER), budget)
+  pages = paginate(parts.join(DIVIDER), PAGE_INNER_WIDTH, PAGE_TEXT_ROWS)
+  pageIndex = 0
+  return pages[0]
 }
 
 function toGeminiTurns(messages: readonly ChatMessage[]): GeminiTurn[] {
@@ -318,6 +336,7 @@ async function beginListening() {
   // once the wearer starts speaking again, whatever failed before is no
   // longer what a tap should resend.
   lastErrorQuestion = null
+  pages = []
   const ok = await start(() => {
     if (mySession !== sessionToken) return
     finishListening()
@@ -381,12 +400,10 @@ async function askGemini(question: string, mySession: number) {
   // up on the first one, and a silent multi-second wait with no change on
   // screen reads as broken even though it is working exactly as intended.
   let retryNote = ''
+  pages = []
   startLiveStatus(mySession, (dots, elapsedSeconds) => {
     setContent(
-      clampToBudget(
-        `You: ${question}${DIVIDER}Thinking${dots} (${elapsedSeconds}s)${retryNote}`,
-        LIVE_CHAR_BUDGET,
-      ),
+      `You: ${shortQuestion(question)}${DIVIDER}Thinking${dots} (${elapsedSeconds}s)${retryNote}`,
     )
   })
 
@@ -404,11 +421,8 @@ async function askGemini(question: string, mySession: number) {
     lastErrorQuestion = question
     const triedNote = attemptsMade > 1 ? ` after ${attemptsMade} tries` : ''
     setContent(
-      clampToBudget(
-        `You: ${question}${DIVIDER}Couldn't reach Gemini${triedNote} (${reply.message}).` +
-          '\n\n(tap to retry, double-tap to go back)',
-        LIVE_CHAR_BUDGET,
-      ),
+      `You: ${shortQuestion(question)}${DIVIDER}Couldn't reach Gemini${triedNote} (${reply.message}).` +
+        '\n\n(tap to retry, double-tap to go back)',
     )
     return
   }
@@ -430,7 +444,7 @@ async function askGemini(question: string, mySession: number) {
   if (lastErrorQuestion === question) lastErrorQuestion = null
   if (!stillRelevant()) return
   currentMessages = answeredMessages
-  setContent(renderConversation(LIVE_CHAR_BUDGET))
+  setContent(renderConversation())
   publishScreen()
 }
 
@@ -547,6 +561,7 @@ export const chatTool: Tool = {
     }
     depth = 'conversation'
     lastErrorQuestion = null
+    pages = []
     publishScreen()
   },
   // Re-asserts this tool's own detail after the shell's generic baseline
@@ -578,15 +593,29 @@ export const chatTool: Tool = {
     currentMessages = []
     currentSessionTitle = null
     lastErrorQuestion = null
+    pages = []
     publishScreen()
     return 'tool'
   },
   onClose: stopListeningIfAny,
   onSuspend: stopListeningIfAny,
-  // Never actually rendered for the picker (contentKind is 'list' there);
-  // for 'conversation' this is what a fresh rebuild into the depth reads
-  // (see onListSelect above) before any listening has happened yet. Goes
-  // through create/rebuild, the stricter of the two firmware limits, hence
-  // the smaller budget (see ENTRY_CHAR_BUDGET above).
-  initialContent: () => renderConversation(ENTRY_CHAR_BUDGET),
+  // Swipe down: next page of the answer; swipe up: previous page (see the
+  // paging comment near paginate above). Ignored while anything other than
+  // the conversation is on screen - recording, transcribing, thinking -
+  // which is exactly when pages is empty or a live status is running.
+  onScroll: delta => {
+    if (depth !== 'conversation' || listening || stopActiveStatus !== null) return
+    if (pages.length <= 1) return
+    const next = Math.min(Math.max(pageIndex + delta, 0), pages.length - 1)
+    if (next === pageIndex) return
+    pageIndex = next
+    setContent(pages[pageIndex])
+  },
+  // Never actually rendered for the picker (contentKind is 'list' there).
+  // For a conversation: the page already being read, if any - so "No" on the
+  // leave prompt, which rebuilds this same page, puts the wearer back where
+  // they were rather than at the start of the answer. Otherwise the first
+  // page of the latest exchange. Every page is far under the firmware's
+  // 1000-character ceiling for a rebuild.
+  initialContent: () => (pages.length > 0 ? pages[pageIndex] : renderConversation()),
 }

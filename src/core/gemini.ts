@@ -43,28 +43,22 @@ const SYSTEM_INSTRUCTION_CONCISE =
   'Answer in one or two short sentences, plain text, no markdown, no lists.'
 
 const SYSTEM_INSTRUCTION_FULL =
-  'You are a conversational assistant on smart glasses with a small, ' +
-  'scrollable text display. Answer fully and naturally, the way you would ' +
-  'in any chat conversation - do not cut yourself short to save space, the ' +
-  'wearer can scroll. Keep it to a few short paragraphs at most and finish ' +
-  'your last sentence rather than trailing off. Plain text only, no ' +
-  'markdown, no bullet lists.'
+  'You are a conversational assistant on smart glasses with a small text ' +
+  'display the wearer pages through. Answer fully and naturally, the way ' +
+  'you would in any chat conversation - do not cut yourself short to save ' +
+  'space. Finish your last sentence rather than trailing off. Plain text ' +
+  'only, no markdown, no bullet lists.'
 
 // Jarvis's cap keeps a glance-read answer from running past what a single
-// unscrolled screen can show. Chat's is generous rather than absent, so a
-// reply isn't artificially cut short, matching the direct request that
-// Chat's answers run as long as they actually need to and be read by
-// scrolling. 600 was tried first and came back too big too often: the
-// glasses text container has a real, measured hard ceiling on how much one
-// update can carry (docs/platform.md), and a 600-token answer regularly
-// landed past it, which meant features/chat/tool.ts's own safety clamp (see
-// LIVE_CHAR_BUDGET there) kept visibly kicking in with its "continued on the
-// companion page" note - exactly what was asked NOT to happen. 400 tokens
-// stays comfortably under that ceiling in ordinary English (roughly 4 to 5
-// characters per token), so the clamp should now be a true rare-case safety
-// net rather than something a normal answer actually hits.
+// unscrolled screen can show. Chat's used to be held at 400 tokens for one
+// reason only: a single glasses update has a hard size ceiling
+// (docs/platform.md), and anything longer got cut. features/chat/tool.ts
+// now splits an answer into one-screen pages instead, so the display no
+// longer limits answer length at all - per direct request, the full answer,
+// never cut. This cap is just a ceiling against a runaway reply eating the
+// free tier's quota: roughly 4,000 characters, several pages.
 const MAX_OUTPUT_TOKENS_CONCISE = 120
-const MAX_OUTPUT_TOKENS_FULL = 400
+const MAX_OUTPUT_TOKENS_FULL = 1024
 
 export type GeminiResult = { kind: 'answer'; text: string } | { kind: 'error'; message: string }
 
