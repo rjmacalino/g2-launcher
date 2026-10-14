@@ -343,6 +343,11 @@ then on hardware by RJ. Results go back into platform.md with a [HW] tag.
   Chat (G2-58) reuses this same API key and the same core/gemini.ts client
   (grown a converse() function for a full turn history, not just one
   question) rather than needing its own separate setup. Renamed to
-  "Gemini" later in the same ticket, per direct request - every reference
-  below to "Chat" predates that rename; the tool's `name` and every
-  `=== ` check against it now read "Gemini".
+  "Gemini" later in the same ticket, then (2026-10-15, still G2-58) merged
+  with the one-shot Jarvis into a single assistant named **Jarvis**, per
+  direct request: the launcher has one Jarvis (its conversation list),
+  long-press from anywhere opens a new Jarvis conversation, local commands
+  (the timer) run first and hand the wearer back, everything else goes to
+  Gemini as the model underneath. The old features/jarvis tool is deleted;
+  the merged tool's code still lives in features/chat. References above
+  and below to "Chat" or "Gemini" as a tool predate the merge.
