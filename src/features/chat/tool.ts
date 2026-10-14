@@ -5,6 +5,7 @@ import { chatSessions, type ChatMessage, type ChatSession } from './store'
 import { setContent } from '../../platform/page'
 import { status } from '../../platform/bridge'
 import { PAGE_INNER_WIDTH, paginate, type Page } from './paging'
+import { buildDigest } from './digest'
 import { setCurrentScreen } from '../../core/currentScreen'
 import { requestRebuild } from '../../core/rebuild'
 import type { Tool } from '../../core/tool'
@@ -459,9 +460,16 @@ async function askGemini(question: string) {
   let attemptsMade = 1
   // concise: false - this is Chat's whole point, a real conversation read by
   // scrolling, not Jarvis's glance-and-go fallback. See core/gemini.ts.
-  const reply = await converse(apiKey, toGeminiTurns(messagesAtAsk), false, (attempt, max) => {
-    attemptsMade = attempt
-    thinkingRetryNote = `\nRetrying (${attempt}/${max})...`
+  const reply = await converse(apiKey, toGeminiTurns(messagesAtAsk), {
+    concise: false,
+    onRetry: (attempt, max) => {
+      attemptsMade = attempt
+      thinkingRetryNote = `\nRetrying (${attempt}/${max})...`
+    },
+    // The wearer's other recent conversations, from the in-memory copy
+    // (peek, never a storage read - see features/chat/store.ts). Empty if
+    // the startup load has not finished yet; this question still goes out.
+    background: buildDigest(chatSessions.peek() ?? [], targetSessionId),
   })
   inFlightQuestion = null
   stopActiveStatus?.()

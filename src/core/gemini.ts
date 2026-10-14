@@ -133,19 +133,25 @@ async function requestOnce(
 // every prior exchange has to be resent each time. Used by both Jarvis
 // (a single-turn conversation, see ask() below) and Chat (a real multi-turn
 // one, see features/chat/tool.ts).
-//
-// concise defaults to true (Jarvis's own need) so ask() below needs no
-// change; Chat passes false explicitly. onRetry, when given, is called
-// right before each retry attempt (never for the first try) with the
-// attempt number about to start and the total attempts allowed - Chat
-// uses this to show "retrying (2/3)" instead of leaving the wearer
-// looking at an unchanging "Thinking..." through what might be several
-// seconds of silent retries (see features/chat/tool.ts).
+export type ConverseOptions = {
+  // Short glance-read answers (Jarvis's need, the default) or full ones
+  // read by paging (Chat's).
+  concise?: boolean
+  // Called right before each retry attempt (never for the first try) with
+  // the attempt about to start and the total allowed - Chat shows
+  // "Retrying (2/3)" with it instead of an unchanging "Thinking...".
+  onRetry?: (attempt: number, maxAttempts: number) => void
+  // Extra context for the system instruction, from the caller - Chat sends
+  // a short digest of the wearer's other recent conversations (see
+  // features/chat/digest.ts). Built by the caller, not here, because it
+  // comes from a feature's own data, and core/ never imports features/.
+  background?: string
+}
+
 export async function converse(
   apiKey: string,
   turns: readonly GeminiTurn[],
-  concise = true,
-  onRetry?: (attempt: number, maxAttempts: number) => void,
+  { concise = true, onRetry, background }: ConverseOptions = {},
 ): Promise<GeminiResult> {
   // Folded in here, once, rather than left to each caller - both Jarvis
   // and Chat should tailor answers to the same person, and this is the
@@ -154,10 +160,14 @@ export async function converse(
   // when nothing has been entered on the companion page, which is the
   // same as not having this feature at all.
   const aboutMe = await getAboutMe()
-  const baseInstruction = concise ? SYSTEM_INSTRUCTION_CONCISE : SYSTEM_INSTRUCTION_FULL
-  const systemInstruction = aboutMe
-    ? `${baseInstruction}\n\nBackground on the person you're talking to - use it to tailor your answer naturally, without mentioning that you were told this: ${aboutMe}`
-    : baseInstruction
+  const parts = [concise ? SYSTEM_INSTRUCTION_CONCISE : SYSTEM_INSTRUCTION_FULL]
+  if (aboutMe) {
+    parts.push(
+      `Background on the person you're talking to - use it to tailor your answer naturally, without mentioning that you were told this: ${aboutMe}`,
+    )
+  }
+  if (background) parts.push(background)
+  const systemInstruction = parts.join('\n\n')
 
   let lastErrorMessage = 'unknown error'
   for (let attempt = 1; attempt <= MAX_ATTEMPTS; attempt++) {
