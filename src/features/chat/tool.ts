@@ -3,6 +3,7 @@ import { converse, type GeminiTurn } from '../../core/gemini'
 import { getApiKey as getGeminiApiKey } from '../../core/geminiSettings'
 import { chatSessions, type ChatMessage, type ChatSession } from './store'
 import { setContent } from '../../platform/page'
+import { status } from '../../platform/bridge'
 import { PAGE_INNER_WIDTH, paginate, type Page } from './paging'
 import { setCurrentScreen } from '../../core/currentScreen'
 import { requestRebuild } from '../../core/rebuild'
@@ -160,6 +161,7 @@ async function refresh(): Promise<void> {
   currentMessages = []
   currentSessionTitle = null
   lastErrorQuestion = null
+  interrupted = false
   pages = []
   const cached = chatSessions.peek()
   pickerSessions = sortForPicker(cached ?? [])
@@ -313,9 +315,9 @@ let stopActiveStatus: (() => void) | null = null
 function startLiveStatus(
   mySession: number,
   render: (dots: string, elapsedSeconds: number) => void,
+  startedAt = Date.now(),
 ): () => void {
   stopActiveStatus?.()
-  const startedAt = Date.now()
   let frame = 0
   const tick = () => {
     if (mySession !== sessionToken) {
@@ -335,9 +337,24 @@ function startLiveStatus(
   return stop
 }
 
+// When the current recording started, so "Transcribing" can say how much
+// speech it is working through (see finishListening).
+let listeningStartedAt = 0
+
+// Set when a recording is cut off by the app being sent to the background
+// (see stopListeningIfAny), so the wearer is told on return instead of
+// facing a frozen "Listening" screen that no longer responds to a tap.
+let interrupted = false
+
+// The question a Gemini request is currently in flight for, if any - so a
+// return from the background can put the "Thinking" counter back up (see
+// onResume), since going to the background stops it.
+let inFlightQuestion: string | null = null
+
 async function beginListening() {
   const mySession = ++sessionToken
   listening = true
+  interrupted = false
   // A new recording means a new question, not a retry of the old one -
   // once the wearer starts speaking again, whatever failed before is no
   // longer what a tap should resend.
@@ -353,6 +370,11 @@ async function beginListening() {
     setContent('Could not start the glasses microphone.\n\nLong-press to try again.')
     return
   }
+  listeningStartedAt = Date.now()
+  // Status-line breadcrumbs through the whole voice flow (here, on a tap,
+  // on an interruption), so a report of "stuck" says exactly which step
+  // it stopped at - see the companion page's status line.
+  status('Gemini: recording')
   startLiveStatus(mySession, (dots, elapsedSeconds) => {
     setContent(`Listening${dots} (${elapsedSeconds}s)\n\n(tap when done)`)
   })
@@ -365,7 +387,25 @@ async function beginListening() {
 // first attempt - NOT re-appended, that would duplicate it in history).
 // question is passed separately only for what to show while waiting and on
 // a repeat failure; the actual request body is currentMessages itself.
-async function askGemini(question: string, mySession: number) {
+// The "Thinking" display, as its own function so onResume can put it back
+// after a trip to the background stopped it. Elapsed time counts from when
+// the request started, not from the restart.
+let thinkingStartedAt = 0
+let thinkingRetryNote = ''
+
+function showThinking(question: string): void {
+  startLiveStatus(
+    sessionToken,
+    (dots, elapsedSeconds) => {
+      setContent(
+        `You: ${shortQuestion(question)}${DIVIDER}Thinking${dots} (${elapsedSeconds}s)${thinkingRetryNote}`,
+      )
+    },
+    thinkingStartedAt,
+  )
+}
+
+async function askGemini(question: string) {
   // What "this is still relevant" actually means for rendering a network
   // response, as opposed to mySession/sessionToken, which exists to stop
   // overlapping VOICE CAPTURE lifecycles (a double-start), not to gate a
@@ -382,7 +422,9 @@ async function askGemini(question: string, mySession: number) {
   const stillRelevant = () => depth === 'conversation' && currentSessionId === targetSessionId
 
   const apiKey = await getGeminiApiKey()
-  if (mySession !== sessionToken) return
+  // Not the voice-capture session token - see finishListening for how that
+  // silently dropped questions on a brief trip to the background.
+  if (!stillRelevant()) return
   if (!apiKey) {
     setContent(
       'No Gemini API key set up yet.\n\n' +
@@ -391,36 +433,29 @@ async function askGemini(question: string, mySession: number) {
     return
   }
 
-  // Shows the question immediately, before Gemini has answered, and keeps
-  // showing elapsed time rather than a static word - safe to animate,
-  // unlike live captions (see the Jarvis history this session): this is a
-  // fixed string on a timer, not Whisper inference running repeatedly on
-  // the main thread, so there is nothing here that can block input
-  // processing the way that did. Stops itself the moment this session
-  // goes stale (closed/suspended while waiting), so a tick never lands on
-  // a container that moved on.
-  //
-  // retryNote is set by converse()'s onRetry callback below and read by
-  // every tick after that - core/gemini.ts now retries automatically on a
-  // transient failure (503, 429, a dropped connection) instead of giving
-  // up on the first one, and a silent multi-second wait with no change on
-  // screen reads as broken even though it is working exactly as intended.
-  let retryNote = ''
+  // Shows the question immediately, before Gemini has answered, with
+  // elapsed time - safe to animate, unlike live captions (see the Jarvis
+  // history this session): a fixed string on a timer, not Whisper running
+  // on the main thread. thinkingRetryNote is set by converse()'s onRetry
+  // callback below, so automatic retries show up on screen instead of
+  // looking like a hang.
   pages = []
-  startLiveStatus(mySession, (dots, elapsedSeconds) => {
-    setContent(
-      `You: ${shortQuestion(question)}${DIVIDER}Thinking${dots} (${elapsedSeconds}s)${retryNote}`,
-    )
-  })
+  thinkingStartedAt = Date.now()
+  thinkingRetryNote = ''
+  inFlightQuestion = question
+  status('Gemini: asking')
+  showThinking(question)
 
   let attemptsMade = 1
   // concise: false - this is Chat's whole point, a real conversation read by
   // scrolling, not Jarvis's glance-and-go fallback. See core/gemini.ts.
   const reply = await converse(apiKey, toGeminiTurns(messagesAtAsk), false, (attempt, max) => {
     attemptsMade = attempt
-    retryNote = `\nRetrying (${attempt}/${max})...`
+    thinkingRetryNote = `\nRetrying (${attempt}/${max})...`
   })
+  inFlightQuestion = null
   stopActiveStatus?.()
+  status(reply.kind === 'error' ? `Gemini: failed (${reply.message})` : 'Gemini: answered')
 
   if (reply.kind === 'error') {
     if (!stillRelevant()) return
@@ -462,33 +497,37 @@ async function askGemini(question: string, mySession: number) {
 // conversation screen is actively listening (see app/main.ts) - same shape
 // as Jarvis's own exported finishListening, just a different gesture.
 export async function finishListening() {
-  const mySession = sessionToken
   listening = false
+  const sessionIdBeforeAsking = currentSessionId
   // Stop the Listening counter now, not whenever the next startLiveStatus
   // call happens to land - otherwise it keeps ticking (and overwriting
   // the screen) all through transcription, and would overwrite the
   // "Didn't catch that" error below entirely, since nothing else would
   // ever stop it on that path.
   stopActiveStatus?.()
-  // Recordings can now run to three minutes (core/voiceCapture.ts), and
-  // transcribing that much on the phone takes real time - without this the
-  // screen sat on its last "Listening" frame the whole while, looking
-  // frozen. The counter may stall while a chunk is being transcribed (that
-  // work shares the main thread), but it says what is actually happening.
-  startLiveStatus(mySession, (dots, elapsedSeconds) => {
-    setContent(`Transcribing${dots} (${elapsedSeconds}s)`)
-  })
+  // A fixed message, not a ticking counter: transcription runs Whisper on
+  // the same main thread the counter's timer needs, so the counter could
+  // never move [HW - it sat at 0s the whole time]. The length of what was
+  // recorded is real, and it tells the wearer roughly how long to expect.
+  const recordedSeconds = Math.max(1, Math.round((Date.now() - listeningStartedAt) / 1000))
+  status(`Gemini: transcribing ${recordedSeconds}s of audio`)
+  setContent(`Transcribing ${recordedSeconds}s of speech...\n\n(this can take a moment)`)
   const result = await stop()
-  stopActiveStatus?.()
-  if (mySession !== sessionToken) return
-
-  if (result.kind === 'error') {
-    setContent(`Didn't catch that (${result.message}).\n\nLong-press to try again.`)
+  // Dropped only if the wearer actually moved on - left this conversation,
+  // or started a new recording. The old check here was the voice-capture
+  // session token, which a brief app-in-background blip also bumps: a
+  // question that finished transcribing during one was silently thrown
+  // away, leaving "Transcribing" on screen for good.
+  if (depth !== 'conversation' || currentSessionId !== sessionIdBeforeAsking || listening) {
+    status('Gemini: question dropped - conversation changed while transcribing')
     return
   }
 
-  if (depth !== 'conversation') return
-
+  if (result.kind === 'error') {
+    status(`Gemini: transcription failed (${result.message})`)
+    setContent(`Didn't catch that (${result.message}).\n\nLong-press to try again.`)
+    return
+  }
   // Added in memory right away, no await - the old version awaited a
   // storage write here before asking Gemini, which is exactly the kind of
   // wait a slow or stuck host read turned into a frozen screen.
@@ -506,7 +545,7 @@ export async function finishListening() {
   // publish now so the companion page can follow to the right session.
   publishScreen()
 
-  await askGemini(result.transcript, mySession)
+  await askGemini(result.transcript)
 }
 
 // Tries the SAME question again with no new recording, triggered by a
@@ -518,10 +557,11 @@ export async function finishListening() {
 // going through finishListening - appending the question again would
 // duplicate it in history.
 export async function retry() {
-  if (lastErrorQuestion === null) return
+  // A second tap while the first retry is still waiting on Gemini would
+  // otherwise send the same question twice.
+  if (lastErrorQuestion === null || inFlightQuestion !== null) return
   const question = lastErrorQuestion
-  const mySession = ++sessionToken
-  await askGemini(question, mySession)
+  await askGemini(question)
 }
 
 function stopListeningIfAny() {
@@ -535,7 +575,27 @@ function stopListeningIfAny() {
   if (listening) {
     listening = false
     cancel()
+    // The recording is gone, but the screen still says "Listening" and a
+    // tap no longer does anything - a dead end, unless onResume tells the
+    // wearer what happened (see below).
+    interrupted = true
+    status('Gemini: recording stopped before it was finished')
   }
+}
+
+// Back from the background (or the system menu, which reports the same
+// way - docs/platform.md, Contextual menu). Puts back whatever going to the
+// background stopped: an interrupted recording becomes a clear message,
+// and a question still waiting on Gemini gets its "Thinking" counter back.
+function resume(): void {
+  if (depth !== 'conversation') return
+  if (interrupted) {
+    interrupted = false
+    pages = []
+    setContent('Recording was interrupted.\n\nLong-press to ask again.')
+    return
+  }
+  if (inFlightQuestion !== null && stopActiveStatus === null) showThinking(inFlightQuestion)
 }
 
 export const chatTool: Tool = {
@@ -567,6 +627,7 @@ export const chatTool: Tool = {
     }
     depth = 'conversation'
     lastErrorQuestion = null
+    interrupted = false
     pages = []
     publishScreen()
   },
@@ -605,6 +666,7 @@ export const chatTool: Tool = {
   },
   onClose: stopListeningIfAny,
   onSuspend: stopListeningIfAny,
+  onResume: resume,
   // Called only for a swipe at a page's top (-1) or bottom (1) edge - the
   // firmware handles scrolling within a page itself. Turns the page per the
   // arm-then-turn rule above. Ignored while anything other than the
