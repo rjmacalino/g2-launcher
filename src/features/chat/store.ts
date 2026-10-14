@@ -67,24 +67,81 @@ const TITLE_MAX_CHARS = 64
 // pile up before the oldest start getting dropped.
 const MAX_STORED_SESSIONS = 40
 
+// A count cap alone turned out not to be enough - confirmed [HW]: Chat
+// still timed out opening ("Failed to open Gemini: timed out") even after
+// MAX_STORED_SESSIONS above landed, with every other tool opening fine.
+// Count was only ever a proxy for the thing that actually matters to
+// bridge.getLocalStorage/setLocalStorage: how big the serialized blob
+// actually is. That proxy broke the moment Gemini answers stopped being
+// kept short on purpose (see core/gemini.ts) - a handful of sessions with
+// real multi-hundred-character answers can already be as large as 40
+// short ones were. This bounds the real thing instead of a stand-in for
+// it.
+const MAX_STORED_CHARS = 20_000
+
 async function readAllSessions(): Promise<ChatSession[]> {
   try {
     const raw = await bridge.getLocalStorage(STORAGE_KEY)
     const parsed = JSON.parse(raw)
     if (!Array.isArray(parsed)) return []
-    return parsed.filter(isChatSession)
+    const all = parsed.filter(isChatSession)
+    // Self-heals data that got oversized before this cap existed. The
+    // write-time cap below only shrinks a blob the NEXT time something is
+    // saved - it does nothing for a blob that is already too big, which is
+    // exactly what was timing out the glasses' own open attempt (that path
+    // only reads, see features/chat/tool.ts's beforeOpen). Writing the
+    // trimmed version back here means the first read slow enough to
+    // actually complete (the companion page has no such timeout to give
+    // up against) fixes it for every read after, glasses included,
+    // without the wearer having to manually delete anything first.
+    // Sorted newest-first before slicing/bounding - boundBySize drops from
+    // the end expecting that order, same as writeAllSessions below.
+    const byCount = [...all].sort((a, b) => b.updatedAt - a.updatedAt).slice(0, MAX_STORED_SESSIONS)
+    const bounded = boundBySize(byCount)
+    // Compares serialized size, not just session count - boundBySize can
+    // also shrink a single oversized session's own message list while
+    // leaving the session count unchanged, which a plain length check on
+    // the array would miss entirely.
+    if (JSON.stringify(bounded).length !== JSON.stringify(byCount).length) {
+      writeAllSessions(bounded)
+      return bounded
+    }
+    return byCount
   } catch {
     return []
   }
 }
 
-// Pruned to MAX_STORED_SESSIONS here, the one place every write goes
-// through, rather than in each caller - keeps the oldest-first drop rule in
-// exactly one place regardless of which path (a new session, an existing
-// one growing by a message, a future bulk import) produced the array being
-// saved.
+// Drops the oldest sessions (already sorted newest-first by the caller)
+// until the serialized total fits the budget. If a single session is
+// alone over budget - one very long back-and-forth - its own oldest
+// messages are dropped instead of losing the whole conversation outright.
+function boundBySize(sessions: ChatSession[]): ChatSession[] {
+  let kept = sessions
+  while (kept.length > 1 && JSON.stringify(kept).length > MAX_STORED_CHARS) {
+    kept = kept.slice(0, -1)
+  }
+  if (kept.length === 1 && JSON.stringify(kept).length > MAX_STORED_CHARS) {
+    const [only] = kept
+    let messages = only.messages
+    while (
+      messages.length > 1 &&
+      JSON.stringify([{ ...only, messages }]).length > MAX_STORED_CHARS
+    ) {
+      messages = messages.slice(1)
+    }
+    kept = [{ ...only, messages }]
+  }
+  return kept
+}
+
+// Pruned here, the one place every write goes through, rather than in each
+// caller - keeps the oldest-first drop rule in exactly one place regardless
+// of which path (a new session, an existing one growing by a message, a
+// future bulk import) produced the array being saved.
 function writeAllSessions(all: ChatSession[]): Promise<boolean> {
-  const bounded = [...all].sort((a, b) => b.updatedAt - a.updatedAt).slice(0, MAX_STORED_SESSIONS)
+  const byCount = [...all].sort((a, b) => b.updatedAt - a.updatedAt).slice(0, MAX_STORED_SESSIONS)
+  const bounded = boundBySize(byCount)
   return bridge.setLocalStorage(STORAGE_KEY, JSON.stringify(bounded)).then(ok => {
     if (!ok) status('Failed to save chat history')
     return ok
