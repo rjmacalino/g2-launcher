@@ -3,7 +3,7 @@ import { converse, type GeminiTurn } from '../../core/gemini'
 import { getApiKey as getGeminiApiKey } from '../../core/geminiSettings'
 import { chatSessions, type ChatMessage, type ChatSession } from './store'
 import { setContent } from '../../platform/page'
-import { PAGE_INNER_WIDTH, PAGE_TEXT_ROWS, paginate } from './paging'
+import { PAGE_INNER_WIDTH, paginate, type Page } from './paging'
 import { setCurrentScreen } from '../../core/currentScreen'
 import { requestRebuild } from '../../core/rebuild'
 import type { Tool } from '../../core/tool'
@@ -204,23 +204,11 @@ function syncPickerFromCurrent(): void {
 // One screen update cannot carry an arbitrarily long answer: the firmware
 // rejects a text update past its own hard ceiling (docs/platform.md: 1000
 // characters on create/rebuild, 2000 on an in-place upgrade). So the latest
-// exchange (question, divider, answer) is laid out here into pages that
-// each fit exactly one screen, and swiping moves between them - down for
-// the next page, up for the previous one (see onScroll below). Each page is
-// a few hundred characters, far under either ceiling, so answer length is
-// unlimited.
-//
-// Pages fit ONE screen on purpose, never more: with nothing to scroll
-// inside a page, a swipe can only mean "change page". That holds whether
-// the firmware sends its scroll events on every swipe or only when a
-// container is already at its top or bottom - which has not been verified
-// either way on this hardware.
-//
-// Line breaks are decided here, not left to the firmware: words are laid
-// out with Even Realities' own LVGL-matching measurement (platform/text.ts),
-// with a small safety margin, and every line ends in an explicit newline,
-// so the firmware never wraps anything itself and a page cannot overflow.
-// The layout itself lives in features/chat/paging.ts (pure, and tested).
+// exchange (question, divider, answer) is laid out into pages of about two
+// screens each (features/chat/paging.ts, pure and tested). Within a page
+// the firmware scrolls smoothly on its own; only a swipe past a page's end
+// changes the page (see onScroll below). Every page is under either
+// ceiling, so answer length is unlimited.
 
 // Questions can now run to three minutes of speech (core/voiceCapture.ts) -
 // thousands of characters. The full question is part of the paged view;
@@ -237,8 +225,25 @@ function shortQuestion(question: string): string {
 // The pages currently on screen, and which one is showing. Empty whenever
 // something other than the conversation is on screen (listening, thinking,
 // an error), so a swipe there does nothing.
-let pages: string[] = []
+let pages: Page[] = []
 let pageIndex = 0
+
+// Page turning, per direct report that one-screen pages turned on every
+// swipe and lost the wearer's place. The firmware scrolls a page smoothly
+// on its own and reports only a swipe at its top or bottom edge
+// (even-g2-notes, docs/input-events.md). Whether that report comes on the
+// swipe that ARRIVES at the edge or only on a further swipe once already
+// there is not documented - so the first edge report only arms the turn
+// and a second one turns the page. Either way the wearer gets to read the
+// page's last lines before it changes, rather than the page vanishing the
+// instant they come into view. A page small enough to be seen whole turns
+// on the first report, since there is nothing left on it to read.
+//
+// Same source: "Scroll events can fire rapidly. Use a cooldown" - without
+// one, a single swipe could deliver both reports and turn the page anyway.
+const SCROLL_COOLDOWN_MS = 400
+let armedDirection: 1 | -1 | 0 = 0
+let lastScrollAt = 0
 
 // A short horizontal rule between the question and the answer - U+2500,
 // confirmed available in the firmware font (docs/platform.md's glyph
@@ -272,9 +277,10 @@ function renderConversation(): string {
     secondLast && secondLast.role !== last.role
       ? [formatMessage(secondLast), formatMessage(last)]
       : [formatMessage(last)]
-  pages = paginate(parts.join(DIVIDER), PAGE_INNER_WIDTH, PAGE_TEXT_ROWS)
+  pages = paginate(parts.join(DIVIDER), PAGE_INNER_WIDTH)
   pageIndex = 0
-  return pages[0]
+  armedDirection = 0
+  return pages[0].text
 }
 
 function toGeminiTurns(messages: readonly ChatMessage[]): GeminiTurn[] {
@@ -599,23 +605,34 @@ export const chatTool: Tool = {
   },
   onClose: stopListeningIfAny,
   onSuspend: stopListeningIfAny,
-  // Swipe down: next page of the answer; swipe up: previous page (see the
-  // paging comment near paginate above). Ignored while anything other than
-  // the conversation is on screen - recording, transcribing, thinking -
-  // which is exactly when pages is empty or a live status is running.
+  // Called only for a swipe at a page's top (-1) or bottom (1) edge - the
+  // firmware handles scrolling within a page itself. Turns the page per the
+  // arm-then-turn rule above. Ignored while anything other than the
+  // conversation is on screen - recording, transcribing, thinking - which
+  // is exactly when pages is empty or a live status is running.
   onScroll: delta => {
     if (depth !== 'conversation' || listening || stopActiveStatus !== null) return
     if (pages.length <= 1) return
+    const now = Date.now()
+    if (now - lastScrollAt < SCROLL_COOLDOWN_MS) return
+    lastScrollAt = now
     const next = Math.min(Math.max(pageIndex + delta, 0), pages.length - 1)
     if (next === pageIndex) return
+    if (!pages[pageIndex].fitsOneScreen && armedDirection !== delta) {
+      armedDirection = delta
+      return
+    }
+    armedDirection = 0
     pageIndex = next
-    setContent(pages[pageIndex])
+    // Any content update starts the new page at its top - including when
+    // going back, so a previous page is re-read from its start.
+    setContent(pages[pageIndex].text)
   },
   // Never actually rendered for the picker (contentKind is 'list' there).
   // For a conversation: the page already being read, if any - so "No" on the
-  // leave prompt, which rebuilds this same page, puts the wearer back where
-  // they were rather than at the start of the answer. Otherwise the first
-  // page of the latest exchange. Every page is far under the firmware's
-  // 1000-character ceiling for a rebuild.
-  initialContent: () => (pages.length > 0 ? pages[pageIndex] : renderConversation()),
+  // leave prompt, which rebuilds this same page, puts the wearer back on it
+  // rather than at the start of the answer. Otherwise the first page of the
+  // latest exchange. Every page is under the firmware's 1000-character
+  // ceiling for a rebuild (features/chat/paging.ts's PAGE_MAX_CHARS).
+  initialContent: () => (pages.length > 0 ? pages[pageIndex].text : renderConversation()),
 }

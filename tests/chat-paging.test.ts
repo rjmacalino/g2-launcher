@@ -10,7 +10,7 @@ vi.mock('../src/platform/bridge', () => ({
   status: vi.fn(),
 }))
 
-const { paginate, PAGE_INNER_WIDTH, PAGE_ROWS, PAGE_TEXT_ROWS } =
+const { paginate, PAGE_INNER_WIDTH, SCREEN_ROWS, PAGE_TEXT_ROWS, PAGE_MAX_CHARS, OVERLAP_ROWS } =
   await import('../src/features/chat/paging')
 
 // The firmware's hard ceiling on content in a page rebuild, the stricter of
@@ -32,73 +32,95 @@ function wordsOf(text: string): string[] {
   return text.split(/\s+/).filter(w => w !== '')
 }
 
-// Removes the "(2/5 - swipe down for more)" indicator row a multi-page
-// result adds to the end of every page.
-function stripHint(page: string): string {
-  return page.replace(/\n\(\d+\/\d+( - swipe down for more)?\)$/, '')
+// The rows a page adds on top of new text: lines repeated from the previous
+// page at the top, and the "(2/5 ...)" indicator at the bottom.
+function newRowsOf(pageText: string, index: number, total: number): string[] {
+  const rows = pageText.split('\n')
+  const withoutHint = total > 1 ? rows.slice(0, -1) : rows
+  return index === 0 ? withoutHint : withoutHint.slice(OVERLAP_ROWS)
 }
 
 describe('paginate', () => {
-  it('fits the real screen: 8 rows, one kept for the page indicator', () => {
-    expect(PAGE_ROWS).toBe(8)
-    expect(PAGE_TEXT_ROWS).toBe(7)
+  it('uses the real screen: 8 rows per screen, pages about two screens tall', () => {
+    expect(SCREEN_ROWS).toBe(8)
+    expect(PAGE_TEXT_ROWS).toBe(15)
   })
 
-  it('leaves a short answer as one page with no indicator', () => {
-    const pages = paginate(
-      'You: what time is it?\n\nGemini: It is noon.',
-      PAGE_INNER_WIDTH,
-      PAGE_TEXT_ROWS,
-    )
+  it('leaves a short answer as one page with no indicator, fully visible', () => {
+    const pages = paginate('You: what time is it?\n\nGemini: It is noon.', PAGE_INNER_WIDTH)
     expect(pages).toHaveLength(1)
-    expect(pages[0]).not.toMatch(/\(1\//)
+    expect(pages[0].text).not.toMatch(/\(1\//)
+    expect(pages[0].fitsOneScreen).toBe(true)
   })
 
-  it('splits a long answer into pages that each fit one screen', () => {
-    const pages = paginate(longAnswer(8), PAGE_INNER_WIDTH, PAGE_TEXT_ROWS)
-    expect(pages.length).toBeGreaterThan(3)
-    for (const page of pages) {
-      const rows = page.split('\n')
-      expect(rows.length).toBeLessThanOrEqual(PAGE_ROWS)
+  it('makes pages taller than one screen, so they scroll smoothly within', () => {
+    const pages = paginate(longAnswer(8), PAGE_INNER_WIDTH)
+    expect(pages.length).toBeGreaterThan(1)
+    expect(pages[0].text.split('\n').length).toBeGreaterThan(SCREEN_ROWS)
+    expect(pages[0].fitsOneScreen).toBe(false)
+  })
+
+  it('keeps every page inside the row, width and firmware size limits', () => {
+    for (const page of paginate(longAnswer(12), PAGE_INNER_WIDTH)) {
+      const rows = page.text.split('\n')
+      expect(rows.length).toBeLessThanOrEqual(PAGE_TEXT_ROWS + 1)
       for (const row of rows) expect(getTextWidth(row)).toBeLessThanOrEqual(PAGE_INNER_WIDTH)
-      expect(page.length).toBeLessThan(REBUILD_CHAR_LIMIT)
+      expect(page.text.length).toBeLessThanOrEqual(PAGE_MAX_CHARS)
+      expect(page.text.length).toBeLessThan(REBUILD_CHAR_LIMIT)
+    }
+  })
+
+  it('repeats the last lines read at the top of the next page', () => {
+    const pages = paginate(longAnswer(8), PAGE_INNER_WIDTH)
+    for (let i = 1; i < pages.length; i++) {
+      const previousRows = pages[i - 1].text
+        .split('\n')
+        .slice(0, -1)
+        .filter(r => r !== '')
+      const carried = pages[i].text.split('\n').slice(0, OVERLAP_ROWS)
+      expect(carried).toEqual(previousRows.slice(-OVERLAP_ROWS))
     }
   })
 
   it('loses no words and keeps their order across pages', () => {
     const text = longAnswer(8)
-    const pages = paginate(text, PAGE_INNER_WIDTH, PAGE_TEXT_ROWS)
-    expect(wordsOf(pages.map(stripHint).join('\n'))).toEqual(wordsOf(text))
+    const pages = paginate(text, PAGE_INNER_WIDTH)
+    const rebuilt = pages.flatMap((page, i) => newRowsOf(page.text, i, pages.length)).join('\n')
+    expect(wordsOf(rebuilt)).toEqual(wordsOf(text))
   })
 
-  it('numbers every page and tells the wearer to swipe on all but the last', () => {
-    const pages = paginate(longAnswer(8), PAGE_INNER_WIDTH, PAGE_TEXT_ROWS)
+  it('numbers every page and tells the wearer to keep swiping on all but the last', () => {
+    const pages = paginate(longAnswer(8), PAGE_INNER_WIDTH)
     pages.forEach((page, i) => {
       const position = `${i + 1}/${pages.length}`
       if (i < pages.length - 1)
-        expect(page.endsWith(`(${position} - swipe down for more)`)).toBe(true)
-      else expect(page.endsWith(`(${position})`)).toBe(true)
+        expect(page.text.endsWith(`(${position} - keep swiping down for more)`)).toBe(true)
+      else expect(page.text.endsWith(`(${position})`)).toBe(true)
     })
   })
 
   it('never starts a page on a blank line', () => {
-    const pages = paginate(longAnswer(8), PAGE_INNER_WIDTH, PAGE_TEXT_ROWS)
-    for (const page of pages) expect(page.startsWith('\n')).toBe(false)
+    for (const page of paginate(longAnswer(8), PAGE_INNER_WIDTH)) {
+      expect(page.text.startsWith('\n')).toBe(false)
+    }
   })
 
   it('breaks a word too wide for one line instead of letting it overflow', () => {
     const url = `https://example.com/${'a'.repeat(300)}`
-    const pages = paginate(`Gemini: see ${url}`, PAGE_INNER_WIDTH, PAGE_TEXT_ROWS)
-    const rows = pages.map(stripHint).join('\n').split('\n')
-    for (const row of rows) expect(getTextWidth(row)).toBeLessThanOrEqual(PAGE_INNER_WIDTH)
-    expect(rows.join('')).toContain('a'.repeat(50))
+    const pages = paginate(`Gemini: see ${url}`, PAGE_INNER_WIDTH)
+    for (const page of pages) {
+      for (const row of page.text.split('\n')) {
+        expect(getTextWidth(row)).toBeLessThanOrEqual(PAGE_INNER_WIDTH)
+      }
+    }
+    expect(pages.map(p => p.text).join('')).toContain('a'.repeat(50))
   })
 
   it('measures the question/answer divider glyph as a real, fitting line', () => {
     const divider = String.fromCharCode(0x2500).repeat(12)
     expect(getTextWidth(divider)).toBeGreaterThan(0)
-    const pages = paginate(`You: hi\n${divider}\nGemini: hello`, PAGE_INNER_WIDTH, PAGE_TEXT_ROWS)
+    const pages = paginate(`You: hi\n${divider}\nGemini: hello`, PAGE_INNER_WIDTH)
     expect(pages).toHaveLength(1)
-    expect(pages[0]).toContain(divider)
+    expect(pages[0].text).toContain(divider)
   })
 })
