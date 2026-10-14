@@ -296,6 +296,25 @@ async function beginListening() {
 // question is passed separately only for what to show while waiting and on
 // a repeat failure; the actual request body is currentMessages itself.
 async function askGemini(question: string, mySession: number) {
+  // What "this is still relevant" actually means for rendering a network
+  // response, as opposed to mySession/sessionToken, which exists to stop
+  // overlapping VOICE CAPTURE lifecycles (a double-start), not to gate a
+  // late-arriving fetch. Conflating the two was a real bug: sessionToken
+  // gets bumped by things that don't mean "the wearer left this
+  // conversation" - stopListeningIfAny runs on a suspend/resume blip, or
+  // simply tapping retry again - and if that happened in the narrow
+  // window while chatSessions.appendMessage() below was still in flight,
+  // the answer was saved to storage correctly but the on-screen content
+  // was never updated to show it, silently leaving whatever was there
+  // before (including a stale error from an earlier attempt) on screen.
+  // Reopening the conversation re-read storage and showed the real
+  // answer, which is exactly the "it says error, then I reopen and it's
+  // there" report this fixes. targetSessionId is read now, not later,
+  // since this is the session this question actually belongs to for the
+  // rest of this call.
+  const targetSessionId = currentSessionId
+  const stillRelevant = () => depth === 'conversation' && currentSessionId === targetSessionId
+
   const apiKey = await getGeminiApiKey()
   if (mySession !== sessionToken) return
   if (!apiKey) {
@@ -314,26 +333,38 @@ async function askGemini(question: string, mySession: number) {
   // processing the way that did. Stops itself the moment this session
   // goes stale (closed/suspended while waiting), so a tick never lands on
   // a container that moved on.
+  //
+  // retryNote is set by converse()'s onRetry callback below and read by
+  // every tick after that - core/gemini.ts now retries automatically on a
+  // transient failure (503, 429, a dropped connection) instead of giving
+  // up on the first one, and a silent multi-second wait with no change on
+  // screen reads as broken even though it is working exactly as intended.
+  let retryNote = ''
   startLiveStatus(mySession, (dots, elapsedSeconds) => {
     setContent(
       clampToBudget(
-        `You: ${question}${DIVIDER}Thinking${dots} (${elapsedSeconds}s)`,
+        `You: ${question}${DIVIDER}Thinking${dots} (${elapsedSeconds}s)${retryNote}`,
         LIVE_CHAR_BUDGET,
       ),
     )
   })
 
+  let attemptsMade = 1
   // concise: false - this is Chat's whole point, a real conversation read by
   // scrolling, not Jarvis's glance-and-go fallback. See core/gemini.ts.
-  const reply = await converse(apiKey, toGeminiTurns(currentMessages), false)
+  const reply = await converse(apiKey, toGeminiTurns(currentMessages), false, (attempt, max) => {
+    attemptsMade = attempt
+    retryNote = `\nRetrying (${attempt}/${max})...`
+  })
   stopActiveStatus?.()
-  if (mySession !== sessionToken) return
 
   if (reply.kind === 'error') {
+    if (!stillRelevant()) return
     lastErrorQuestion = question
+    const triedNote = attemptsMade > 1 ? ` after ${attemptsMade} tries` : ''
     setContent(
       clampToBudget(
-        `You: ${question}${DIVIDER}Couldn't reach Gemini (${reply.message}).` +
+        `You: ${question}${DIVIDER}Couldn't reach Gemini${triedNote} (${reply.message}).` +
           '\n\n(tap to retry, double-tap to go back)',
         LIVE_CHAR_BUDGET,
       ),
@@ -341,10 +372,18 @@ async function askGemini(question: string, mySession: number) {
     return
   }
 
-  lastErrorQuestion = null
+  // Saved regardless of stillRelevant() - the answer belongs to
+  // targetSessionId's own history whether or not it is what the wearer
+  // happens to be looking at right now, and the next time that session is
+  // opened (including via "exit and reopen", the exact report this whole
+  // fix is for) it has to already be there.
   const answer: ChatMessage = { role: 'model', text: reply.text, timestamp: Date.now() }
-  const sessionAfterAnswer = await chatSessions.appendMessage(currentSessionId, answer)
-  if (mySession !== sessionToken) return
+  const sessionAfterAnswer = await chatSessions.appendMessage(targetSessionId, answer)
+  // Correctness, not a render decision - a retry would be pointless and
+  // wrong for a question that just got answered, whether or not the
+  // wearer is still looking at this conversation right now.
+  if (lastErrorQuestion === question) lastErrorQuestion = null
+  if (!stillRelevant()) return
   currentSessionTitle = sessionAfterAnswer.title
   currentMessages = sessionAfterAnswer.messages
   setContent(renderConversation(LIVE_CHAR_BUDGET))
@@ -378,9 +417,21 @@ export async function finishListening() {
     return
   }
 
+  // Captured now, not read live after the await below - same reasoning as
+  // askGemini's own targetSessionId (see its comment): sessionToken can
+  // bump for reasons that don't mean "the wearer left this conversation"
+  // (a suspend/resume blip), and using the live currentSessionId after an
+  // await risks either silently dropping this question's result, or
+  // worse, overwriting a conversation the wearer has since switched to
+  // via the picker. askedInSameConversation checks against what was true
+  // when this question was actually asked.
+  const sessionIdBeforeAsking = currentSessionId
+  const askedInSameConversation = () =>
+    depth === 'conversation' && currentSessionId === sessionIdBeforeAsking
+
   const question: ChatMessage = { role: 'user', text: result.transcript, timestamp: Date.now() }
-  const sessionAfterQuestion = await chatSessions.appendMessage(currentSessionId, question)
-  if (mySession !== sessionToken) return
+  const sessionAfterQuestion = await chatSessions.appendMessage(sessionIdBeforeAsking, question)
+  if (!askedInSameConversation()) return
   currentSessionId = sessionAfterQuestion.id
   currentSessionTitle = sessionAfterQuestion.title
   currentMessages = sessionAfterQuestion.messages

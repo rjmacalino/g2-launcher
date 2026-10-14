@@ -6,7 +6,13 @@ import {
   type Script,
 } from '../features/teleprompter/store'
 import { setActiveScriptContent, clearActiveScriptIfCurrent } from '../features/teleprompter/tool'
-import { getApiKey as getGeminiApiKey, setApiKey as setGeminiApiKey } from '../core/geminiSettings'
+import {
+  getApiKey as getGeminiApiKey,
+  setApiKey as setGeminiApiKey,
+  getAboutMe,
+  setAboutMe,
+  ABOUT_ME_MAX_CHARS,
+} from '../core/geminiSettings'
 import { chatSessions, type ChatSession } from '../features/chat/store'
 import { type ChatScreenDetail } from '../features/chat/tool'
 import { onCurrentScreenChange, getCurrentScreen } from '../core/currentScreen'
@@ -166,6 +172,7 @@ async function syncToGlassesScreen(): Promise<void> {
 async function renderJarvisSettings(statusMessage?: string) {
   if (!root) return
   const existingKey = await getGeminiApiKey()
+  const existingAboutMe = await getAboutMe()
 
   root.innerHTML = `
     ${backButton()}
@@ -188,6 +195,22 @@ async function renderJarvisSettings(statusMessage?: string) {
       <div class="editor-actions">
         <button class="save">Save</button>
         <button class="cancel clear">Clear</button>
+      </div>
+      <p class="stub-body">
+        A sentence or two about you, sent along with every question to
+        Jarvis and Gemini so answers can actually be tailored to you -
+        who you are, what you're working on, how you like answers given.
+        Not required; leave it blank and nothing changes about how either
+        one answers.
+      </p>
+      <textarea
+        class="body about-me"
+        placeholder="e.g. I'm a backend engineer learning web dev from scratch - keep explanations simple, skip the basics I already know."
+        maxlength="${ABOUT_ME_MAX_CHARS}"
+      >${escapeHtml(existingAboutMe ?? '')}</textarea>
+      <div class="editor-actions">
+        <button class="save-about-me">Save</button>
+        <button class="cancel clear-about-me">Clear</button>
       </div>
     </div>
   `
@@ -216,6 +239,25 @@ async function renderJarvisSettings(statusMessage?: string) {
   root.querySelector('.clear')?.addEventListener('click', async () => {
     await setGeminiApiKey('')
     await renderJarvisSettings('Cleared.')
+  })
+
+  root.querySelector('.save-about-me')?.addEventListener('click', async () => {
+    const textarea = root.querySelector<HTMLTextAreaElement>('.about-me')
+    if (!textarea) return
+    const typed = textarea.value.trim()
+    const ok = await setAboutMe(typed)
+    await renderJarvisSettings(
+      ok
+        ? typed.length > 0
+          ? 'About You saved.'
+          : 'About You cleared.'
+        : 'Save failed - try again.',
+    )
+  })
+
+  root.querySelector('.clear-about-me')?.addEventListener('click', async () => {
+    await setAboutMe('')
+    await renderJarvisSettings('About You cleared.')
   })
 }
 

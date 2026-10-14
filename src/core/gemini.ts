@@ -1,3 +1,5 @@
+import { getAboutMe } from './geminiSettings'
+
 // A cloud LLM, used only when a transcript does not match any local
 // command parser (see core/voiceDispatch.ts) - the fallback that makes
 // Jarvis able to actually answer a question instead of just running
@@ -73,12 +75,20 @@ export type GeminiResult = { kind: 'answer'; text: string } | { kind: 'error'; m
 // translation step.
 export type GeminiTurn = { role: 'user' | 'model'; text: string }
 
-// One retry, specifically for a 503 - seen twice in a row testing this
-// against the real API with a real key, and Google's own error text calls
-// it "usually temporary". Not retried for any other status: a bad request
-// or an auth failure will not fix itself on a second try, so retrying those
-// would only cost the wearer more waiting for the same result.
+// Up to 2 automatic retries (3 attempts total) for failures that are
+// plausibly transient: 503 (Google's own error text calls it "usually
+// temporary", seen twice in a row testing this against the real API), 429
+// (rate limit - the same request will often just work a moment later),
+// and a thrown fetch exception (a dropped connection, not a response at
+// all). NOT retried: any other HTTP status - a bad request or an auth
+// failure will not fix itself on a second try, so retrying those would
+// only cost the wearer more waiting for the same result they already got.
+const MAX_ATTEMPTS = 3
 const RETRY_DELAY_MS = 1500
+
+function isTransient(status: number): boolean {
+  return status === 503 || status === 429
+}
 
 function delay(ms: number): Promise<void> {
   return new Promise(resolve => setTimeout(resolve, ms))
@@ -88,6 +98,7 @@ async function requestOnce(
   apiKey: string,
   turns: readonly GeminiTurn[],
   concise: boolean,
+  systemInstruction: string,
 ): Promise<Response> {
   return fetch(ENDPOINT, {
     method: 'POST',
@@ -98,7 +109,7 @@ async function requestOnce(
     body: JSON.stringify({
       contents: turns.map(turn => ({ role: turn.role, parts: [{ text: turn.text }] })),
       systemInstruction: {
-        parts: [{ text: concise ? SYSTEM_INSTRUCTION_CONCISE : SYSTEM_INSTRUCTION_FULL }],
+        parts: [{ text: systemInstruction }],
       },
       generationConfig: {
         maxOutputTokens: concise ? MAX_OUTPUT_TOKENS_CONCISE : MAX_OUTPUT_TOKENS_FULL,
@@ -130,28 +141,57 @@ async function requestOnce(
 // one, see features/chat/tool.ts).
 //
 // concise defaults to true (Jarvis's own need) so ask() below needs no
-// change; Chat passes false explicitly.
+// change; Chat passes false explicitly. onRetry, when given, is called
+// right before each retry attempt (never for the first try) with the
+// attempt number about to start and the total attempts allowed - Chat
+// uses this to show "retrying (2/3)" instead of leaving the wearer
+// looking at an unchanging "Thinking..." through what might be several
+// seconds of silent retries (see features/chat/tool.ts).
 export async function converse(
   apiKey: string,
   turns: readonly GeminiTurn[],
   concise = true,
+  onRetry?: (attempt: number, maxAttempts: number) => void,
 ): Promise<GeminiResult> {
-  try {
-    let response = await requestOnce(apiKey, turns, concise)
-    if (response.status === 503) {
+  // Folded in here, once, rather than left to each caller - both Jarvis
+  // and Chat should tailor answers to the same person, and this is the
+  // one place every request already passes through. Per direct request:
+  // "I want my chatbot to know me... to tailor its answer for me." Empty
+  // when nothing has been entered on the companion page, which is the
+  // same as not having this feature at all.
+  const aboutMe = await getAboutMe()
+  const baseInstruction = concise ? SYSTEM_INSTRUCTION_CONCISE : SYSTEM_INSTRUCTION_FULL
+  const systemInstruction = aboutMe
+    ? `${baseInstruction}\n\nBackground on the person you're talking to - use it to tailor your answer naturally, without mentioning that you were told this: ${aboutMe}`
+    : baseInstruction
+
+  let lastErrorMessage = 'unknown error'
+  for (let attempt = 1; attempt <= MAX_ATTEMPTS; attempt++) {
+    if (attempt > 1) {
+      onRetry?.(attempt, MAX_ATTEMPTS)
       await delay(RETRY_DELAY_MS)
-      response = await requestOnce(apiKey, turns, concise)
     }
-    if (!response.ok) {
-      return { kind: 'error', message: `Gemini returned ${response.status}` }
+    try {
+      const response = await requestOnce(apiKey, turns, concise, systemInstruction)
+      if (!response.ok) {
+        lastErrorMessage = `Gemini returned ${response.status}`
+        if (isTransient(response.status) && attempt < MAX_ATTEMPTS) continue
+        return { kind: 'error', message: lastErrorMessage }
+      }
+      const data: unknown = await response.json()
+      const text = extractText(data)
+      if (!text) return { kind: 'error', message: 'empty response' }
+      return { kind: 'answer', text }
+    } catch (e) {
+      lastErrorMessage = e instanceof Error ? e.message : String(e)
+      if (attempt < MAX_ATTEMPTS) continue
+      return { kind: 'error', message: lastErrorMessage }
     }
-    const data: unknown = await response.json()
-    const text = extractText(data)
-    if (!text) return { kind: 'error', message: 'empty response' }
-    return { kind: 'answer', text }
-  } catch (e) {
-    return { kind: 'error', message: e instanceof Error ? e.message : String(e) }
   }
+  // Unreachable - the loop always returns on its final attempt - but kept
+  // so this has an explicit return for every path rather than relying on
+  // that being obvious from the loop bounds alone.
+  return { kind: 'error', message: lastErrorMessage }
 }
 
 // A single question, no history - what Jarvis's one-shot command fallback
