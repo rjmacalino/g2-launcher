@@ -162,6 +162,7 @@ async function refresh(): Promise<void> {
   currentSessionTitle = null
   lastErrorQuestion = null
   interrupted = false
+  listenWhenReady = false
   pages = []
   const cached = chatSessions.peek()
   pickerSessions = sortForPicker(cached ?? [])
@@ -271,7 +272,12 @@ function formatMessage(m: ChatMessage): string {
 function renderConversation(): string {
   if (currentMessages.length === 0) {
     pages = []
-    return 'No messages yet.\n\nLong-press to ask something.'
+    // Shown for the moment between picking "New chat" and the microphone
+    // starting (see onContentReady), rather than an instruction to
+    // long-press that is about to be done for the wearer anyway.
+    return listenWhenReady
+      ? 'Starting the microphone...'
+      : 'No messages yet.\n\nLong-press to ask something.'
   }
   const last = currentMessages[currentMessages.length - 1]
   const secondLast = currentMessages[currentMessages.length - 2]
@@ -340,6 +346,10 @@ function startLiveStatus(
 // When the current recording started, so "Transcribing" can say how much
 // speech it is working through (see finishListening).
 let listeningStartedAt = 0
+
+// "New chat" was just picked, so recording starts as soon as its page is
+// on screen (see onContentReady).
+let listenWhenReady = false
 
 // Set when a recording is cut off by the app being sent to the background
 // (see stopListeningIfAny), so the wearer is told on return instead of
@@ -614,6 +624,7 @@ export const chatTool: Tool = {
   listItems: () => ['New chat', ...pickerSessions.map(s => pickerTitle(s.title))],
   onListSelect: index => {
     if (depth !== 'picker') return
+    listenWhenReady = index === 0
     if (index === 0) {
       currentSessionId = null
       currentMessages = []
@@ -639,6 +650,17 @@ export const chatTool: Tool = {
   // currentScreen at all; a fresh open is the one path with no such hook
   // of its own until now.
   onOpen: publishScreen,
+  // The conversation page is on screen now (the shell calls this once the
+  // rebuild from picking a picker row has landed). "New chat" goes straight
+  // to recording - per direct request, there is nothing else to do on an
+  // empty conversation, so making the wearer long-press first was a wasted
+  // step. Waits for this moment rather than starting in onListSelect,
+  // because the Listening counter needs the page's text container to exist.
+  onContentReady: () => {
+    if (!listenWhenReady) return
+    listenWhenReady = false
+    if (depth === 'conversation' && !listening) void beginListening()
+  },
   onLongPress: () => {
     if (depth !== 'conversation' || listening) return
     beginListening()
