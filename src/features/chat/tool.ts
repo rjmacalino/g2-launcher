@@ -1,4 +1,5 @@
 import { cancel, start, stop } from '../../core/voiceCapture'
+import { dispatchVoiceCommand } from '../../core/voiceDispatch'
 import { converse, type GeminiTurn } from '../../core/gemini'
 import { getApiKey as getGeminiApiKey } from '../../core/geminiSettings'
 import { chatSessions, type ChatMessage, type ChatSession } from './store'
@@ -10,14 +11,23 @@ import { setCurrentScreen } from '../../core/currentScreen'
 import { requestRebuild } from '../../core/rebuild'
 import type { Tool } from '../../core/tool'
 
-// A real multi-turn conversation, unlike Jarvis's one-shot command/question
-// fallback (core/voiceDispatch.ts) - the whole point here is a follow-up
-// remembers what came before, and the conversation itself is a place the
-// wearer comes back to, not a quick interrupt. Per direct decision, kept
-// entirely separate from Jarvis rather than folding this into it: Jarvis's
-// value is being reachable from ANY screen for a quick answer with an
-// auto-return; a sit-down conversation with history is a different shape
-// of interaction that would only get in the way of that.
+// JARVIS - the one assistant. Per direct request, what used to be two tools
+// (Jarvis, the quick long-press-from-anywhere command runner, and Gemini,
+// the conversation tool) is now one, named Jarvis: ask it questions, or
+// give it commands like a timer. Gemini is the model behind the answers,
+// not the name of the tool. (This file still lives under features/chat -
+// the module path is internal; what the wearer sees is the tool's name.)
+//
+// Three ways in (see app/main.ts and prepareOpen below):
+// - From the launcher: the chat list ("New chat" plus saved conversations).
+// - Long-press from any other screen ("quick ask"): straight into a new
+//   conversation, recording. A command (a timer) runs locally, shows its
+//   result and hands the wearer back to where they were, the way the old
+//   Jarvis did; a command from a blank start is not saved as a
+//   conversation, so timers do not clutter the history. A question goes to
+//   Gemini and stays on screen to be read and followed up; leaving it
+//   returns to where the long-press came from rather than to the list.
+// - Long-press on the chat list: a new conversation, recording.
 //
 // Two depths, same shape as Notes/Teleprompter's own picker/detail split:
 // 'picker' lists "New chat" plus every saved session by title, 'conversation'
@@ -30,16 +40,42 @@ import type { Tool } from '../../core/tool'
 // confirmPrompt and onConfirmedExit below, which mirror Teleprompter's own
 // implementation exactly.
 //
-// Voice capture is local to this tool, not global like Jarvis's: long press
-// only starts listening HERE while Chat's own conversation screen is
-// active (the shell carves this tool out from the global
-// long-press-reaches-Jarvis reservation the same way it already does for
-// Lab - see app/main.ts). Ending it is a single tap, not Jarvis's
-// double-press - per direct request, double-tap felt wrong for a
-// conversation the wearer is actively having (see the isSingleTap carve-out
-// in app/main.ts).
+// Inside a conversation, long-press asks the next question, and a single tap
+// ends the recording - per direct request, double-tap felt wrong for that
+// (see the isSingleTap carve-out in app/main.ts).
 type Depth = 'picker' | 'conversation'
 let depth: Depth = 'picker'
+
+// How the NEXT open should start - set by the shell just before it opens
+// this tool (see the ways in above), consumed by refresh().
+export type OpenMode = 'picker' | 'newChat' | 'quickAsk'
+let nextOpenMode: OpenMode = 'picker'
+
+export function prepareOpen(mode: OpenMode): void {
+  nextOpenMode = mode
+}
+
+// This conversation was started by a long-press from another screen, so
+// leaving it (or a finished command) returns the wearer there.
+let quickAsk = false
+
+export function isAtPicker(): boolean {
+  return depth === 'picker'
+}
+
+// The shell's "take the wearer back to where they long-pressed from" -
+// registered at startup (see app/main.ts), the same callback pattern as
+// core/rebuild.ts, since this module cannot import the shell.
+let returnHandler: (() => void) | null = null
+
+export function onReturnRequested(fn: () => void): void {
+  returnHandler = fn
+}
+
+// How long a finished command's result stays up before the wearer is
+// handed back - long enough to read "Started a 5:00 timer.", short enough
+// that "it just does it" does not turn into "and now I am stuck here".
+const COMMAND_RETURN_DELAY_MS = 2500
 
 // Cached for the current open only, refreshed in beforeOpen - contentKind,
 // listItems and initialContent are all synchronous, so the data has to
@@ -117,7 +153,7 @@ function publishScreen(): void {
     depth === 'picker'
       ? { depth: 'picker' }
       : { depth: 'conversation', sessionId: currentSessionId }
-  setCurrentScreen({ kind: 'tool', name: 'Gemini', detail })
+  setCurrentScreen({ kind: 'tool', name: 'Jarvis', detail })
 }
 
 // List containers have a firmware hard limit of 20 items (docs/platform.md).
@@ -157,23 +193,29 @@ function sortForPicker(sessions: ChatSession[]): ChatSession[] {
 // picker opens with just "New chat" and redraws itself the moment the
 // saved chats arrive, rather than holding the open hostage to them.
 async function refresh(): Promise<void> {
-  depth = 'picker'
+  const mode = nextOpenMode
+  nextOpenMode = 'picker'
+  quickAsk = mode === 'quickAsk'
+  // The chat list, or - for a long-press - straight into a new
+  // conversation, recording as soon as its page is on screen (see
+  // startIfPending).
+  depth = mode === 'picker' ? 'picker' : 'conversation'
+  listenWhenReady = mode !== 'picker'
   currentSessionId = null
   currentMessages = []
   currentSessionTitle = null
   lastErrorQuestion = null
   interrupted = false
-  listenWhenReady = false
   pages = []
   const cached = chatSessions.peek()
   pickerSessions = sortForPicker(cached ?? [])
   if (cached === null) {
     void chatSessions.readAll().then(loaded => {
-      if (depth !== 'picker') return
       pickerSessions = sortForPicker(loaded)
-      // The shell ignores this unless Gemini is actually the page on
-      // screen (see app/main.ts's rebuild handler).
-      requestRebuild(chatTool)
+      // Only the list needs redrawing; the shell ignores this unless
+      // Jarvis is actually the page on screen (see app/main.ts's rebuild
+      // handler).
+      if (depth === 'picker') requestRebuild(chatTool)
     })
   }
 }
@@ -262,7 +304,7 @@ let lastScrollAt = 0
 const DIVIDER = '\n\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\n'
 
 function formatMessage(m: ChatMessage): string {
-  return `${m.role === 'user' ? 'You' : 'Gemini'}: ${m.text}`
+  return `${m.role === 'user' ? 'You' : 'Jarvis'}: ${m.text}`
 }
 
 // The latest exchange only - the last message, plus the one before it if
@@ -271,17 +313,24 @@ function formatMessage(m: ChatMessage): string {
 // conversation are on the companion page. Returns the FIRST page and
 // resets paging to it, so a new answer always opens at its start.
 function renderConversation(): string {
-  if (currentMessages.length === 0) {
+  return renderExchange(currentMessages)
+}
+
+// renderConversation's work, for any list of messages - also used to show
+// a command's result that is not part of a saved conversation (see
+// finishListening).
+function renderExchange(messages: readonly ChatMessage[]): string {
+  if (messages.length === 0) {
     pages = []
     // Shown for the moment between picking "New chat" and the microphone
-    // starting (see onContentReady), rather than an instruction to
+    // starting (see startIfPending), rather than an instruction to
     // long-press that is about to be done for the wearer anyway.
     return listenWhenReady
       ? 'Starting the microphone...'
       : 'No messages yet.\n\nLong-press to ask something.'
   }
-  const last = currentMessages[currentMessages.length - 1]
-  const secondLast = currentMessages[currentMessages.length - 2]
+  const last = messages[messages.length - 1]
+  const secondLast = messages[messages.length - 2]
   const parts =
     secondLast && secondLast.role !== last.role
       ? [formatMessage(secondLast), formatMessage(last)]
@@ -385,7 +434,7 @@ async function beginListening() {
   // Status-line breadcrumbs through the whole voice flow (here, on a tap,
   // on an interruption), so a report of "stuck" says exactly which step
   // it stopped at - see the companion page's status line.
-  status('Gemini: recording')
+  status('Jarvis: recording')
   startLiveStatus(mySession, (dots, elapsedSeconds) => {
     setContent(`Listening${dots} (${elapsedSeconds}s)\n\n(tap when done)`)
   })
@@ -438,8 +487,8 @@ async function askGemini(question: string) {
   if (!stillRelevant()) return
   if (!apiKey) {
     setContent(
-      'No Gemini API key set up yet.\n\n' +
-        'Add one on the companion page (Gemini or Jarvis), then try again.',
+      'No Gemini API key set up yet - Jarvis needs one to answer questions.\n\n' +
+        'Add it in Jarvis on the companion page, then try again.',
     )
     return
   }
@@ -454,14 +503,11 @@ async function askGemini(question: string) {
   thinkingStartedAt = Date.now()
   thinkingRetryNote = ''
   inFlightQuestion = question
-  status('Gemini: asking')
+  status('Jarvis: asking')
   showThinking(question)
 
   let attemptsMade = 1
-  // concise: false - this is Chat's whole point, a real conversation read by
-  // scrolling, not Jarvis's glance-and-go fallback. See core/gemini.ts.
   const reply = await converse(apiKey, toGeminiTurns(messagesAtAsk), {
-    concise: false,
     onRetry: (attempt, max) => {
       attemptsMade = attempt
       thinkingRetryNote = `\nRetrying (${attempt}/${max})...`
@@ -473,7 +519,7 @@ async function askGemini(question: string) {
   })
   inFlightQuestion = null
   stopActiveStatus?.()
-  status(reply.kind === 'error' ? `Gemini: failed (${reply.message})` : 'Gemini: answered')
+  status(reply.kind === 'error' ? `Jarvis: failed (${reply.message})` : 'Jarvis: answered')
 
   if (reply.kind === 'error') {
     if (!stillRelevant()) return
@@ -528,7 +574,7 @@ export async function finishListening() {
   // never move [HW - it sat at 0s the whole time]. The length of what was
   // recorded is real, and it tells the wearer roughly how long to expect.
   const recordedSeconds = Math.max(1, Math.round((Date.now() - listeningStartedAt) / 1000))
-  status(`Gemini: transcribing ${recordedSeconds}s of audio`)
+  status(`Jarvis: transcribing ${recordedSeconds}s of audio`)
   setContent(`Transcribing ${recordedSeconds}s of speech...\n\n(this can take a moment)`)
   const result = await stop()
   // Dropped only if the wearer actually moved on - left this conversation,
@@ -537,19 +583,52 @@ export async function finishListening() {
   // question that finished transcribing during one was silently thrown
   // away, leaving "Transcribing" on screen for good.
   if (depth !== 'conversation' || currentSessionId !== sessionIdBeforeAsking || listening) {
-    status('Gemini: question dropped - conversation changed while transcribing')
+    status('Jarvis: question dropped - conversation changed while transcribing')
     return
   }
 
   if (result.kind === 'error') {
-    status(`Gemini: transcription failed (${result.message})`)
+    status(`Jarvis: transcription failed (${result.message})`)
     setContent(`Didn't catch that (${result.message}).\n\nLong-press to try again.`)
     return
   }
+
+  const question: ChatMessage = { role: 'user', text: result.transcript, timestamp: Date.now() }
+
+  // Commands first, locally - a timer needs no network, no API key, and no
+  // Gemini round trip (see the voice dispatch registered in app/main.ts).
+  // Anything that is not a command falls through to Gemini below.
+  const command = await dispatchVoiceCommand(result.transcript)
+  if (command.handled) {
+    if (depth !== 'conversation' || currentSessionId !== sessionIdBeforeAsking || listening) return
+    const reply: ChatMessage = { role: 'model', text: command.message, timestamp: Date.now() }
+    status('Jarvis: ran a command')
+    if (currentSessionId === null) {
+      // A command from a blank start is not saved as a conversation -
+      // timers would otherwise fill the history with one-line chats.
+      setContent(renderExchange([question, reply]))
+      // Long-pressed from another screen: hand the wearer back, as long as
+      // they have not started something else in the meantime.
+      if (quickAsk) {
+        setTimeout(() => {
+          if (!quickAsk || depth !== 'conversation' || currentSessionId !== null) return
+          if (listening || inFlightQuestion !== null) return
+          returnHandler?.()
+        }, COMMAND_RETURN_DELAY_MS)
+      }
+      return
+    }
+    // Mid-conversation, the command is part of it like anything else said.
+    currentMessages = [...currentMessages, question, reply]
+    saveCurrent()
+    setContent(renderConversation())
+    return
+  }
+  if (depth !== 'conversation' || currentSessionId !== sessionIdBeforeAsking || listening) return
+
   // Added in memory right away, no await - the old version awaited a
   // storage write here before asking Gemini, which is exactly the kind of
   // wait a slow or stuck host read turned into a frozen screen.
-  const question: ChatMessage = { role: 'user', text: result.transcript, timestamp: Date.now() }
   if (currentSessionId === null) {
     const created = chatSessions.newSession(question)
     currentSessionId = created.id
@@ -597,7 +676,7 @@ function stopListeningIfAny() {
     // tap no longer does anything - a dead end, unless onResume tells the
     // wearer what happened (see below).
     interrupted = true
-    status('Gemini: recording stopped before it was finished')
+    status('Jarvis: recording stopped before it was finished')
   }
 }
 
@@ -616,8 +695,19 @@ function resume(): void {
   if (inFlightQuestion !== null && stopActiveStatus === null) showThinking(inFlightQuestion)
 }
 
+// Starts recording if this page was opened to do so (a long-press, or "New
+// chat") - once the page is actually on screen, since the Listening
+// counter needs its text container to exist. Called from both onOpen (the
+// shell opening this tool) and onContentReady (a rebuild after picking a
+// row in the list).
+function startIfPending(): void {
+  if (!listenWhenReady) return
+  listenWhenReady = false
+  if (depth === 'conversation' && !listening) void beginListening()
+}
+
 export const chatTool: Tool = {
-  name: 'Gemini',
+  name: 'Jarvis',
   // Always, in both the picker and a conversation, per direct request to
   // follow the same convention Teleprompter already settled on: an
   // accidental double-tap should be double-checked no matter which screen
@@ -626,7 +716,8 @@ export const chatTool: Tool = {
   // Matches onConfirmedExit's own logic exactly, same reasoning as
   // Teleprompter's own pair of these two: one describes what pressing Yes
   // says, the other is what it does.
-  confirmPrompt: () => (depth === 'conversation' ? 'Leave this conversation?' : 'Leave Gemini?'),
+  confirmPrompt: () =>
+    depth === 'conversation' && !quickAsk ? 'Leave this conversation?' : 'Leave Jarvis?',
   beforeOpen: refresh,
   contentKind: () => (depth === 'picker' ? 'list' : 'text'),
   listItems: () => ['New chat', ...pickerSessions.map(s => pickerTitle(s.title))],
@@ -645,6 +736,7 @@ export const chatTool: Tool = {
       currentSessionTitle = picked.title
     }
     depth = 'conversation'
+    quickAsk = false
     lastErrorQuestion = null
     interrupted = false
     pages = []
@@ -652,37 +744,34 @@ export const chatTool: Tool = {
   },
   // Re-asserts this tool's own detail after the shell's generic baseline
   // publish (see app/main.ts's setCurrentScreen calls in openTool/restore,
-  // both of which call onOpen AFTER that baseline) - onListSelect and
-  // onConfirmedExit publish their own detail directly and need no help,
-  // since nothing the shell does between them and their rebuild touches
-  // currentScreen at all; a fresh open is the one path with no such hook
-  // of its own until now.
-  onOpen: publishScreen,
-  // The conversation page is on screen now (the shell calls this once the
-  // rebuild from picking a picker row has landed). "New chat" goes straight
-  // to recording - per direct request, there is nothing else to do on an
-  // empty conversation, so making the wearer long-press first was a wasted
-  // step. Waits for this moment rather than starting in onListSelect,
-  // because the Listening counter needs the page's text container to exist.
-  onContentReady: () => {
-    if (!listenWhenReady) return
-    listenWhenReady = false
-    if (depth === 'conversation' && !listening) void beginListening()
+  // both of which call onOpen AFTER that baseline), then starts recording
+  // if this open was a long-press.
+  onOpen: () => {
+    publishScreen()
+    startIfPending()
   },
+  // After the rebuild from picking a row in the list: "New chat" goes
+  // straight to recording - per direct request, there is nothing else to do
+  // on an empty conversation, so a long-press first was a wasted step.
+  onContentReady: startIfPending,
+  // Inside a conversation: ask the next question. (On the list, the shell
+  // handles a long-press itself, by opening a new conversation - see
+  // app/main.ts.)
   onLongPress: () => {
     if (depth !== 'conversation' || listening) return
-    beginListening()
+    void beginListening()
   },
   // Confirming "leave" backs up exactly one level, matching what "back"
   // means everywhere else in this app and exactly mirroring Teleprompter's
-  // own onConfirmedExit: from a conversation, Yes steps back to the
-  // picker rather than leaving Gemini entirely; from the picker itself,
-  // there is nowhere shallower left, so Yes really does leave. Stops a
-  // recording in progress if there was one (same cleanup onClose/onSuspend
-  // already do), and syncs the picker so it reflects whatever was just
-  // said (see syncPickerFromCurrent above).
+  // own onConfirmedExit: from a conversation, Yes steps back to the list;
+  // from the list, Yes leaves Jarvis. A conversation started by a
+  // long-press from another screen is the exception: Yes leaves Jarvis
+  // entirely, and the shell takes the wearer back to where they
+  // long-pressed from (see app/main.ts's confirmExit). Stops a recording in
+  // progress if there was one, and syncs the list so it reflects whatever
+  // was just said (see syncPickerFromCurrent above).
   onConfirmedExit: () => {
-    if (depth !== 'conversation') return 'menu'
+    if (depth !== 'conversation' || quickAsk) return 'menu'
     stopListeningIfAny()
     syncPickerFromCurrent()
     depth = 'picker'

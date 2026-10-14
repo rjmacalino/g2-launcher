@@ -61,19 +61,15 @@ import { parseVoiceCommand } from '../features/timer/voiceCommand'
 import { registerVoiceDispatch } from '../core/voiceDispatch'
 import { preload as preloadWhisper } from '../core/whisper'
 import { chatSessions } from '../features/chat/store'
-import { ask as askGemini } from '../core/gemini'
 import {
   finishListening as finishJarvisListening,
   isListening as isJarvisListening,
-  onDone as onJarvisDone,
-} from '../features/jarvis/tool'
-import {
-  finishListening as finishChatListening,
-  isListening as isChatListening,
-  canRetry as canRetryChat,
-  retry as retryChat,
+  canRetry as canRetryJarvis,
+  retry as retryJarvis,
+  prepareOpen as prepareJarvisOpen,
+  isAtPicker as isJarvisAtPicker,
+  onReturnRequested as onJarvisReturnRequested,
 } from '../features/chat/tool'
-import { getApiKey as getGeminiApiKey } from '../core/geminiSettings'
 import { formatDuration } from '../shared/duration'
 
 // The shell. Owns which page is showing, builds pages, and routes input. It knows
@@ -82,11 +78,10 @@ import { formatDuration } from '../shared/duration'
 
 let screen: Screen = { kind: 'menu' }
 
-// Where the wearer was before Jarvis took over the screen, so it can hand
-// them back afterward instead of stranding them on its own result screen or
-// dumping them at the menu regardless of where they actually started (see
-// enterJarvis below). Set only by enterJarvis, cleared once consumed by the
-// onJarvisDone handler near the bottom of this file.
+// Where the wearer was before a long-press took them into Jarvis, so they
+// can be handed back afterward instead of stranded in Jarvis or dumped at
+// the menu (see enterJarvis and returnFromJarvis below). Set only by
+// enterJarvis; cleared once used, and on any return to the menu.
 let screenBeforeJarvis: Screen | null = null
 
 function activeTool() {
@@ -213,6 +208,12 @@ function confirmExit(tool: Tool, index: number) {
   confirming = false
   const destination = tool.onConfirmedExit?.() ?? 'menu'
   if (destination === 'menu') {
+    // Leaving a Jarvis conversation that a long-press started from another
+    // screen goes back to that screen, not the menu.
+    if (index === JARVIS_INDEX && screenBeforeJarvis) {
+      returnFromJarvis()
+      return
+    }
     returnToMenu()
     return
   }
@@ -447,22 +448,29 @@ function menuContainers() {
 // would be a registry.ts bug, not something to silently tolerate here.
 const JARVIS_INDEX = TOOLS.findIndex(t => t.name === 'Jarvis')
 
-// Reaches Jarvis from wherever the wearer currently is - the menu, or any
-// tool's own page - rather than only from the menu the way every other
-// tool is opened. Called both by the global long-press handler (see
-// LONG_PRESS_EVENT below) and by the menu's own click handling when Jarvis
-// is selected the ordinary way, so entering it always remembers where to
-// return to afterward (see onJarvisDone near the bottom of this file).
+// A long-press from any screen other than Jarvis: straight into a new
+// Jarvis conversation, recording, remembering where to hand the wearer back
+// to afterward (see returnFromJarvis).
 function enterJarvis() {
-  if (screen.kind === 'tool' && TOOLS[screen.index].name === 'Jarvis') return
   screenBeforeJarvis = screen
-  // openTool does not call the outgoing tool's onClose - it never needed to
-  // before, since every existing path into it went through the menu, whose
-  // own click handling already closes nothing (there is no tool open to
-  // close). Jarvis is the first thing that can be entered directly from
-  // another tool's page, so this is the one call site that has to do it.
+  // openTool does not call the outgoing tool's onClose - every other path
+  // into a tool comes from the menu, where there is no tool open to close.
   activeTool()?.onClose?.()
+  prepareJarvisOpen('quickAsk')
   openTool(JARVIS_INDEX)
+}
+
+// Back to wherever the long-press into Jarvis came from - after a command
+// has run, or on leaving a conversation it started.
+function returnFromJarvis() {
+  const target = screenBeforeJarvis
+  screenBeforeJarvis = null
+  if (!target || target.kind === 'menu') {
+    returnToMenu()
+    return
+  }
+  activeTool()?.onClose?.()
+  openTool(target.index)
 }
 
 async function openTool(index: number) {
@@ -488,15 +496,12 @@ async function openTool(index: number) {
   bridge.rebuildPageContainer(new RebuildPageContainer(toolContainers(index))).then(ok => {
     if (ok) {
       screen = { kind: 'tool', index }
-      // Jarvis is never persisted as "the current screen" - it is a
-      // momentary action, not a place the wearer would want restored on the
-      // next cold start or resume. Restoring straight into it would start
-      // listening with no long press at all (found the hard way [HW]: a
-      // stale persisted Jarvis screen meant the app opened already
-      // listening, with no gesture to explain why). Whatever was persisted
-      // before stays persisted - see enterJarvis, which is the only other
-      // caller that can land here with tool.name === 'Jarvis'.
-      if (tool.name !== 'Jarvis') persistScreen(screen)
+      // Jarvis is persisted like any other tool now. The old one-shot
+      // Jarvis was not, because restoring into it started listening with no
+      // gesture at all [HW]; Jarvis now records only when opened by a
+      // long-press or "New chat", never on a restore (see
+      // features/chat/tool.ts's prepareOpen - a restore opens the list).
+      persistScreen(screen)
       status(`Tool: ${tool.name}`)
       // Baseline publish before onOpen, not after - a tool with its own
       // internal depth worth mirroring (Chat; see core/currentScreen.ts)
@@ -515,6 +520,8 @@ async function openTool(index: number) {
 
 function returnToMenu() {
   confirming = false
+  // Back at the top: nothing left to hand the wearer back to.
+  screenBeforeJarvis = null
   // Close before the rebuild, so an update arriving mid-transition cannot land on
   // a container that is about to be replaced.
   activeTool()?.onClose?.()
@@ -588,19 +595,9 @@ const restoredScreen = await storedScreenPromise
 
 // If a recent tool page was stored, rebuild to it. The menu was already shown;
 // the rebuild causes a brief flicker during cold start, which is the trade for
-// never blocking the first frame on a storage read.
-//
-// Never restores into Jarvis specifically, even if an old stored value still
-// names it (from before openTool stopped persisting it, or from a version
-// that crashed mid-session before it could correct itself) - falling
-// through here means the menu already drawn as the safe default stays put,
-// which is exactly what should happen instead of silently starting to
-// listen with no long press to explain why.
-if (
-  restoredScreen &&
-  restoredScreen.kind === 'tool' &&
-  TOOLS[restoredScreen.index].name !== 'Jarvis'
-) {
+// never blocking the first frame on a storage read. Restoring into Jarvis
+// opens its list - it never starts recording without a gesture.
+if (restoredScreen && restoredScreen.kind === 'tool') {
   const tool = TOOLS[restoredScreen.index]
   // Same reason as openTool: contentKind/listItems/initialContent need fresh
   // data before toolContainers reads them, and this is the other place that
@@ -666,32 +663,18 @@ function timerBarText(): string | null {
 onTimerUpdate(() => setStatusBarTimer(timerBarText()))
 setStatusBarTimer(timerBarText())
 
-// The Jarvis tool captures speech but has no idea what a transcript means -
-// deciding that is app-level knowledge (see core/voiceDispatch.ts for why).
-// Tried as a structured command first (today just Timer); anything that
-// does not match falls through to Gemini, so a transcript that is not a
-// command at all ("what's the capital of France") still gets an answer
-// instead of "Didn't recognize a command" - but only if the wearer has
-// actually entered a Gemini API key on the companion page (see
-// core/geminiSettings.ts). No key means the fallback is skipped
-// entirely, same behaviour as before Gemini existed: local parsing has no
-// dependency on network or a key, and unconfigured Jarvis should still work
-// for the one thing it always could.
+// Jarvis's local commands. Jarvis captures speech but has no idea what a
+// transcript means as a command - which feature a command belongs to is
+// app-level knowledge (see core/voiceDispatch.ts for why). Today just the
+// Timer. Anything that is not a command is not handled here: Jarvis sends
+// it to Gemini itself, as part of its conversation (features/chat/tool.ts).
 registerVoiceDispatch(async transcript => {
   const command = parseVoiceCommand(transcript)
   if (command.kind === 'startTimer') {
     startTimerFromVoice(command.durationMs)
     return { handled: true, message: `Started a ${formatDuration(command.durationMs)} timer.` }
   }
-
-  const apiKey = await getGeminiApiKey()
-  if (!apiKey) return { handled: false }
-
-  const result = await askGemini(apiKey, transcript)
-  if (result.kind === 'error') {
-    return { handled: true, message: `Couldn't reach Gemini (${result.message}).` }
-  }
-  return { handled: true, message: result.text }
+  return { handled: false }
 })
 
 // Kicked off here, not awaited, and not gated behind ever opening Jarvis:
@@ -702,43 +685,21 @@ registerVoiceDispatch(async transcript => {
 // preload() itself already guarantees (see core/whisper.ts).
 preloadWhisper()
 
-// Same idea for Gemini's saved chats: loaded once in the background so
-// opening Gemini reads an in-memory copy instead of storage (see
+// Same idea for Jarvis's saved conversations: loaded once in the background
+// so opening Jarvis reads an in-memory copy instead of storage (see
 // features/chat/store.ts for why a storage read on that path is exactly
 // what kept making it fail to open).
 chatSessions.preload()
 
-// How long the result stays on screen before Jarvis hands the wearer back
-// to whatever they were doing. Long enough to actually read a short
-// confirmation ("Started a 5:00 timer."), not so long that "it just does
-// it" starts to feel like "and now I am stuck here."
-const JARVIS_RETURN_DELAY_MS = 2500
-
-// Fires once per Jarvis session, success or failure (see
-// features/jarvis/tool.ts's onDone) - the return trip only happens for a
-// session enterJarvis actually started (screenBeforeJarvis is set), so a
-// session begun by tapping to Jarvis is not this handler's concern.
-// Rechecks that Jarvis is still the screen on show before returning: the
-// wearer may have already double-tapped away during the delay, and pulling
-// them back to screenBeforeJarvis at that point would undo a navigation
-// they made on purpose.
-onJarvisDone(() => {
+// Jarvis asks for this once a command started by a long-press has shown its
+// result (it owns the delay, and checks the wearer has not started
+// something else meanwhile). Rechecked here too: only if Jarvis is still
+// the page on screen and there is somewhere to go back to - the wearer may
+// have navigated away on purpose in the meantime.
+onJarvisReturnRequested(() => {
+  if (!(screen.kind === 'tool' && screen.index === JARVIS_INDEX)) return
   if (!screenBeforeJarvis) return
-  const target = screenBeforeJarvis
-  screenBeforeJarvis = null
-  setTimeout(() => {
-    if (!(screen.kind === 'tool' && TOOLS[screen.index].name === 'Jarvis')) return
-    if (target.kind === 'menu') {
-      // returnToMenu() closes the outgoing tool (Jarvis) itself.
-      returnToMenu()
-    } else {
-      // openTool does not close the tool it is replacing - see enterJarvis's
-      // own comment on the same gap - so Jarvis's onClose needs calling here
-      // explicitly, same as there.
-      activeTool()?.onClose?.()
-      openTool(target.index)
-    }
-  }, JARVIS_RETURN_DELAY_MS)
+  returnFromJarvis()
 })
 
 // --- Input ----------------------------------------------------------------
@@ -850,54 +811,25 @@ const unsubscribe = bridge.onEvenHubEvent(event => {
     return
   }
 
-  // Double-press ends a Jarvis session, instead of the usual "leave to
-  // menu" - checked before the generic isDoubleTap branch below for the
-  // same reason the confirm-prompt block above is: a double-press means
-  // something different here and must not fall through to the universal
-  // meaning. Per direct request: holding down the whole time a command is
-  // being spoken turned out to be the wrong shape (release ended the
-  // recording too early) - long press now only starts listening, freeing
-  // the wearer to let go immediately, and a double-press is the deliberate
-  // "I'm done" signal instead.
-  //
-  // Only while genuinely listening, though - checked with isJarvisListening,
-  // not just "is Jarvis the active screen". A finished result sitting on
-  // screen waiting for the auto-return, or a session that never actually
-  // started, are not a recording to stop; a double-press there needs to
-  // fall through to the normal isDoubleTap branch below and behave like
-  // leaving any other tool. Missing this distinction left no way out of a
-  // stuck Jarvis session at all [HW] - every double-press just re-ran an
-  // already-finished one.
-  if (isDoubleTap && screen.kind === 'tool' && TOOLS[screen.index].name === 'Jarvis') {
+  // A single tap in Jarvis has two meanings, neither of which is "leave" -
+  // per direct request, double-tap felt wrong for ending a recording, and
+  // re-speaking a question just to retry after a Gemini failure is the
+  // wrong recovery path. Checked before the isDoubleTap branch below so it
+  // does not fall through to the universal "tap does nothing on a text
+  // screen" default. isDoubleTap is excluded explicitly so a genuine
+  // double-tap still falls through to the normal leave-confirmation
+  // behaviour below. (The old one-shot Jarvis ended a recording with a
+  // double-press instead; that tool is gone, merged into this one.)
+  const isSingleTap =
+    !isDoubleTap &&
+    (sysType === OsEventTypeList.CLICK_EVENT || textType === OsEventTypeList.CLICK_EVENT)
+  if (isSingleTap && screen.kind === 'tool' && screen.index === JARVIS_INDEX) {
     if (isJarvisListening()) {
       finishJarvisListening()
       return
     }
-  }
-
-  // Gemini (the chat tool - renamed from "Chat") gives a single tap two
-  // meanings, neither of which is "leave" - per direct request, double-tap
-  // felt wrong for ending a recording, and re-speaking a question just to
-  // retry after a Gemini failure is the wrong recovery path. Checked
-  // before the isDoubleTap branch below for the same reason as Jarvis's
-  // carve-out above: this must not fall through to the universal "tap
-  // does nothing on a text screen" default. isDoubleTap is excluded
-  // explicitly so a genuine double-tap still falls through to the normal
-  // leave-confirmation behaviour below. Listening takes priority over
-  // retry - canRetryChat() can only be true when NOT listening anyway
-  // (see features/chat/tool.ts's lastErrorQuestion lifecycle), so the
-  // order here does not actually matter, but checking the active state
-  // first reads more naturally.
-  const isSingleTap =
-    !isDoubleTap &&
-    (sysType === OsEventTypeList.CLICK_EVENT || textType === OsEventTypeList.CLICK_EVENT)
-  if (isSingleTap && screen.kind === 'tool' && TOOLS[screen.index].name === 'Gemini') {
-    if (isChatListening()) {
-      finishChatListening()
-      return
-    }
-    if (canRetryChat()) {
-      retryChat()
+    if (canRetryJarvis()) {
+      retryJarvis()
       return
     }
   }
@@ -946,15 +878,7 @@ const unsubscribe = bridge.onEvenHubEvent(event => {
   // default INSIDE the branch where we already know listEvent exists and the
   // event is a click.
   if (listEvent && listType === OsEventTypeList.CLICK_EVENT && screen.kind === 'menu') {
-    const index = listEvent.currentSelectItemIndex ?? 0
-    // Selecting Jarvis by hand goes through the same entry point as the
-    // global long-press gesture, so it gets the same "return to where I
-    // was" behaviour afterward rather than always landing back at the menu.
-    if (index === JARVIS_INDEX) {
-      enterJarvis()
-    } else {
-      openTool(index)
-    }
+    openTool(listEvent.currentSelectItemIndex ?? 0)
     return
   }
 
@@ -985,35 +909,32 @@ const unsubscribe = bridge.onEvenHubEvent(event => {
     }
   }
 
-  // Long press, reserved globally for Jarvis: from any screen - the menu or
-  // any tool's own page - it starts listening. Per direct decision, this
-  // takes plain long press away from every tool that used to be free to
-  // claim it (only Notes did, moved to its own contextual menu item - see
-  // features/notes/tool.ts). Two carve-outs: Lab, dev-only and never
-  // shipped, whose several probes (stop mic/IMU, cycle icons, replace a
-  // partial update line) still need it for real hardware verification work;
-  // and Chat, which needs long press for its OWN local "ask a question"
-  // gesture while its own conversation screen is active - unlike Jarvis,
-  // entering Chat happens through the ordinary menu, not this global
-  // reservation, so there is no conflict between the two meanings. Both
-  // route through Tool.onLongPress rather than a bespoke call, the same
-  // mechanism Lab already used before Chat needed it too.
-  // LONG_PRESS_EVENT is 9, non-zero, so the zero-elision trap does not apply
-  // here either.
+  // Long press, reserved globally for Jarvis: from any screen it starts a
+  // new Jarvis conversation, recording. Per direct decision, this takes
+  // plain long press away from every tool that used to be free to claim it
+  // (only Notes did, moved to its own contextual menu item - see
+  // features/notes/tool.ts). Inside Jarvis itself: in a conversation it
+  // asks the next question (Jarvis's own onLongPress); on Jarvis's list it
+  // opens a new conversation, staying in Jarvis rather than treating the
+  // list as a screen to come back to. Lab, dev-only and never shipped,
+  // keeps it for its own hardware probes. LONG_PRESS_EVENT is 9, non-zero,
+  // so the zero-elision trap does not apply here.
   //
-  // Ending the recording is a double-press (see the isDoubleTap branch
-  // above), not the matching LONG_PRESS_RELEASE_EVENT - tried release first,
-  // and per direct report holding the whole time a command was spoken meant
-  // releasing (correctly) ended the recording before an interim caption ever
-  // had a chance to appear on screen. Starting on press and freeing the
-  // wearer to let go immediately gives the recording room to actually run
-  // long enough to show something. LONG_PRESS_RELEASE_EVENT is deliberately
-  // unhandled here now - nothing in this app currently needs the moment of
-  // release itself, only the start.
+  // Recording ends on a tap (see the isSingleTap branch above), not on the
+  // matching LONG_PRESS_RELEASE_EVENT - tried release first, and per direct
+  // report holding the whole time a question was spoken ended the
+  // recording too early. LONG_PRESS_RELEASE_EVENT is deliberately unhandled.
   if (sysType === OsEventTypeList.LONG_PRESS_EVENT) {
-    const name = activeTool()?.name
-    if (name === 'Lab' || name === 'Gemini') {
-      activeTool()?.onLongPress?.()
+    const tool = activeTool()
+    if (tool?.name === 'Lab') {
+      tool.onLongPress?.()
+    } else if (screen.kind === 'tool' && screen.index === JARVIS_INDEX) {
+      if (isJarvisAtPicker()) {
+        prepareJarvisOpen('newChat')
+        openTool(JARVIS_INDEX)
+      } else {
+        tool?.onLongPress?.()
+      }
     } else {
       enterJarvis()
     }

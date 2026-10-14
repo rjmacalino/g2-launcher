@@ -12,7 +12,7 @@
     },
     {
       "name": "network",
-      "desc": "Downloads the weather forecast for your location from Open-Meteo, the on-device speech recognition model used for voice commands (downloaded once, then cached on the device), and, only if you add your own Gemini API key, sends your questions to Google's Gemini API - from Jarvis, when it does not recognise something as a command, and from Gemini, for every message.",
+      "desc": "Downloads the weather forecast for your location from Open-Meteo, the on-device speech recognition model used for voice commands (downloaded once, then cached on the device), and, only if you add your own Gemini API key, sends what you ask Jarvis to Google's Gemini API - anything that is not a command like a timer.",
       "whitelist": [
         "https://api.open-meteo.com",
         "https://huggingface.co",
@@ -23,7 +23,7 @@
     },
     {
       "name": "g2-microphone",
-      "desc": "Records a short clip from the glasses microphone when you long-press to speak to Jarvis or Gemini, so what you say can be recognised. Recording stops as soon as a result is ready; nothing is recorded otherwise."
+      "desc": "Records a short clip from the glasses microphone when you long-press to speak to Jarvis, so what you say can be recognised. Recording stops as soon as a result is ready; nothing is recorded otherwise."
     }
   ],
   "supported_languages": ["en"]

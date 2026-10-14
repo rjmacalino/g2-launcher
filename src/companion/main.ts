@@ -104,14 +104,14 @@ function renderMenu() {
 // The plain, detail-free mapping from a tool's name to its companion page -
 // what clicking a row in the companion's OWN menu uses (no glasses detail
 // to go on, just "open this tool's page"), and the fallback the
-// glasses-follow sync below uses for every tool except Gemini (the chat
-// tool - renamed from "Chat"), which has its own richer, async-aware
-// version (see syncToGlassesScreen).
+// glasses-follow sync below uses for every tool except Jarvis, which has
+// its own richer, async-aware version (see syncToGlassesScreen). Jarvis's
+// page is its conversation list, which links to the Gemini key and About
+// You settings.
 function baselineViewForTool(name: string | undefined): View {
   if (name === 'Teleprompter') return { kind: 'list', collection: 'scripts' }
   if (name === 'Notes') return { kind: 'list', collection: 'notes' }
-  if (name === 'Jarvis') return { kind: 'jarvis-settings' }
-  if (name === 'Gemini') return { kind: 'chat-list' }
+  if (name === 'Jarvis') return { kind: 'chat-list' }
   return { kind: 'stub', label: name ?? '' }
 }
 
@@ -123,12 +123,12 @@ function baselineViewForTool(name: string | undefined): View {
 // the glasses, not the other way around - see docs/roadmap.md for the
 // companion-steers-glasses direction, not built yet.
 //
-// Gemini is the one tool with a richer sync today: its own detail (see
-// features/chat/tool.ts's ChatScreenDetail) says not just "Gemini is open"
-// but which depth and which session, so the companion can jump straight to
-// reading the live conversation instead of always landing on the picker.
-// Every other tool only gets the baseline "this tool's page is open" sync,
-// since none of them publish anything richer yet.
+// Jarvis is the one tool with a richer sync today: its own detail (see
+// features/chat/tool.ts's ChatScreenDetail) says not just "Jarvis is open"
+// but which depth and which conversation, so the companion can jump
+// straight to reading the live conversation instead of always landing on
+// the list. Every other tool only gets the baseline "this tool's page is
+// open" sync, since none of them publish anything richer yet.
 async function syncToGlassesScreen(): Promise<void> {
   const screen = getCurrentScreen()
   if (screen.kind === 'menu') {
@@ -137,7 +137,7 @@ async function syncToGlassesScreen(): Promise<void> {
     return
   }
 
-  if (screen.name === 'Gemini') {
+  if (screen.name === 'Jarvis') {
     const detail = screen.detail as ChatScreenDetail | undefined
     if (detail?.depth === 'conversation' && detail.sessionId) {
       const found = (await chatSessions.readAll()).find(s => s.id === detail.sessionId)
@@ -198,7 +198,7 @@ async function renderJarvisSettings(statusMessage?: string) {
       </div>
       <p class="stub-body">
         A sentence or two about you, sent along with every question to
-        Jarvis and Gemini so answers can actually be tailored to you -
+        Jarvis so answers can actually be tailored to you -
         who you are, what you're working on, how you like answers given.
         Not required; leave it blank and nothing changes about how either
         one answers.
@@ -215,7 +215,9 @@ async function renderJarvisSettings(statusMessage?: string) {
     </div>
   `
 
-  attachBack({ kind: 'menu' })
+  // Reached from Jarvis's conversation list (its settings link), so Back
+  // returns there.
+  attachBack({ kind: 'chat-list' })
 
   root.querySelector('.save')?.addEventListener('click', async () => {
     const input = root.querySelector<HTMLInputElement>('.gemini-key')
@@ -288,7 +290,7 @@ function formatWhen(ms: number): string {
 // a direct payoff of the glasses-to-companion sync built earlier.
 function isLiveOnGlasses(sessionId: string): boolean {
   const screen = getCurrentScreen()
-  if (screen.kind !== 'tool' || screen.name !== 'Gemini') return false
+  if (screen.kind !== 'tool' || screen.name !== 'Jarvis') return false
   const detail = screen.detail as ChatScreenDetail | undefined
   return detail?.depth === 'conversation' && detail.sessionId === sessionId
 }
@@ -361,7 +363,7 @@ async function renderChatList() {
 }
 
 function chatBubble(message: ChatSession['messages'][number]): string {
-  const who = message.role === 'user' ? 'You' : 'Gemini'
+  const who = message.role === 'user' ? 'You' : 'Jarvis'
   return `
     <div class="chat-bubble chat-bubble-${message.role}">
       <div class="chat-bubble-who">${who} - ${formatWhen(message.timestamp)}</div>

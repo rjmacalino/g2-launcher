@@ -1,13 +1,12 @@
 import { getAboutMe } from './geminiSettings'
 
-// A cloud LLM, used only when a transcript does not match any local
-// command parser (see core/voiceDispatch.ts) - the fallback that makes
-// Jarvis able to actually answer a question instead of just running
-// commands. Deliberately not the default path for everything: local parsing
-// costs nothing and has no dependency on an API key or network, and per
-// docs/roadmap.md decision D1 this only exists because open-ended questions
-// need real language understanding no on-device model here is a good match
-// for.
+// The model behind Jarvis's answers: anything Jarvis hears that is not a
+// local command (see core/voiceDispatch.ts) comes here, as part of the
+// conversation it was asked in. Deliberately not the path for commands:
+// local parsing costs nothing and has no dependency on an API key or
+// network, and per docs/roadmap.md decision D1 this only exists because
+// open-ended questions need real language understanding no on-device model
+// here is a good match for.
 //
 // Chose Gemini's free tier over a cheap paid one (DeepSeek, also confirmed
 // working) per direct request to look for free options first. Real
@@ -31,34 +30,23 @@ import { getAboutMe } from './geminiSettings'
 const MODEL = 'gemini-3.8-flash'
 const ENDPOINT = `https://generativelanguage.googleapis.com/v1beta/models/${MODEL}:generateContent`
 
-// Jarvis's fallback is read once, off a push-to-talk voice command, with no
-// scrolling built for it - so its answers stay short on purpose. Chat is a
-// real multi-turn conversation with its own scrollable history (see
-// features/chat/tool.ts), so it gets the opposite instruction: answer fully,
-// let the wearer scroll, same as any chat app would. Per docs/platform.md,
-// a text container cannot shrink its own font - "scroll more" is the only
-// knob here, not "show smaller text".
-const SYSTEM_INSTRUCTION_CONCISE =
-  'You are a voice assistant on smart glasses with a small display. ' +
-  'Answer in one or two short sentences, plain text, no markdown, no lists.'
+// Answers are read by paging on the glasses (features/chat/paging.ts), so
+// they are full answers, not glance-length ones - per direct request. The
+// wearer calls the assistant Jarvis and the model answers as Jarvis; Gemini
+// is only what is underneath.
+const SYSTEM_INSTRUCTION =
+  'You are Jarvis, a conversational assistant on smart glasses with a ' +
+  'small text display the wearer pages through. Answer fully and ' +
+  'naturally, the way you would in any chat conversation - do not cut ' +
+  'yourself short to save space. Finish your last sentence rather than ' +
+  'trailing off. Plain text only, no markdown, no bullet lists.'
 
-const SYSTEM_INSTRUCTION_FULL =
-  'You are a conversational assistant on smart glasses with a small text ' +
-  'display the wearer pages through. Answer fully and naturally, the way ' +
-  'you would in any chat conversation - do not cut yourself short to save ' +
-  'space. Finish your last sentence rather than trailing off. Plain text ' +
-  'only, no markdown, no bullet lists.'
-
-// Jarvis's cap keeps a glance-read answer from running past what a single
-// unscrolled screen can show. Chat's used to be held at 400 tokens for one
-// reason only: a single glasses update has a hard size ceiling
-// (docs/platform.md), and anything longer got cut. features/chat/tool.ts
-// now splits an answer into one-screen pages instead, so the display no
-// longer limits answer length at all - per direct request, the full answer,
-// never cut. This cap is just a ceiling against a runaway reply eating the
+// Answers used to be held at 400 tokens for one reason only: a single
+// glasses update has a hard size ceiling (docs/platform.md), and anything
+// longer got cut. Answers are paged now, so the display no longer limits
+// their length - this is just a ceiling against a runaway reply eating the
 // free tier's quota: roughly 4,000 characters, several pages.
-const MAX_OUTPUT_TOKENS_CONCISE = 120
-const MAX_OUTPUT_TOKENS_FULL = 1024
+const MAX_OUTPUT_TOKENS = 1024
 
 export type GeminiResult = { kind: 'answer'; text: string } | { kind: 'error'; message: string }
 
@@ -91,7 +79,6 @@ function delay(ms: number): Promise<void> {
 async function requestOnce(
   apiKey: string,
   turns: readonly GeminiTurn[],
-  concise: boolean,
   systemInstruction: string,
 ): Promise<Response> {
   return fetch(ENDPOINT, {
@@ -106,7 +93,7 @@ async function requestOnce(
         parts: [{ text: systemInstruction }],
       },
       generationConfig: {
-        maxOutputTokens: concise ? MAX_OUTPUT_TOKENS_CONCISE : MAX_OUTPUT_TOKENS_FULL,
+        maxOutputTokens: MAX_OUTPUT_TOKENS,
         // gemini-3.8-flash "thinks" before answering, and that thinking
         // spends tokens out of the SAME maxOutputTokens budget as the
         // visible reply - confirmed by symptom, not by a doc or a test with
@@ -130,19 +117,15 @@ async function requestOnce(
 // The full conversation so far (see GeminiTurn above), oldest first, ending
 // with the new question as the last 'user' turn - this is what makes a
 // follow-up a follow-up: Gemini has no memory of its own between requests,
-// every prior exchange has to be resent each time. Used by both Jarvis
-// (a single-turn conversation, see ask() below) and Chat (a real multi-turn
-// one, see features/chat/tool.ts).
+// every prior exchange has to be resent each time (see
+// features/chat/tool.ts).
 export type ConverseOptions = {
-  // Short glance-read answers (Jarvis's need, the default) or full ones
-  // read by paging (Chat's).
-  concise?: boolean
   // Called right before each retry attempt (never for the first try) with
-  // the attempt about to start and the total allowed - Chat shows
+  // the attempt about to start and the total allowed - Jarvis shows
   // "Retrying (2/3)" with it instead of an unchanging "Thinking...".
   onRetry?: (attempt: number, maxAttempts: number) => void
-  // Extra context for the system instruction, from the caller - Chat sends
-  // a short digest of the wearer's other recent conversations (see
+  // Extra context for the system instruction, from the caller - Jarvis
+  // sends a short digest of the wearer's other recent conversations (see
   // features/chat/digest.ts). Built by the caller, not here, because it
   // comes from a feature's own data, and core/ never imports features/.
   background?: string
@@ -151,16 +134,13 @@ export type ConverseOptions = {
 export async function converse(
   apiKey: string,
   turns: readonly GeminiTurn[],
-  { concise = true, onRetry, background }: ConverseOptions = {},
+  { onRetry, background }: ConverseOptions = {},
 ): Promise<GeminiResult> {
-  // Folded in here, once, rather than left to each caller - both Jarvis
-  // and Chat should tailor answers to the same person, and this is the
-  // one place every request already passes through. Per direct request:
-  // "I want my chatbot to know me... to tailor its answer for me." Empty
-  // when nothing has been entered on the companion page, which is the
-  // same as not having this feature at all.
+  // Per direct request: "I want my chatbot to know me... to tailor its
+  // answer for me." Empty when nothing has been entered on the companion
+  // page, which is the same as not having this feature at all.
   const aboutMe = await getAboutMe()
-  const parts = [concise ? SYSTEM_INSTRUCTION_CONCISE : SYSTEM_INSTRUCTION_FULL]
+  const parts = [SYSTEM_INSTRUCTION]
   if (aboutMe) {
     parts.push(
       `Background on the person you're talking to - use it to tailor your answer naturally, without mentioning that you were told this: ${aboutMe}`,
@@ -176,7 +156,7 @@ export async function converse(
       await delay(RETRY_DELAY_MS)
     }
     try {
-      const response = await requestOnce(apiKey, turns, concise, systemInstruction)
+      const response = await requestOnce(apiKey, turns, systemInstruction)
       if (!response.ok) {
         lastErrorMessage = `Gemini returned ${response.status}`
         if (isTransient(response.status) && attempt < MAX_ATTEMPTS) continue
@@ -196,13 +176,6 @@ export async function converse(
   // so this has an explicit return for every path rather than relying on
   // that being obvious from the loop bounds alone.
   return { kind: 'error', message: lastErrorMessage }
-}
-
-// A single question, no history - what Jarvis's one-shot command fallback
-// needs (see core/voiceDispatch.ts). A thin wrapper over converse() rather
-// than a separate request shape, so the two never drift apart.
-export function ask(apiKey: string, question: string): Promise<GeminiResult> {
-  return converse(apiKey, [{ role: 'user', text: question }])
 }
 
 // Reaches into candidates[0].content.parts[0].text without trusting the
