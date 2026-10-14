@@ -4,6 +4,7 @@ import { getApiKey as getGeminiApiKey } from '../../core/geminiSettings'
 import { chatSessions, type ChatMessage, type ChatSession } from './store'
 import { setContent } from '../../platform/page'
 import { setCurrentScreen } from '../../core/currentScreen'
+import { requestRebuild } from '../../core/rebuild'
 import type { Tool } from '../../core/tool'
 
 // A real multi-turn conversation, unlike Jarvis's one-shot command/question
@@ -46,18 +47,28 @@ let depth: Depth = 'picker'
 // a second async storage read landing after the rebuild already happened.
 let pickerSessions: ChatSession[] = []
 
-// null means "New chat" was picked - no session exists yet, one is created
-// the moment the first exchange actually happens (see store.ts's own
-// appendMessage, which takes a null id to mean exactly this).
+// The open conversation, held here in memory as the source of truth while
+// it is open - storage is only ever written in the background from this
+// (see saveCurrent below and features/chat/store.ts for why nothing the
+// wearer waits on touches storage). null id means "New chat" was picked and
+// no question has been asked yet, so no session exists.
 let currentSessionId: string | null = null
 let currentMessages: ChatMessage[] = []
-
-// Mirrors chatSessions.appendMessage's own title choice (see store.ts) for
-// whichever session is currently open, so onBack can fold it back into
-// pickerSessions without an async storage read - onBack runs synchronously,
-// same requirement as onListSelect (see the Tool interface). Stays null
-// until the first exchange actually creates or touches a session.
 let currentSessionTitle: string | null = null
+
+// Background save of whatever conversation is open. Never awaited: the
+// store waits for its own startup load before writing (so it can never
+// overwrite history it has not seen), and that wait must not reach the
+// screen.
+function saveCurrent(): void {
+  if (currentSessionId === null) return
+  void chatSessions.save({
+    id: currentSessionId,
+    title: currentSessionTitle ?? '(untitled)',
+    messages: currentMessages,
+    updatedAt: Date.now(),
+  })
+}
 
 let sessionToken = 0
 let listening = false
@@ -116,22 +127,56 @@ function publishScreen(): void {
 // and still shows every session.
 const PICKER_MAX_SESSIONS = 19
 
+// Shorter than the 64-character list-item limit on purpose. Both open
+// Gemini bugs [HW] - failing to open, and "Yes" on the leave prompt not
+// landing back on this picker - only ever happened with saved chats, i.e.
+// only when this list had titles in it; with zero chats it is just "New
+// chat" and both always worked. Titles were cut at exactly 64 characters,
+// right on the documented limit, so a firmware that really allows 63 plus a
+// terminator would reject every long-question title. Unconfirmed, but the
+// stored title is untouched - only what the list shows is shorter.
+const PICKER_TITLE_MAX_CHARS = 40
+
+function pickerTitle(title: string): string {
+  return title.length > PICKER_TITLE_MAX_CHARS
+    ? `${title.slice(0, PICKER_TITLE_MAX_CHARS - 3)}...`
+    : title
+}
+
+function sortForPicker(sessions: ChatSession[]): ChatSession[] {
+  return [...sessions].sort((a, b) => b.updatedAt - a.updatedAt).slice(0, PICKER_MAX_SESSIONS)
+}
+
+// No storage read on this path any more - it reads the store's in-memory
+// copy, loaded once in the background at app startup (see
+// features/chat/store.ts for why: a storage read here is exactly what was
+// timing out the whole open). If that load has not finished yet, the
+// picker opens with just "New chat" and redraws itself the moment the
+// saved chats arrive, rather than holding the open hostage to them.
 async function refresh(): Promise<void> {
-  const all = (await chatSessions.readAll()).sort((a, b) => b.updatedAt - a.updatedAt)
-  pickerSessions = all.slice(0, PICKER_MAX_SESSIONS)
   depth = 'picker'
   currentSessionId = null
   currentMessages = []
   currentSessionTitle = null
+  lastErrorQuestion = null
+  const cached = chatSessions.peek()
+  pickerSessions = sortForPicker(cached ?? [])
+  if (cached === null) {
+    void chatSessions.readAll().then(loaded => {
+      if (depth !== 'picker') return
+      pickerSessions = sortForPicker(loaded)
+      // The shell ignores this unless Gemini is actually the page on
+      // screen (see app/main.ts's rebuild handler).
+      requestRebuild(chatTool)
+    })
+  }
 }
 
 // Folds the currently open session back into pickerSessions in memory, no
-// storage read needed - every exchange is already written to storage the
-// moment it happens (see chatSessions.appendMessage in store.ts), this just
-// keeps the in-memory picker list from showing stale data (a missing new
-// session, or an old title/position) on the way back to it. Called from
-// onBack, which must be synchronous (same requirement as onListSelect), so
-// this cannot simply re-run refresh()'s own async readAll.
+// storage read needed - this just keeps the in-memory picker list from
+// showing stale data (a missing new session, or an old title/position) on
+// the way back to it. Called from onConfirmedExit, which must be
+// synchronous (same requirement as onListSelect).
 function syncPickerFromCurrent(): void {
   if (currentSessionId === null) return
   const updated: ChatSession = {
@@ -299,20 +344,16 @@ async function askGemini(question: string, mySession: number) {
   // What "this is still relevant" actually means for rendering a network
   // response, as opposed to mySession/sessionToken, which exists to stop
   // overlapping VOICE CAPTURE lifecycles (a double-start), not to gate a
-  // late-arriving fetch. Conflating the two was a real bug: sessionToken
-  // gets bumped by things that don't mean "the wearer left this
-  // conversation" - stopListeningIfAny runs on a suspend/resume blip, or
-  // simply tapping retry again - and if that happened in the narrow
-  // window while chatSessions.appendMessage() below was still in flight,
-  // the answer was saved to storage correctly but the on-screen content
-  // was never updated to show it, silently leaving whatever was there
-  // before (including a stale error from an earlier attempt) on screen.
-  // Reopening the conversation re-read storage and showed the real
-  // answer, which is exactly the "it says error, then I reopen and it's
-  // there" report this fixes. targetSessionId is read now, not later,
-  // since this is the session this question actually belongs to for the
-  // rest of this call.
+  // late-arriving fetch. Conflating the two was a real bug [HW]: the
+  // answer was saved but the screen kept showing a stale error, and
+  // reopening the conversation showed the real answer. The conversation
+  // this question belongs to is captured now - id, title and messages -
+  // so the answer is filed against it even if the wearer has moved on by
+  // the time it arrives.
   const targetSessionId = currentSessionId
+  const targetTitle = currentSessionTitle
+  const messagesAtAsk = currentMessages
+  if (targetSessionId === null) return
   const stillRelevant = () => depth === 'conversation' && currentSessionId === targetSessionId
 
   const apiKey = await getGeminiApiKey()
@@ -352,7 +393,7 @@ async function askGemini(question: string, mySession: number) {
   let attemptsMade = 1
   // concise: false - this is Chat's whole point, a real conversation read by
   // scrolling, not Jarvis's glance-and-go fallback. See core/gemini.ts.
-  const reply = await converse(apiKey, toGeminiTurns(currentMessages), false, (attempt, max) => {
+  const reply = await converse(apiKey, toGeminiTurns(messagesAtAsk), false, (attempt, max) => {
     attemptsMade = attempt
     retryNote = `\nRetrying (${attempt}/${max})...`
   })
@@ -373,23 +414,23 @@ async function askGemini(question: string, mySession: number) {
   }
 
   // Saved regardless of stillRelevant() - the answer belongs to
-  // targetSessionId's own history whether or not it is what the wearer
-  // happens to be looking at right now, and the next time that session is
-  // opened (including via "exit and reopen", the exact report this whole
-  // fix is for) it has to already be there.
+  // targetSessionId's own history whether or not the wearer is still
+  // looking at it, and has to be there the next time it is opened. In the
+  // background: nothing about showing the answer waits on storage.
   const answer: ChatMessage = { role: 'model', text: reply.text, timestamp: Date.now() }
-  const sessionAfterAnswer = await chatSessions.appendMessage(targetSessionId, answer)
+  const answeredMessages = [...messagesAtAsk, answer]
+  void chatSessions.save({
+    id: targetSessionId,
+    title: targetTitle ?? '(untitled)',
+    messages: answeredMessages,
+    updatedAt: Date.now(),
+  })
   // Correctness, not a render decision - a retry would be pointless and
-  // wrong for a question that just got answered, whether or not the
-  // wearer is still looking at this conversation right now.
+  // wrong for a question that just got answered.
   if (lastErrorQuestion === question) lastErrorQuestion = null
   if (!stillRelevant()) return
-  currentSessionTitle = sessionAfterAnswer.title
-  currentMessages = sessionAfterAnswer.messages
+  currentMessages = answeredMessages
   setContent(renderConversation(LIVE_CHAR_BUDGET))
-  // Republishes the same session id - still worth it, since the companion
-  // page re-fetches on every publish and this is the moment the full
-  // answer actually lands in storage for it to read.
   publishScreen()
 }
 
@@ -417,27 +458,23 @@ export async function finishListening() {
     return
   }
 
-  // Captured now, not read live after the await below - same reasoning as
-  // askGemini's own targetSessionId (see its comment): sessionToken can
-  // bump for reasons that don't mean "the wearer left this conversation"
-  // (a suspend/resume blip), and using the live currentSessionId after an
-  // await risks either silently dropping this question's result, or
-  // worse, overwriting a conversation the wearer has since switched to
-  // via the picker. askedInSameConversation checks against what was true
-  // when this question was actually asked.
-  const sessionIdBeforeAsking = currentSessionId
-  const askedInSameConversation = () =>
-    depth === 'conversation' && currentSessionId === sessionIdBeforeAsking
+  if (depth !== 'conversation') return
 
+  // Added in memory right away, no await - the old version awaited a
+  // storage write here before asking Gemini, which is exactly the kind of
+  // wait a slow or stuck host read turned into a frozen screen.
   const question: ChatMessage = { role: 'user', text: result.transcript, timestamp: Date.now() }
-  const sessionAfterQuestion = await chatSessions.appendMessage(sessionIdBeforeAsking, question)
-  if (!askedInSameConversation()) return
-  currentSessionId = sessionAfterQuestion.id
-  currentSessionTitle = sessionAfterQuestion.title
-  currentMessages = sessionAfterQuestion.messages
-  // "New chat" only gets a real id once this first message lands - publish
-  // now so the companion page can follow to the right session the moment
-  // it exists, rather than only once Gemini has actually answered.
+  if (currentSessionId === null) {
+    const created = chatSessions.newSession(question)
+    currentSessionId = created.id
+    currentSessionTitle = created.title
+    currentMessages = created.messages
+  } else {
+    currentMessages = [...currentMessages, question]
+  }
+  saveCurrent()
+  // "New chat" only gets a real id once this first question exists -
+  // publish now so the companion page can follow to the right session.
   publishScreen()
 
   await askGemini(result.transcript, mySession)
@@ -485,7 +522,7 @@ export const chatTool: Tool = {
   confirmPrompt: () => (depth === 'conversation' ? 'Leave this conversation?' : 'Leave Gemini?'),
   beforeOpen: refresh,
   contentKind: () => (depth === 'picker' ? 'list' : 'text'),
-  listItems: () => ['New chat', ...pickerSessions.map(s => s.title)],
+  listItems: () => ['New chat', ...pickerSessions.map(s => pickerTitle(s.title))],
   onListSelect: index => {
     if (depth !== 'picker') return
     if (index === 0) {

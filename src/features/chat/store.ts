@@ -49,84 +49,91 @@ const STORAGE_KEY = 'chat.sessions'
 // features/notes/store.ts) - a list item holds at most 64 characters.
 const TITLE_MAX_CHARS = 64
 
-// Every session's FULL message history lives in this one storage key as a
-// single JSON blob (see readAllSessions/writeAllSessions below) - there is
-// no per-session key, no pagination, nothing bounding how big that blob can
-// get on its own. Confirmed the hard way [HW]: after enough real testing,
-// Chat stopped opening at all, with no error anywhere to explain why -
-// features/chat/tool.ts's own picker was already capped at 19 *displayed*
-// items by that point, which did not help, and the fix that did was
-// deleting every saved session, which only makes sense if something about
-// reading or writing that one blob back was failing once it grew large
-// enough (most likely the bridge's own local-storage read/write, which
-// nothing here has a documented size limit for). Pruning the oldest
-// sessions here, on every write, keeps that blob bounded permanently
-// instead of trusting it to stay small. The companion page's own
-// chat-view still reads whatever is left under this cap; nothing about
-// this changes what a session looks like once saved, only how many can
-// pile up before the oldest start getting dropped.
+// Every session's full history lives in this one key as a single JSON blob,
+// so both caps below exist to keep that blob small: a count cap, and a cap
+// on its actual stored size, which is what really matters to the host's
+// storage bridge (a count alone stopped bounding size once Gemini answers
+// were allowed to run long - see core/gemini.ts).
 const MAX_STORED_SESSIONS = 40
-
-// A count cap alone turned out not to be enough - confirmed [HW]: Chat
-// still timed out opening ("Failed to open Gemini: timed out") even after
-// MAX_STORED_SESSIONS above landed, with every other tool opening fine.
-// Count was only ever a proxy for the thing that actually matters to
-// bridge.getLocalStorage/setLocalStorage: how big the serialized blob
-// actually is. That proxy broke the moment Gemini answers stopped being
-// kept short on purpose (see core/gemini.ts) - a handful of sessions with
-// real multi-hundred-character answers can already be as large as 40
-// short ones were. This bounds the real thing instead of a stand-in for
-// it.
 const MAX_STORED_CHARS = 20_000
 
-async function readAllSessions(): Promise<ChatSession[]> {
+// THE SHAPE OF THIS FILE, AND WHY.
+//
+// Real-hardware history [HW]: Gemini repeatedly failed to open at all
+// ("Failed to open Gemini: timed out") whenever ANY saved chat existed,
+// and deleting every chat from the companion page always fixed it. Every
+// other tool opened fine. platform/storage.ts already records what this
+// project learned about this host: storage reads normally resolve in
+// milliseconds, and a slow one is really a read the host never answers.
+// Size caps alone did not make it go away, which points at something
+// about the stored VALUE itself, not just its length - the exact trigger
+// in the host is not known (the SDK is obfuscated).
+//
+// So this no longer lets a storage read sit on any path the wearer waits
+// on:
+//
+// - The stored list is read once, in the background, at app startup
+//   (preload), and kept in memory. Opening Gemini reads that cache
+//   (peek), never storage. features/chat/tool.ts redraws its picker if the
+//   load finishes after it has already opened.
+// - The conversation itself lives in memory in features/chat/tool.ts.
+//   Saving happens in the background (save never needs to be awaited),
+//   so a slow or stuck host can delay persistence but can no longer
+//   freeze the screen mid-question.
+// - Everything written is ASCII-only: every non-ASCII character is stored
+//   as a \u escape (JSON.parse turns it back). Gemini answers routinely
+//   contain curly quotes, dashes and emoji, and a host bridge that
+//   mishandles some characters would explain exactly why specific chats
+//   broke reads while deleting them fixed it. Unconfirmed, but cheap, and
+//   it removes a whole class of value-dependent failure either way.
+// - A slow load reports its time and size on the status line, so the next
+//   occurrence comes with numbers instead of guesses.
+
+let cache: ChatSession[] | null = null
+let loadPromise: Promise<void> | null = null
+
+// Status-line reports, for the diagnosis above.
+const SLOW_LOAD_REPORT_MS = 1000
+const STUCK_LOAD_REPORT_MS = 5000
+
+function parseSessions(raw: string): ChatSession[] {
   try {
-    const raw = await bridge.getLocalStorage(STORAGE_KEY)
-    const parsed = JSON.parse(raw)
-    if (!Array.isArray(parsed)) return []
-    const all = parsed.filter(isChatSession)
-    // Self-heals data that got oversized before this cap existed. The
-    // write-time cap below only shrinks a blob the NEXT time something is
-    // saved - it does nothing for a blob that is already too big, which is
-    // exactly what was timing out the glasses' own open attempt (that path
-    // only reads, see features/chat/tool.ts's beforeOpen). Writing the
-    // trimmed version back here means the first read slow enough to
-    // actually complete (the companion page has no such timeout to give
-    // up against) fixes it for every read after, glasses included,
-    // without the wearer having to manually delete anything first.
-    // Sorted newest-first before slicing/bounding - boundBySize drops from
-    // the end expecting that order, same as writeAllSessions below.
-    const byCount = [...all].sort((a, b) => b.updatedAt - a.updatedAt).slice(0, MAX_STORED_SESSIONS)
-    const bounded = boundBySize(byCount)
-    // Compares serialized size, not just session count - boundBySize can
-    // also shrink a single oversized session's own message list while
-    // leaving the session count unchanged, which a plain length check on
-    // the array would miss entirely.
-    if (JSON.stringify(bounded).length !== JSON.stringify(byCount).length) {
-      writeAllSessions(bounded)
-      return bounded
-    }
-    return byCount
+    const parsed: unknown = JSON.parse(raw)
+    return Array.isArray(parsed) ? parsed.filter(isChatSession) : []
   } catch {
     return []
   }
 }
 
-// Drops the oldest sessions (already sorted newest-first by the caller)
-// until the serialized total fits the budget. If a single session is
-// alone over budget - one very long back-and-forth - its own oldest
-// messages are dropped instead of losing the whole conversation outright.
-function boundBySize(sessions: ChatSession[]): ChatSession[] {
-  let kept = sessions
-  while (kept.length > 1 && JSON.stringify(kept).length > MAX_STORED_CHARS) {
+// Escapes every character at or above 0x7f as \uXXXX. A loop over char
+// codes rather than a regex with \u ranges in it: this repo's source files
+// are ASCII-only, and editing tools here have turned \u escapes into the
+// literal characters before (see CLAUDE.md).
+function toStorageString(sessions: ChatSession[]): string {
+  const json = JSON.stringify(sessions)
+  let out = ''
+  for (let i = 0; i < json.length; i++) {
+    const code = json.charCodeAt(i)
+    out += code < 0x7f ? json[i] : '\\u' + code.toString(16).padStart(4, '0')
+  }
+  return out
+}
+
+// Newest first, then the count cap, then the size cap. When the size cap
+// bites, the oldest sessions go first; a single session that is alone over
+// budget (one very long conversation) loses its own oldest messages instead
+// of disappearing outright.
+function bound(sessions: ChatSession[]): ChatSession[] {
+  let kept = [...sessions].sort((a, b) => b.updatedAt - a.updatedAt).slice(0, MAX_STORED_SESSIONS)
+  while (kept.length > 1 && toStorageString(kept).length > MAX_STORED_CHARS) {
     kept = kept.slice(0, -1)
   }
-  if (kept.length === 1 && JSON.stringify(kept).length > MAX_STORED_CHARS) {
+  if (kept.length === 1 && toStorageString(kept).length > MAX_STORED_CHARS) {
     const [only] = kept
     let messages = only.messages
     while (
       messages.length > 1 &&
-      JSON.stringify([{ ...only, messages }]).length > MAX_STORED_CHARS
+      toStorageString([{ ...only, messages }]).length > MAX_STORED_CHARS
     ) {
       messages = messages.slice(1)
     }
@@ -135,17 +142,68 @@ function boundBySize(sessions: ChatSession[]): ChatSession[] {
   return kept
 }
 
-// Pruned here, the one place every write goes through, rather than in each
-// caller - keeps the oldest-first drop rule in exactly one place regardless
-// of which path (a new session, an existing one growing by a message, a
-// future bulk import) produced the array being saved.
-function writeAllSessions(all: ChatSession[]): Promise<boolean> {
-  const byCount = [...all].sort((a, b) => b.updatedAt - a.updatedAt).slice(0, MAX_STORED_SESSIONS)
-  const bounded = boundBySize(byCount)
-  return bridge.setLocalStorage(STORAGE_KEY, JSON.stringify(bounded)).then(ok => {
-    if (!ok) status('Failed to save chat history')
-    return ok
+// One write at a time, each writing whatever the cache holds when its turn
+// comes - so a burst of saves collapses into correct, ordered writes rather
+// than two in-flight writes racing to be last.
+let writeQueue: Promise<void> = Promise.resolve()
+
+function persist(): void {
+  writeQueue = writeQueue.then(() => {
+    if (!cache) return
+    return bridge.setLocalStorage(STORAGE_KEY, toStorageString(cache)).then(
+      ok => {
+        if (!ok) status('Failed to save chat history')
+      },
+      () => status('Failed to save chat history'),
+    )
   })
+}
+
+// Single shared load. Never rejects. Rewrites the stored value whenever it
+// is not already in the bounded, ASCII-safe form, which also migrates any
+// data saved before this existed the first time it loads.
+function load(): Promise<void> {
+  if (!loadPromise) {
+    const started = Date.now()
+    const stuckNotice = setTimeout(() => {
+      status(`Chat history still loading after ${STUCK_LOAD_REPORT_MS / 1000}s`)
+    }, STUCK_LOAD_REPORT_MS)
+    loadPromise = bridge
+      .getLocalStorage(STORAGE_KEY)
+      .then(
+        raw => raw ?? '',
+        () => '',
+      )
+      .then(raw => {
+        clearTimeout(stuckNotice)
+        const ms = Date.now() - started
+        if (ms > SLOW_LOAD_REPORT_MS) {
+          status(`Chat history load took ${(ms / 1000).toFixed(1)}s (${raw.length} chars)`)
+        }
+        cache = bound(parseSessions(raw))
+        if (raw !== '' && toStorageString(cache) !== raw) persist()
+      })
+  }
+  return loadPromise
+}
+
+// Kicked off once at startup (see app/main.ts), not awaited, so the cache is
+// usually warm long before Gemini is first opened.
+function preload(): void {
+  void load()
+}
+
+// What is in memory right now, without waiting. null means the startup load
+// has not finished yet - not "no chats".
+function peek(): ChatSession[] | null {
+  return cache ? [...cache] : null
+}
+
+// Waits for the load. For the companion page, which can afford to wait,
+// and has no timeout to give up against.
+async function readAll(): Promise<ChatSession[]> {
+  await load()
+  return [...(cache ?? [])]
 }
 
 // The session's own title, taken from its first message rather than
@@ -158,47 +216,27 @@ function titleFrom(text: string): string {
   return trimmed.length > TITLE_MAX_CHARS ? `${trimmed.slice(0, TITLE_MAX_CHARS - 3)}...` : trimmed
 }
 
-// sessionId null means "start a new session with this as its first
-// message" - the one function both a brand new chat and a continuing one
-// go through, rather than two separate paths that could drift apart. Falls
-// back to starting a new session if the given id no longer exists (deleted
-// from elsewhere between reading the picker and asking a question) rather
-// than silently dropping the message.
-async function appendMessage(sessionId: string | null, message: ChatMessage): Promise<ChatSession> {
-  const all = await readAllSessions()
-
-  if (sessionId !== null) {
-    const index = all.findIndex(s => s.id === sessionId)
-    if (index !== -1) {
-      const updated: ChatSession = {
-        ...all[index],
-        messages: [...all[index].messages, message],
-        updatedAt: Date.now(),
-      }
-      const next = [...all]
-      next[index] = updated
-      await writeAllSessions(next)
-      return updated
-    }
-  }
-
-  const session: ChatSession = {
-    id: newId(),
-    title: titleFrom(message.text),
-    messages: [message],
-    updatedAt: Date.now(),
-  }
-  await writeAllSessions([...all, session])
-  return session
+// Builds a new session around its first message. No I/O - the caller saves
+// it, so it can start using the session (and its id) immediately.
+function newSession(first: ChatMessage): ChatSession {
+  return { id: newId(), title: titleFrom(first.text), messages: [first], updatedAt: Date.now() }
 }
 
-async function removeSession(id: string): Promise<void> {
-  const all = await readAllSessions()
-  await writeAllSessions(all.filter(s => s.id !== id))
+// Inserts or replaces a whole session by id. Waits for the initial load
+// before touching anything, so it can never overwrite history it has not
+// seen yet - which also means a caller should not await it on any path the
+// wearer is waiting on.
+async function save(session: ChatSession): Promise<void> {
+  await load()
+  const others = (cache ?? []).filter(s => s.id !== session.id)
+  cache = bound([{ ...session, updatedAt: Date.now() }, ...others])
+  persist()
 }
 
-export const chatSessions = {
-  readAll: readAllSessions,
-  appendMessage,
-  remove: removeSession,
+async function remove(id: string): Promise<void> {
+  await load()
+  cache = (cache ?? []).filter(s => s.id !== id)
+  persist()
 }
+
+export const chatSessions = { preload, peek, readAll, newSession, save, remove }

@@ -60,6 +60,7 @@ import {
 import { parseVoiceCommand } from '../features/timer/voiceCommand'
 import { registerVoiceDispatch } from '../core/voiceDispatch'
 import { preload as preloadWhisper } from '../core/whisper'
+import { chatSessions } from '../features/chat/store'
 import { ask as askGemini } from '../core/gemini'
 import {
   finishListening as finishJarvisListening,
@@ -700,6 +701,12 @@ registerVoiceDispatch(async transcript => {
 // slow or failed load must not block startup, which is exactly what
 // preload() itself already guarantees (see core/whisper.ts).
 preloadWhisper()
+
+// Same idea for Gemini's saved chats: loaded once in the background so
+// opening Gemini reads an in-memory copy instead of storage (see
+// features/chat/store.ts for why a storage read on that path is exactly
+// what kept making it fail to open).
+chatSessions.preload()
 
 // How long the result stays on screen before Jarvis hands the wearer back
 // to whatever they were doing. Long enough to actually read a short
