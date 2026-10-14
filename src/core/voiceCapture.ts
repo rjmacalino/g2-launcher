@@ -24,9 +24,11 @@ export type VoiceResult =
 // Driven by the caller's own long-press-to-start / double-press-to-end
 // wiring (see app/main.ts for how each tool claims that gesture while it is
 // the active screen). MAX_RECORD_MS only exists as a safety net for a
-// wearer who never double-presses at all - the normal end of a recording is
-// always the deliberate double-press, not this timer.
-const MAX_RECORD_MS = 15_000
+// wearer who never ends the recording at all - the normal end is always the
+// deliberate gesture, not this timer. Three minutes per direct request, so
+// a long question is never cut off mid-sentence; transcribing more than 30
+// seconds depends on the chunked transcription in core/whisper.ts.
+const MAX_RECORD_MS = 180_000
 
 // No interim, incrementally-transcribed captions here on purpose - tried in
 // G2-51/G2-52 and reverted [HW]: real-hardware testing found neither the

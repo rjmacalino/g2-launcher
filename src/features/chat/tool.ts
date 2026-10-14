@@ -450,7 +450,16 @@ export async function finishListening() {
   // "Didn't catch that" error below entirely, since nothing else would
   // ever stop it on that path.
   stopActiveStatus?.()
+  // Recordings can now run to three minutes (core/voiceCapture.ts), and
+  // transcribing that much on the phone takes real time - without this the
+  // screen sat on its last "Listening" frame the whole while, looking
+  // frozen. The counter may stall while a chunk is being transcribed (that
+  // work shares the main thread), but it says what is actually happening.
+  startLiveStatus(mySession, (dots, elapsedSeconds) => {
+    setContent(`Transcribing${dots} (${elapsedSeconds}s)`)
+  })
   const result = await stop()
+  stopActiveStatus?.()
   if (mySession !== sessionToken) return
 
   if (result.kind === 'error') {
