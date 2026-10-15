@@ -351,3 +351,21 @@ then on hardware by RJ. Results go back into platform.md with a [HW] tag.
   Gemini as the model underneath. The old features/jarvis tool is deleted;
   the merged tool's code still lives in features/chat. References above
   and below to "Chat" or "Gemini" as a tool predate the merge.
+- D5 Jarvis acts, not just answers (2026-10-15, G2-58): per direct request
+  ("an alexa + gemini combine"), Jarvis controls Notes and the Timer by
+  voice. Gemini function calling decides WHAT to do; the action runs on the
+  phone and its confirmation is written by our code from what actually
+  happened, never by the model (core/assistantActions.ts). No second round
+  trip sends results back to Gemini, so stored history stays plain text.
+  Covered: add items to a list (creating it), read a list, name the lists,
+  check off, remove an item, clear finished items; start, cancel, pause,
+  resume and time-left for the timer. Short timer commands ("cancel the
+  timer") still run offline through the local parser first. Deliberately
+  not by voice: deleting a whole list (companion-only, principle 5).
+  "Remind me to X" adds to a Reminders list - timed reminders are not
+  built and need hardware testing first. A timer ending now shows a
+  full-screen "Time's up!" on any page until tapped (visual only, and
+  only while the app is in the foreground; a timer that ended while away
+  is announced on return). Verified: unit tests for matching and reply
+  parsing, the alert in the simulator. Not verified: a real Gemini
+  function call with a key, anything on hardware.

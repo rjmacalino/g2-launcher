@@ -48,7 +48,38 @@ const SYSTEM_INSTRUCTION =
 // free tier's quota: roughly 4,000 characters, several pages.
 const MAX_OUTPUT_TOKENS = 1024
 
-export type GeminiResult = { kind: 'answer'; text: string } | { kind: 'error'; message: string }
+// Function calling, in Gemini's own wire format (checked against the
+// generateContent API reference at ai.google.dev/api/generate-content, not
+// the function-calling guide, which now documents a different endpoint):
+// declarations go in the request as tools[].functionDeclarations, each
+// parameter schema's type is one of the reference's upper-case Type values,
+// and a call comes back as a part holding functionCall { name, args }
+// instead of text.
+export type FunctionSchema = {
+  type: 'STRING' | 'INTEGER' | 'NUMBER' | 'BOOLEAN' | 'ARRAY' | 'OBJECT'
+  description?: string
+  items?: FunctionSchema
+  properties?: Record<string, FunctionSchema>
+  required?: string[]
+}
+
+export type FunctionDeclaration = {
+  name: string
+  description: string
+  parameters?: FunctionSchema
+}
+
+export type FunctionCall = { name: string; args: Record<string, unknown> }
+
+// 'actions': Gemini chose to act rather than answer (see
+// core/assistantActions.ts) - one or more calls, which the caller runs. Any
+// text that came alongside them is dropped on purpose: the confirmation
+// shown is written from what the action actually did, not from what the
+// model expected it to do.
+export type GeminiResult =
+  | { kind: 'answer'; text: string }
+  | { kind: 'actions'; calls: FunctionCall[] }
+  | { kind: 'error'; message: string }
 
 // Gemini's own role names, not ours to invent - "model" rather than the more
 // common "assistant" seen elsewhere, which is why features/chat/store.ts
@@ -80,6 +111,7 @@ async function requestOnce(
   apiKey: string,
   turns: readonly GeminiTurn[],
   systemInstruction: string,
+  functions: readonly FunctionDeclaration[],
 ): Promise<Response> {
   return fetch(ENDPOINT, {
     method: 'POST',
@@ -92,6 +124,11 @@ async function requestOnce(
       systemInstruction: {
         parts: [{ text: systemInstruction }],
       },
+      // No toolConfig: the reference's default mode is AUTO, "the model
+      // chooses between a function call or a natural language response",
+      // which is exactly the behaviour wanted - a question gets an answer,
+      // a request gets an action.
+      ...(functions.length > 0 ? { tools: [{ functionDeclarations: functions }] } : {}),
       generationConfig: {
         maxOutputTokens: MAX_OUTPUT_TOKENS,
         // gemini-3.8-flash "thinks" before answering, and that thinking
@@ -129,12 +166,32 @@ export type ConverseOptions = {
   // features/chat/digest.ts). Built by the caller, not here, because it
   // comes from a feature's own data, and core/ never imports features/.
   background?: string
+  // Actions Gemini may choose to call instead of answering (see
+  // core/assistantActions.ts), plus a description of the wearer's data
+  // they act on.
+  functions?: readonly FunctionDeclaration[]
+  actionContext?: string
 }
+
+// Only added when there are functions to call. Function descriptions alone
+// leave the edges to the model's guesswork; these are the ones that matter
+// on a voice assistant: acting only when actually asked, what "remind me"
+// can and cannot mean today, and not inventing a near-duplicate list.
+const ACTIONS_INSTRUCTION =
+  "You can act on the wearer's own checklists (notes) and their one " +
+  'countdown timer with the functions provided. Call a function only when ' +
+  'the wearer asks you to do that thing; a question about timers or lists ' +
+  'in general is answered normally. "Remind me to X" means adding X to the ' +
+  'list named Reminders - there are no timed reminders, so never promise ' +
+  "one. When the wearer's words clearly mean one of their existing lists " +
+  "(groceries for Shopping), use that list's exact name. A new list gets " +
+  'a short title-case name without the word "list". Keep list items short. ' +
+  'Several things asked at once are several function calls.'
 
 export async function converse(
   apiKey: string,
   turns: readonly GeminiTurn[],
-  { onRetry, background }: ConverseOptions = {},
+  { onRetry, background, functions = [], actionContext }: ConverseOptions = {},
 ): Promise<GeminiResult> {
   // Per direct request: "I want my chatbot to know me... to tailor its
   // answer for me." Empty when nothing has been entered on the companion
@@ -147,6 +204,10 @@ export async function converse(
     )
   }
   if (background) parts.push(background)
+  if (functions.length > 0) {
+    parts.push(ACTIONS_INSTRUCTION)
+    if (actionContext) parts.push(actionContext)
+  }
   const systemInstruction = parts.join('\n\n')
 
   let lastErrorMessage = 'unknown error'
@@ -156,16 +217,14 @@ export async function converse(
       await delay(RETRY_DELAY_MS)
     }
     try {
-      const response = await requestOnce(apiKey, turns, systemInstruction)
+      const response = await requestOnce(apiKey, turns, systemInstruction, functions)
       if (!response.ok) {
         lastErrorMessage = `Gemini returned ${response.status}`
         if (isTransient(response.status) && attempt < MAX_ATTEMPTS) continue
         return { kind: 'error', message: lastErrorMessage }
       }
       const data: unknown = await response.json()
-      const text = extractText(data)
-      if (!text) return { kind: 'error', message: 'empty response' }
-      return { kind: 'answer', text }
+      return parseReply(data)
     } catch (e) {
       lastErrorMessage = e instanceof Error ? e.message : String(e)
       if (attempt < MAX_ATTEMPTS) continue
@@ -178,23 +237,41 @@ export async function converse(
   return { kind: 'error', message: lastErrorMessage }
 }
 
-// Reaches into candidates[0].content.parts[0].text without trusting the
-// exact shape - this is a third-party API response, not our own data, so
-// every step is guarded rather than assumed.
-function extractText(data: unknown): string | null {
-  if (!data || typeof data !== 'object') return null
-  const candidates = (data as Record<string, unknown>).candidates
-  if (!Array.isArray(candidates) || candidates.length === 0) return null
-  const first = candidates[0]
-  if (!first || typeof first !== 'object') return null
-  const content = (first as Record<string, unknown>).content
-  if (!content || typeof content !== 'object') return null
-  const parts = (content as Record<string, unknown>).parts
-  if (!Array.isArray(parts) || parts.length === 0) return null
-  const part = parts[0]
-  if (!part || typeof part !== 'object') return null
-  const text = (part as Record<string, unknown>).text
-  if (typeof text !== 'string') return null
-  const trimmed = text.trim()
-  return trimmed.length > 0 ? trimmed : null
+function isRecord(x: unknown): x is Record<string, unknown> {
+  return !!x && typeof x === 'object' && !Array.isArray(x)
+}
+
+// Reads candidates[0].content.parts without trusting the exact shape - this
+// is a third-party API response, not our own data, so every step is guarded
+// rather than assumed. Every part is read, not just the first: a reply can
+// be several function calls (one per thing asked for), and text can arrive
+// split across parts. Parts marked thought: true are the model's own
+// reasoning, not reply text - none are expected with thinking turned off
+// above, but they must never be shown as the answer if they appear.
+// Exported for tests.
+export function parseReply(data: unknown): GeminiResult {
+  const empty: GeminiResult = { kind: 'error', message: 'empty response' }
+  if (!isRecord(data)) return empty
+  const candidates = data.candidates
+  if (!Array.isArray(candidates) || candidates.length === 0) return empty
+  const first: unknown = candidates[0]
+  if (!isRecord(first) || !isRecord(first.content)) return empty
+  const parts = first.content.parts
+  if (!Array.isArray(parts)) return empty
+
+  const calls: FunctionCall[] = []
+  const texts: string[] = []
+  for (const part of parts) {
+    if (!isRecord(part)) continue
+    const call = part.functionCall
+    if (isRecord(call) && typeof call.name === 'string') {
+      calls.push({ name: call.name, args: isRecord(call.args) ? call.args : {} })
+      continue
+    }
+    if (part.thought === true) continue
+    if (typeof part.text === 'string') texts.push(part.text)
+  }
+  if (calls.length > 0) return { kind: 'actions', calls }
+  const text = texts.join('').trim()
+  return text.length > 0 ? { kind: 'answer', text } : empty
 }

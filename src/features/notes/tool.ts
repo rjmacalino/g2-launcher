@@ -67,7 +67,7 @@ export const notesTool: Tool = {
   contentKind: () => 'list',
   listItems: () => {
     if (depth === 'picker') {
-      if (allNotes.length === 0) return ['No lists yet. Add one on your phone.']
+      if (allNotes.length === 0) return ['No lists yet - ask Jarvis, or add one on your phone.']
       return allNotes.map(n => {
         const done = n.items.filter(i => i.done).length
         const total = n.items.length

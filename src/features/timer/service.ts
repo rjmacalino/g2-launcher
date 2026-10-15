@@ -49,11 +49,30 @@ function stopTicking() {
   tickId = null
 }
 
+// Fired once when a running timer reaches zero on its own (never on a
+// cancel), with how long ago it actually ended: zero-ish normally, but
+// minutes or hours when the app was in the background or closed through the
+// end - ticking stops while backgrounded (see onBackground), so the first
+// tick after coming back is where it gets noticed. Used for the "Time's up"
+// alert on every screen (app/main.ts) - the Timer screen, which used to be
+// the only place that said so, is off the launcher now.
+const expiredListeners = new Set<(lateMs: number) => void>()
+
+export function onExpired(fn: (lateMs: number) => void): () => void {
+  expiredListeners.add(fn)
+  return () => expiredListeners.delete(fn)
+}
+
 function tick() {
-  if (timerState.status === 'running' && isExpired(timerState, Date.now())) {
+  const now = Date.now()
+  if (timerState.status === 'running' && isExpired(timerState, now)) {
+    const lateMs = now - timerState.endTimestamp
     timerState = cancelTimer()
     persist()
     stopTicking()
+    notify()
+    for (const fn of expiredListeners) fn(lateMs)
+    return
   }
   notify()
 }

@@ -15,3 +15,18 @@ export function formatDuration(ms: number): string {
   const ss = String(s).padStart(2, '0')
   return h > 0 ? `${h}:${mm}:${ss}` : `${m}:${ss}`
 }
+
+// The same value in words, for sentences rather than a countdown: "a 5 min
+// timer", "4 min 12 sec left". "Started a 5:00 timer" reads like a clock
+// time, which is not what it means.
+export function describeDuration(ms: number): string {
+  const totalSeconds = Math.max(0, Math.round(ms / 1000))
+  const h = Math.floor(totalSeconds / 3600)
+  const m = Math.floor((totalSeconds % 3600) / 60)
+  const s = totalSeconds % 60
+  const parts: string[] = []
+  if (h > 0) parts.push(`${h} hr`)
+  if (m > 0) parts.push(`${m} min`)
+  if (s > 0 || parts.length === 0) parts.push(`${s} sec`)
+  return parts.join(' ')
+}

@@ -54,11 +54,22 @@ import {
   onBackground as suspendTimerTicking,
   onForeground as resumeTimerTicking,
   onUpdate as onTimerUpdate,
+  onExpired as onTimerExpired,
   remainingMs as timerRemainingMs,
-  start as startTimerFromVoice,
 } from '../features/timer/service'
 import { parseVoiceCommand } from '../features/timer/voiceCommand'
+import {
+  cancelTimerAction,
+  pauseTimerAction,
+  resumeTimerAction,
+  startTimerAction,
+  timerActions,
+  timerStatusAction,
+} from '../features/timer/actions'
+import { describeLists, notesActions } from '../features/notes/actions'
+import { notes } from '../features/notes/store'
 import { registerVoiceDispatch } from '../core/voiceDispatch'
+import { registerAssistantActions } from '../core/assistantActions'
 import { preload as preloadWhisper } from '../core/whisper'
 import { chatSessions } from '../features/chat/store'
 import {
@@ -70,7 +81,7 @@ import {
   isAtPicker as isJarvisAtPicker,
   onReturnRequested as onJarvisReturnRequested,
 } from '../features/chat/tool'
-import { formatDuration } from '../shared/duration'
+import { describeDuration, formatDuration } from '../shared/duration'
 
 // The shell. Owns which page is showing, builds pages, and routes input. It knows
 // tools only through the Tool interface, so adding one is a new file plus an entry
@@ -94,6 +105,12 @@ function activeTool() {
 // restore the wearer into a half-answered question about a page they cannot
 // remember opening.
 let confirming = false
+
+// Whether the "Time's up!" alert is covering the page (see showTimerAlert).
+// Same standing as confirming: not part of Screen, never persisted - the
+// screen underneath is still the one the wearer is on, and dismissing the
+// alert just redraws it.
+let alerting = false
 
 // A native list, the same widget the launcher menu and the Teleprompter picker
 // already use. Firmware owns highlight, scroll and boundary bounce, so it
@@ -425,7 +442,7 @@ function toolContainers(index: number) {
 // leave prompt is open, so a background data update can never clobber
 // whatever the wearer is currently looking at or answering.
 registerRebuildHandler(tool => {
-  if (confirming) return
+  if (confirming || alerting) return
   if (screen.kind !== 'tool') return
   if (TOOLS[screen.index] !== tool) return
   bridge.rebuildPageContainer(new RebuildPageContainer(toolContainers(screen.index))).then(ok => {
@@ -478,8 +495,9 @@ async function openTool(index: number) {
   // Any navigation clears the prompt. Cheaper to reset unconditionally here than
   // to reason about every path that could reach a new page with a stale flag set.
   // The page is rebuilt below, which draws a fresh empty modal container, so
-  // there is nothing left over to clear.
+  // there is nothing left over to clear. Same for the timer alert.
   confirming = false
+  alerting = false
   const tool = TOOLS[index]
 
   // Awaited before the page is built, so contentKind/listItems/initialContent
@@ -520,6 +538,7 @@ async function openTool(index: number) {
 
 function returnToMenu() {
   confirming = false
+  alerting = false
   // Back at the top: nothing left to hand the wearer back to.
   screenBeforeJarvis = null
   // Close before the rebuild, so an update arriving mid-transition cannot land on
@@ -670,12 +689,107 @@ setStatusBarTimer(timerBarText())
 // it to Gemini itself, as part of its conversation (features/chat/tool.ts).
 registerVoiceDispatch(async transcript => {
   const command = parseVoiceCommand(transcript)
-  if (command.kind === 'startTimer') {
-    startTimerFromVoice(command.durationMs)
-    return { handled: true, message: `Started a ${formatDuration(command.durationMs)} timer.` }
+  switch (command.kind) {
+    case 'startTimer':
+      return { handled: true, message: startTimerAction(command.durationMs) }
+    case 'cancelTimer':
+      return { handled: true, message: cancelTimerAction() }
+    case 'pauseTimer':
+      return { handled: true, message: pauseTimerAction() }
+    case 'resumeTimer':
+      return { handled: true, message: resumeTimerAction() }
+    case 'timerStatus':
+      return { handled: true, message: timerStatusAction() }
+    case 'unrecognized':
+      return { handled: false }
   }
-  return { handled: false }
 })
+
+// What Jarvis can do beyond answering, through Gemini (see
+// core/assistantActions.ts): everything the fast path above does not
+// recognise - lists, and timer requests phrased any other way ("five
+// minutes" in words, "a quarter of an hour"). The context is the names of
+// the wearer's lists, so Gemini uses an existing one rather than inventing
+// a near-duplicate.
+registerAssistantActions({
+  actions: [...notesActions, ...timerActions],
+  context: async () => describeLists(await notes.readAll()),
+})
+
+// --- Time's up -------------------------------------------------------------
+
+// The timer used to say "Time's up!" only on its own screen, which is off
+// the launcher now - started by voice, a timer would otherwise end with
+// nothing but its status bar countdown quietly disappearing. So the end of a
+// timer takes over whatever page is showing until the wearer taps, the same
+// way the leave prompt does. Visual only, per decision (docs/roadmap.md):
+// nothing here can make a sound or vibrate. And only while the app is in
+// the foreground - a timer that ends while the wearer is elsewhere is
+// announced the moment they come back (the service's first tick after
+// foregrounding notices it), with how long ago it ended.
+//
+// Its own container id, deliberately not the tool content's: a tool still
+// running underneath (Jarvis's Thinking counter, say) keeps sending text
+// updates to the content container, and those must not land on the alert.
+// They fail harmlessly against a page that has no such container instead.
+function timerAlertContainers(lateMs: number) {
+  const bar = statusBarContainers()
+  const ended =
+    lateMs >= 60_000
+      ? `Your timer ended ${describeDuration(Math.round(lateMs / 60_000) * 60_000)} ago.`
+      : 'Your timer has finished.'
+  return {
+    containerTotalNum: bar.length + 1,
+    textObject: [
+      ...bar,
+      new TextContainerProperty({
+        xPosition: 0,
+        yPosition: CONTENT_Y,
+        width: CANVAS_WIDTH,
+        height: CONTENT_HEIGHT,
+        borderWidth: 0,
+        paddingLength: PADDING,
+        containerID: CONTAINER_ID_CONFIRM_TITLE,
+        containerName: CONTAINER_NAME_CONFIRM_TITLE,
+        content: `Time's up!\n\n${ended}\n\nTap to dismiss`,
+        isEventCapture: 1,
+      }),
+    ],
+  }
+}
+
+function showTimerAlert(lateMs: number) {
+  // The Timer screen shows its own "Time's up!" - no second one on top.
+  if (activeTool()?.name === 'Timer') return
+  bridge.rebuildPageContainer(new RebuildPageContainer(timerAlertContainers(lateMs))).then(ok => {
+    if (ok) {
+      // A leave prompt that was open is gone now - dismissing returns to
+      // the page itself, not to the question.
+      confirming = false
+      alerting = true
+      status("Timer: time's up")
+    } else {
+      status("Timer: time's up (failed to show the alert)")
+    }
+  })
+}
+
+function dismissTimerAlert() {
+  const containers = screen.kind === 'tool' ? toolContainers(screen.index) : menuContainers()
+  bridge.rebuildPageContainer(new RebuildPageContainer(containers)).then(ok => {
+    if (!ok) {
+      // Still showing the alert, which still takes taps - the next tap
+      // tries again rather than leaving the wearer on a page that
+      // ignores them.
+      status('Failed to dismiss the timer alert - tap again')
+      return
+    }
+    alerting = false
+    if (screen.kind === 'tool') TOOLS[screen.index].onContentReady?.()
+  })
+}
+
+onTimerExpired(showTimerAlert)
 
 // Kicked off here, not awaited, and not gated behind ever opening Jarvis:
 // loading the Whisper model takes real time (confirmed by Lab's probe), so
@@ -697,6 +811,8 @@ chatSessions.preload()
 // the page on screen and there is somewhere to go back to - the wearer may
 // have navigated away on purpose in the meantime.
 onJarvisReturnRequested(() => {
+  // Leaving now would replace a "Time's up!" the wearer has not seen yet.
+  if (alerting) return
   if (!(screen.kind === 'tool' && screen.index === JARVIS_INDEX)) return
   if (!screenBeforeJarvis) return
   returnFromJarvis()
@@ -782,6 +898,27 @@ const unsubscribe = bridge.onEvenHubEvent(event => {
     sysType === OsEventTypeList.DOUBLE_CLICK_EVENT ||
     textType === OsEventTypeList.DOUBLE_CLICK_EVENT ||
     listType === OsEventTypeList.DOUBLE_CLICK_EVENT
+
+  // The "Time's up!" alert covers the page: any tap or double-tap dismisses
+  // it - a double-tap must not also count as "back" on the page underneath,
+  // which the wearer cannot even see right now. Long press and scroll do
+  // nothing while it is up. Foreground enter/exit still fall through: the
+  // clock, weather and the tool underneath need them regardless.
+  if (alerting) {
+    const isTap =
+      isDoubleTap ||
+      sysType === OsEventTypeList.CLICK_EVENT ||
+      textType === OsEventTypeList.CLICK_EVENT ||
+      listType === OsEventTypeList.CLICK_EVENT
+    if (isTap) {
+      dismissTimerAlert()
+      return
+    }
+    const isLifecycle =
+      sysType === OsEventTypeList.FOREGROUND_ENTER_EVENT ||
+      sysType === OsEventTypeList.FOREGROUND_EXIT_EVENT
+    if (!isLifecycle) return
+  }
 
   // The leave prompt. A native list (see confirmContainers), so scroll and
   // highlight are entirely firmware's job; we only react once something is

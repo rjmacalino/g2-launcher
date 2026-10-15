@@ -118,4 +118,30 @@ describe('parseVoiceCommand', () => {
       durationMs: 5 * 60_000,
     })
   })
+
+  it('controls a running timer with short commands', () => {
+    expect(parseVoiceCommand('cancel the timer')).toEqual({ kind: 'cancelTimer' })
+    expect(parseVoiceCommand('Jarvis, stop my timer please')).toEqual({ kind: 'cancelTimer' })
+    expect(parseVoiceCommand('pause the timer')).toEqual({ kind: 'pauseTimer' })
+    expect(parseVoiceCommand('resume the timer')).toEqual({ kind: 'resumeTimer' })
+    expect(parseVoiceCommand('how much time is left on my timer')).toEqual({
+      kind: 'timerStatus',
+    })
+  })
+
+  it('never starts a timer from a cancel that names a duration', () => {
+    expect(parseVoiceCommand('cancel the 5 minute timer')).toEqual({ kind: 'cancelTimer' })
+  })
+
+  it('still starts a timer when a control word appears with a duration', () => {
+    expect(parseVoiceCommand('timer 5 minutes, check the oven')).toEqual({
+      kind: 'startTimer',
+      durationMs: 5 * 60_000,
+    })
+  })
+
+  it('leaves a long sentence about timers to Gemini', () => {
+    const question = 'how do I stop the timer app on my phone from beeping'
+    expect(parseVoiceCommand(question)).toEqual({ kind: 'unrecognized', transcript: question })
+  })
 })

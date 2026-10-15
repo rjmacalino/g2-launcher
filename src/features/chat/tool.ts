@@ -1,5 +1,10 @@
 import { cancel, start, stop } from '../../core/voiceCapture'
 import { dispatchVoiceCommand } from '../../core/voiceDispatch'
+import {
+  assistantActionContext,
+  assistantActions,
+  runAssistantActions,
+} from '../../core/assistantActions'
 import { converse, type GeminiTurn } from '../../core/gemini'
 import { getApiKey as getGeminiApiKey } from '../../core/geminiSettings'
 import { chatSessions, type ChatMessage, type ChatSession } from './store'
@@ -24,7 +29,9 @@ import type { Tool } from '../../core/tool'
 //   conversation, recording. A command (a timer) runs locally, shows its
 //   result and hands the wearer back to where they were, the way the old
 //   Jarvis did; a command from a blank start is not saved as a
-//   conversation, so timers do not clutter the history. A question goes to
+//   conversation, so timers do not clutter the history. Lists and anything
+//   the local parser misses are commands too, decided by Gemini (see
+//   core/assistantActions.ts) and treated the same way. A question goes to
 //   Gemini and stays on screen to be read and followed up; leaving it
 //   returns to where the long-press came from rather than to the list.
 // - Long-press on the chat list: a new conversation, recording.
@@ -549,6 +556,11 @@ async function askGemini(question: string) {
   showThinking(question)
 
   let attemptsMade = 1
+  // What Jarvis can do, not just answer (notes, timer - registered by
+  // app/main.ts). The context is best effort and time-limited, so it never
+  // holds the question up for long (see core/assistantActions.ts).
+  const actions = assistantActions()
+  const actionContext = actions.length > 0 ? await assistantActionContext() : ''
   const reply = await converse(apiKey, toGeminiTurns(messagesAtAsk), {
     onRetry: (attempt, max) => {
       attemptsMade = attempt
@@ -558,6 +570,8 @@ async function askGemini(question: string) {
     // (peek, never a storage read - see features/chat/store.ts). Empty if
     // the startup load has not finished yet; this question still goes out.
     background: buildDigest(chatSessions.peek() ?? [], targetSessionId),
+    functions: actions.map(a => a.declaration),
+    actionContext,
   })
   // Only if this is still the latest request - see currentAskId.
   if (myAsk === currentAskId) {
@@ -566,7 +580,13 @@ async function askGemini(question: string) {
     stopThinking?.()
     stopThinking = null
   }
-  status(reply.kind === 'error' ? `Jarvis: failed (${reply.message})` : 'Jarvis: answered')
+  status(
+    reply.kind === 'error'
+      ? `Jarvis: failed (${reply.message})`
+      : reply.kind === 'actions'
+        ? `Jarvis: doing ${reply.calls.map(c => c.name).join(', ')}`
+        : 'Jarvis: answered',
+  )
 
   if (reply.kind === 'error') {
     if (!stillRelevant()) return
@@ -579,11 +599,35 @@ async function askGemini(question: string) {
     return
   }
 
+  // An action is carried out whether or not the wearer is still looking -
+  // they asked for it, same as an answer is saved regardless (below). Its
+  // reply is the actions' own confirmation, never the model's text.
+  const replyText = reply.kind === 'actions' ? await runAssistantActions(reply.calls) : reply.text
+  // Correctness, not a render decision - a retry would be pointless and
+  // wrong for a question that just got handled.
+  if (lastErrorQuestion === question) lastErrorQuestion = null
+  const answer: ChatMessage = { role: 'model', text: replyText, timestamp: Date.now() }
+
+  // An action as the very first thing said is a command from a blank
+  // start, so it is not kept as a conversation - same rule as a local
+  // command (see finishListening), so "add eggs to shopping" does not leave
+  // a one-line chat behind. finishListening already saved the new session
+  // holding just the question; it is taken back out here.
+  if (reply.kind === 'actions' && messagesAtAsk.length === 1) {
+    void chatSessions.remove(targetSessionId)
+    if (!stillRelevant()) return
+    currentSessionId = null
+    currentSessionTitle = null
+    currentMessages = []
+    showCommandResult(messagesAtAsk[0], answer)
+    publishScreen()
+    return
+  }
+
   // Saved regardless of stillRelevant() - the answer belongs to
   // targetSessionId's own history whether or not the wearer is still
   // looking at it, and has to be there the next time it is opened. In the
   // background: nothing about showing the answer waits on storage.
-  const answer: ChatMessage = { role: 'model', text: reply.text, timestamp: Date.now() }
   const answeredMessages = [...messagesAtAsk, answer]
   void chatSessions.save({
     id: targetSessionId,
@@ -591,13 +635,23 @@ async function askGemini(question: string) {
     messages: answeredMessages,
     updatedAt: Date.now(),
   })
-  // Correctness, not a render decision - a retry would be pointless and
-  // wrong for a question that just got answered.
-  if (lastErrorQuestion === question) lastErrorQuestion = null
   if (!stillRelevant()) return
   currentMessages = answeredMessages
   setContent(renderConversation())
   publishScreen()
+}
+
+// A command's result from a blank start: shown, not saved. Long-pressed
+// from another screen, the wearer is then handed back, as long as they
+// have not started something else in the meantime.
+function showCommandResult(question: ChatMessage, reply: ChatMessage): void {
+  setContent(renderExchange([question, reply]))
+  if (!quickAsk) return
+  setTimeout(() => {
+    if (!quickAsk || depth !== 'conversation' || currentSessionId !== null) return
+    if (busy()) return
+    returnHandler?.()
+  }, COMMAND_RETURN_DELAY_MS)
 }
 
 // Ends the current recording, transcribes it, and sends the WHOLE
@@ -656,16 +710,7 @@ export async function finishListening() {
     if (currentSessionId === null) {
       // A command from a blank start is not saved as a conversation -
       // timers would otherwise fill the history with one-line chats.
-      setContent(renderExchange([question, reply]))
-      // Long-pressed from another screen: hand the wearer back, as long as
-      // they have not started something else in the meantime.
-      if (quickAsk) {
-        setTimeout(() => {
-          if (!quickAsk || depth !== 'conversation' || currentSessionId !== null) return
-          if (busy()) return
-          returnHandler?.()
-        }, COMMAND_RETURN_DELAY_MS)
-      }
+      showCommandResult(question, reply)
       return
     }
     // Mid-conversation, the command is part of it like anything else said.

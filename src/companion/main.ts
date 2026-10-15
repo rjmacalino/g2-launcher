@@ -1,4 +1,10 @@
-import { notes, NOTE_MAX_ITEMS, NOTE_ITEM_MAX_CHARS, type NoteDoc } from '../features/notes/store'
+import {
+  notes,
+  onNotesChange,
+  NOTE_MAX_ITEMS,
+  NOTE_ITEM_MAX_CHARS,
+  type NoteDoc,
+} from '../features/notes/store'
 import {
   scripts,
   getActiveScriptId,
@@ -744,6 +750,12 @@ async function init() {
   // already moved before this page loaded" and "they move after".
   onCurrentScreenChange(() => {
     syncToGlassesScreen()
+  })
+  // A list changed somewhere else - most often Jarvis adding to it by
+  // voice. Redrawn only on the notes list itself: an open editor holds the
+  // wearer's unsaved typing, which a redraw would throw away.
+  onNotesChange(() => {
+    if (view.kind === 'list' && view.collection === 'notes') void renderNotesList()
   })
   await syncToGlassesScreen()
 }

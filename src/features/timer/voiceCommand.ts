@@ -10,7 +10,12 @@
 // spelling out every English number word is scope this does not need yet -
 // easy to add later if a real transcript comes back unparsed because of it.
 export type VoiceCommand =
-  { kind: 'startTimer'; durationMs: number } | { kind: 'unrecognized'; transcript: string }
+  | { kind: 'startTimer'; durationMs: number }
+  | { kind: 'cancelTimer' }
+  | { kind: 'pauseTimer' }
+  | { kind: 'resumeTimer' }
+  | { kind: 'timerStatus' }
+  | { kind: 'unrecognized'; transcript: string }
 
 // Matched by edit distance, not an exact word list - Whisper mishears
 // "timer" as "dimer", "thymer", "timmer" and no doubt others depending on
@@ -116,7 +121,37 @@ function parseDurationMs(phrase: string): number {
 export function parseVoiceCommand(transcript: string): VoiceCommand {
   const text = transcript.toLowerCase().trim()
   if (!hasTimerKeyword(text)) return { kind: 'unrecognized', transcript }
+  const control = parseControl(text)
+  if (control) return control
   const durationMs = parseDurationMs(text)
   if (durationMs <= 0) return { kind: 'unrecognized', transcript }
   return { kind: 'startTimer', durationMs }
+}
+
+// Controlling the timer that is already running. Short commands only:
+// "cancel the timer", "pause my timer please", "how much time is left on
+// the timer". Anything longer goes to Gemini, which can still call the same
+// action (features/timer/actions.ts) when that is what was meant - a long
+// sentence that merely contains "timer" and "stop" ("how do I stop the
+// timer app on my phone from beeping") is much more likely a question.
+const MAX_CONTROL_WORDS = 8
+
+const CANCEL_WORDS = /\b(cancel|stop|clear|delete|kill)\b|\bturn off\b/
+const PAUSE_WORDS = /\b(pause|hold)\b/
+const RESUME_WORDS = /\b(resume|unpause|continue)\b/
+const STATUS_WORDS = /\b(left|remaining|how much|how long|check|status)\b/
+
+// Checked before the duration: "cancel the 5 minute timer" contains a
+// duration too, and must never start a new 5-minute timer. The other
+// controls only count without a duration - "set a timer for 5 minutes and
+// check on the oven" is a start.
+function parseControl(text: string): VoiceCommand | null {
+  const words = text.match(/[a-z0-9']+/g) ?? []
+  if (words.length > MAX_CONTROL_WORDS) return null
+  if (CANCEL_WORDS.test(text)) return { kind: 'cancelTimer' }
+  if (parseDurationMs(text) > 0) return null
+  if (PAUSE_WORDS.test(text)) return { kind: 'pauseTimer' }
+  if (RESUME_WORDS.test(text)) return { kind: 'resumeTimer' }
+  if (STATUS_WORDS.test(text)) return { kind: 'timerStatus' }
+  return null
 }
