@@ -1,32 +1,32 @@
 import type { Tool } from '../core/tool'
 import { chatTool } from '../features/chat/tool'
 import { notesTool } from '../features/notes/tool'
-import { settingsTool } from '../features/settings/tool'
-import { teleprompter } from '../features/teleprompter/tool'
-import { timerTool } from '../features/timer/tool'
-import { weatherTool } from '../features/weather/tool'
 
 // Order is the index. The firmware reports the highlighted list row back as
 // currentSelectItemIndex, and that index is what gets persisted in ui.screen, so
-// reordering this array changes what a stored screen restores to.
+// reordering this array changes what a stored screen restores to. A stored
+// index from an older order restores to whatever now sits there, or the menu
+// if out of range (app/screen.ts checks the range) - harmless, and only
+// within the 30-minute restore window.
 //
-// No standalone GPS entry. It used to be here as its own tool; per direct
-// request it was cut, since nobody used a raw lat/lon readout on its own.
-// What GPS actually gave this app - a location fix - still exists, just as
-// plumbing Weather calls internally (see platform/location.ts) rather than a page a
-// wearer opens on purpose.
+// Just Jarvis and Notes, per direct request (2026-10-15): the wearer uses
+// the status bar's weather instead of the Weather screen, the glasses' own
+// native teleprompter instead of this one, and Jarvis for everything else -
+// "we will think and add more later". The other tools are off the launcher,
+// not deleted: features/weather, features/teleprompter, features/timer and
+// features/settings are all still here, and each comes back by adding it to
+// this array. Their background parts keep running regardless of the
+// launcher - the status bar's weather and timer countdown come from
+// features/weather/service.ts and features/timer/service.ts, and its layout
+// from features/settings/store.ts, none of which this list controls.
+//
+// Jarvis (chatTool) is the one assistant - see features/chat/tool.ts.
 //
 // Lab is dev-only, added last so it never shifts a released build's saved
 // screen index, and imported behind import.meta.env.DEV so a production
 // build tree-shakes the whole features/lab module out rather than merely
 // hiding a menu entry that is still sitting in the package.
-// Jarvis (chatTool) is the one assistant: what used to be two entries, the
-// one-shot Jarvis and the Gemini conversation tool, merged per direct
-// request (see features/chat/tool.ts). Removing the old entry shifts later
-// indexes by one; a stored screen from before that restores to whatever
-// now sits at its index, or the menu if out of range (app/screen.ts checks
-// the range) - harmless, and only within the 30-minute restore window.
-const tools: Tool[] = [weatherTool, notesTool, teleprompter, timerTool, settingsTool, chatTool]
+const tools: Tool[] = [chatTool, notesTool]
 
 if (import.meta.env.DEV) {
   const { labTool } = await import('../features/lab/tool')
