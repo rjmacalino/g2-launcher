@@ -98,4 +98,50 @@ describe('parseVoiceCommand', () => {
       transcript: 'the time is 5 minutes past noon',
     })
   })
+
+  // Every Jarvis question passes through this parser first, so ordinary
+  // questions that happen to mention a duration must reach Gemini, not
+  // start a timer.
+  it('does not treat a question with "times" or "timed" as a timer command', () => {
+    for (const question of [
+      'how many times a day should I stretch for 10 minutes',
+      'I timed my run at 25 minutes, is that good',
+      'I was alarmed after 5 minutes, what should I do',
+    ]) {
+      expect(parseVoiceCommand(question)).toEqual({ kind: 'unrecognized', transcript: question })
+    }
+  })
+
+  it('still starts a timer when asked politely, as a question', () => {
+    expect(parseVoiceCommand('can you set a timer for 5 minutes?')).toEqual({
+      kind: 'startTimer',
+      durationMs: 5 * 60_000,
+    })
+  })
+
+  it('controls a running timer with short commands', () => {
+    expect(parseVoiceCommand('cancel the timer')).toEqual({ kind: 'cancelTimer' })
+    expect(parseVoiceCommand('Jarvis, stop my timer please')).toEqual({ kind: 'cancelTimer' })
+    expect(parseVoiceCommand('pause the timer')).toEqual({ kind: 'pauseTimer' })
+    expect(parseVoiceCommand('resume the timer')).toEqual({ kind: 'resumeTimer' })
+    expect(parseVoiceCommand('how much time is left on my timer')).toEqual({
+      kind: 'timerStatus',
+    })
+  })
+
+  it('never starts a timer from a cancel that names a duration', () => {
+    expect(parseVoiceCommand('cancel the 5 minute timer')).toEqual({ kind: 'cancelTimer' })
+  })
+
+  it('still starts a timer when a control word appears with a duration', () => {
+    expect(parseVoiceCommand('timer 5 minutes, check the oven')).toEqual({
+      kind: 'startTimer',
+      durationMs: 5 * 60_000,
+    })
+  })
+
+  it('leaves a long sentence about timers to Gemini', () => {
+    const question = 'how do I stop the timer app on my phone from beeping'
+    expect(parseVoiceCommand(question)).toEqual({ kind: 'unrecognized', transcript: question })
+  })
 })

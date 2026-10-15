@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'vitest'
-import { formatDuration } from '../src/shared/duration'
+import { describeDuration, formatDuration } from '../src/shared/duration'
 
 describe('formatDuration', () => {
   it('formats under an hour as m:ss', () => {
@@ -18,5 +18,18 @@ describe('formatDuration', () => {
 
   it('formats zero as zero, not empty', () => {
     expect(formatDuration(0)).toBe('0:00')
+  })
+})
+
+describe('describeDuration', () => {
+  it('reads as words, skipping zero parts', () => {
+    expect(describeDuration(5 * 60_000)).toBe('5 min')
+    expect(describeDuration(90 * 60_000)).toBe('1 hr 30 min')
+    expect(describeDuration(4 * 60_000 + 12_000)).toBe('4 min 12 sec')
+    expect(describeDuration(45_000)).toBe('45 sec')
+  })
+
+  it('says 0 sec rather than nothing', () => {
+    expect(describeDuration(0)).toBe('0 sec')
   })
 })

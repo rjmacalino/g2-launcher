@@ -44,9 +44,21 @@ export function preload() {
 // caller now waits its turn instead.
 let queue: Promise<unknown> = Promise.resolve()
 
+// Whisper reads a fixed 30-second window. Without chunking, anything past
+// the first 30 seconds of a recording is silently dropped from the
+// transcript - harmless while recordings were capped at 15 seconds, a real
+// bug once they can run to three minutes (see core/voiceCapture.ts).
+// chunk_length_s splits long audio into 30-second windows; stride_length_s
+// overlaps them so a word straddling a boundary is not cut in half.
+const CHUNK_LENGTH_S = 30
+const STRIDE_LENGTH_S = 5
+
 async function runTranscribe(audio: Float32Array): Promise<string> {
   const transcriber = await getPipeline()
-  const result = await transcriber(audio)
+  const result = await transcriber(audio, {
+    chunk_length_s: CHUNK_LENGTH_S,
+    stride_length_s: STRIDE_LENGTH_S,
+  })
   const first = Array.isArray(result) ? result[0] : result
   return first?.text?.trim() ?? ''
 }
