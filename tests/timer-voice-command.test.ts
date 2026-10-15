@@ -98,4 +98,24 @@ describe('parseVoiceCommand', () => {
       transcript: 'the time is 5 minutes past noon',
     })
   })
+
+  // Every Jarvis question passes through this parser first, so ordinary
+  // questions that happen to mention a duration must reach Gemini, not
+  // start a timer.
+  it('does not treat a question with "times" or "timed" as a timer command', () => {
+    for (const question of [
+      'how many times a day should I stretch for 10 minutes',
+      'I timed my run at 25 minutes, is that good',
+      'I was alarmed after 5 minutes, what should I do',
+    ]) {
+      expect(parseVoiceCommand(question)).toEqual({ kind: 'unrecognized', transcript: question })
+    }
+  })
+
+  it('still starts a timer when asked politely, as a question', () => {
+    expect(parseVoiceCommand('can you set a timer for 5 minutes?')).toEqual({
+      kind: 'startTimer',
+      durationMs: 5 * 60_000,
+    })
+  })
 })

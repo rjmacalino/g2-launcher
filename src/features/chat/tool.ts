@@ -341,8 +341,21 @@ function renderExchange(messages: readonly ChatMessage[]): string {
   return pages[0].text
 }
 
+// Back-to-back messages from the same side are merged into one turn. A
+// question Gemini failed to answer stays in the history, so the next
+// question asked after it would otherwise be a second "user" turn in a
+// row - and every exchange in the docs' examples alternates user/model.
+// Whether the API actually rejects two in a row is not documented; merging
+// costs nothing and rules out a conversation that could never be answered
+// again after one failure.
 function toGeminiTurns(messages: readonly ChatMessage[]): GeminiTurn[] {
-  return messages.map(m => ({ role: m.role, text: m.text }))
+  const turns: GeminiTurn[] = []
+  for (const m of messages) {
+    const previous = turns[turns.length - 1]
+    if (previous && previous.role === m.role) previous.text += `\n\n${m.text}`
+    else turns.push({ role: m.role, text: m.text })
+  }
+  return turns
 }
 
 const STATUS_FRAMES = ['.', '..', '...']
@@ -410,6 +423,33 @@ let interrupted = false
 // return from the background can put the "Thinking" counter back up (see
 // onResume), since going to the background stops it.
 let inFlightQuestion: string | null = null
+// ...and the conversation it was asked in, so neither the "busy" check nor
+// a return from the background mixes it up with a different conversation
+// opened since.
+let inFlightSessionId: string | null = null
+
+function waitingHere(): boolean {
+  return inFlightQuestion !== null && inFlightSessionId === currentSessionId
+}
+
+// Which Gemini request inFlightQuestion and the Thinking counter belong to.
+// The wearer can leave a conversation while it is still thinking and start
+// a new one; when the OLD reply finally lands it must not clear the new
+// conversation's state or stop its status display - it used to stop
+// whatever status was showing, freezing a new recording's Listening counter.
+let currentAskId = 0
+let stopThinking: (() => void) | null = null
+
+// Between the tap that ends a recording and its transcript arriving. A
+// long-press then used to start a second recording on top of the first's
+// transcription.
+let transcribing = false
+
+// Recording, transcribing, or waiting on Gemini: a long-press asking the
+// next question waits until this one is done.
+function busy(): boolean {
+  return listening || transcribing || waitingHere()
+}
 
 async function beginListening() {
   const mySession = ++sessionToken
@@ -454,7 +494,7 @@ let thinkingStartedAt = 0
 let thinkingRetryNote = ''
 
 function showThinking(question: string): void {
-  startLiveStatus(
+  stopThinking = startLiveStatus(
     sessionToken,
     (dots, elapsedSeconds) => {
       setContent(
@@ -500,9 +540,11 @@ async function askGemini(question: string) {
   // callback below, so automatic retries show up on screen instead of
   // looking like a hang.
   pages = []
+  const myAsk = ++currentAskId
   thinkingStartedAt = Date.now()
   thinkingRetryNote = ''
   inFlightQuestion = question
+  inFlightSessionId = targetSessionId
   status('Jarvis: asking')
   showThinking(question)
 
@@ -510,15 +552,20 @@ async function askGemini(question: string) {
   const reply = await converse(apiKey, toGeminiTurns(messagesAtAsk), {
     onRetry: (attempt, max) => {
       attemptsMade = attempt
-      thinkingRetryNote = `\nRetrying (${attempt}/${max})...`
+      if (myAsk === currentAskId) thinkingRetryNote = `\nRetrying (${attempt}/${max})...`
     },
     // The wearer's other recent conversations, from the in-memory copy
     // (peek, never a storage read - see features/chat/store.ts). Empty if
     // the startup load has not finished yet; this question still goes out.
     background: buildDigest(chatSessions.peek() ?? [], targetSessionId),
   })
-  inFlightQuestion = null
-  stopActiveStatus?.()
+  // Only if this is still the latest request - see currentAskId.
+  if (myAsk === currentAskId) {
+    inFlightQuestion = null
+    inFlightSessionId = null
+    stopThinking?.()
+    stopThinking = null
+  }
   status(reply.kind === 'error' ? `Jarvis: failed (${reply.message})` : 'Jarvis: answered')
 
   if (reply.kind === 'error') {
@@ -576,7 +623,9 @@ export async function finishListening() {
   const recordedSeconds = Math.max(1, Math.round((Date.now() - listeningStartedAt) / 1000))
   status(`Jarvis: transcribing ${recordedSeconds}s of audio`)
   setContent(`Transcribing ${recordedSeconds}s of speech...\n\n(this can take a moment)`)
+  transcribing = true
   const result = await stop()
+  transcribing = false
   // Dropped only if the wearer actually moved on - left this conversation,
   // or started a new recording. The old check here was the voice-capture
   // session token, which a brief app-in-background blip also bumps: a
@@ -594,6 +643,7 @@ export async function finishListening() {
   }
 
   const question: ChatMessage = { role: 'user', text: result.transcript, timestamp: Date.now() }
+  status(`Jarvis: heard ${result.transcript.length} chars, audio level ${result.peak.toFixed(3)}`)
 
   // Commands first, locally - a timer needs no network, no API key, and no
   // Gemini round trip (see the voice dispatch registered in app/main.ts).
@@ -612,7 +662,7 @@ export async function finishListening() {
       if (quickAsk) {
         setTimeout(() => {
           if (!quickAsk || depth !== 'conversation' || currentSessionId !== null) return
-          if (listening || inFlightQuestion !== null) return
+          if (busy()) return
           returnHandler?.()
         }, COMMAND_RETURN_DELAY_MS)
       }
@@ -656,7 +706,7 @@ export async function finishListening() {
 export async function retry() {
   // A second tap while the first retry is still waiting on Gemini would
   // otherwise send the same question twice.
-  if (lastErrorQuestion === null || inFlightQuestion !== null) return
+  if (lastErrorQuestion === null || waitingHere()) return
   const question = lastErrorQuestion
   await askGemini(question)
 }
@@ -692,7 +742,9 @@ function resume(): void {
     setContent('Recording was interrupted.\n\nLong-press to ask again.')
     return
   }
-  if (inFlightQuestion !== null && stopActiveStatus === null) showThinking(inFlightQuestion)
+  if (inFlightQuestion !== null && waitingHere() && stopActiveStatus === null) {
+    showThinking(inFlightQuestion)
+  }
 }
 
 // Starts recording if this page was opened to do so (a long-press, or "New
@@ -758,7 +810,9 @@ export const chatTool: Tool = {
   // handles a long-press itself, by opening a new conversation - see
   // app/main.ts.)
   onLongPress: () => {
-    if (depth !== 'conversation' || listening) return
+    // Not while this conversation is still recording, transcribing or
+    // waiting on Gemini - see busy().
+    if (depth !== 'conversation' || busy()) return
     void beginListening()
   },
   // Confirming "leave" backs up exactly one level, matching what "back"

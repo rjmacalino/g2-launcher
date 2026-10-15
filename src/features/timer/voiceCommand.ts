@@ -46,11 +46,34 @@ function levenshtein(a: string, b: string): number {
   return dist[a.length][b.length]
 }
 
+// Real, common English words within the fuzzy distance of "timer" or
+// "alarm", which must never count as the keyword. This matters far more
+// since Jarvis merged with the Gemini conversation tool: every question now
+// passes through here first, not just deliberate commands, so "how many
+// times a day should I stretch for 10 minutes?" would otherwise start a
+// 10-minute timer instead of being answered.
+const NOT_KEYWORDS = new Set([
+  'times',
+  'timed',
+  'timber',
+  'tiger',
+  'tamer',
+  'tuner',
+  'toner',
+  'taker',
+  'liner',
+  'miner',
+  'diner',
+  'alarmed',
+  'alarming',
+])
+
 function hasTimerKeyword(text: string): boolean {
   const words = text.match(/[a-z]+/g) ?? []
   return words.some(
     word =>
       word.length >= MIN_FUZZY_WORD_LENGTH &&
+      !NOT_KEYWORDS.has(word) &&
       KEYWORDS.some(keyword => levenshtein(word, keyword) <= MAX_KEYWORD_DISTANCE),
   )
 }

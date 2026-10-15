@@ -322,7 +322,7 @@ async function renderChatList() {
       <a class="gemini-settings-link" href="#">Gemini API key settings</a>
     </p>
     <ul class="list">
-      ${items.length === 0 ? '<li class="empty">No conversations yet. Long-press Chat on the glasses to start one.</li>' : ''}
+      ${items.length === 0 ? '<li class="empty">No conversations yet. Long-press on the glasses, from any screen, to ask Jarvis something.</li>' : ''}
       ${items.map(chatRow).join('')}
     </ul>
   `
