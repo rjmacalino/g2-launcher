@@ -37,7 +37,11 @@ export function runDevCommand(command: DevCommand, navigate: (route: Route) => v
     }
     case 'type': {
       const el = find(command.selector)
-      if (!(el instanceof HTMLInputElement || el instanceof HTMLTextAreaElement)) {
+      const field =
+        el instanceof HTMLInputElement ||
+        el instanceof HTMLTextAreaElement ||
+        el instanceof HTMLSelectElement
+      if (!field) {
         return status(`dev: no field matches ${command.selector}`)
       }
       el.focus()

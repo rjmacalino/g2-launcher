@@ -19,7 +19,11 @@ export async function askModel(
     case 'local': {
       // The "key" for a local model is the PC's address (G2-78).
       const { converseDeepSeek } = await import('./deepseek')
-      return converseDeepSeek('', config.model, turns, options, {
+      // No actions: a 3B model calls them when it should answer (G2-78,
+      // "There was nothing to add." for a LeetCode question in the
+      // simulator). Commands like timers never reach the AI anyway.
+      const { functions: _unused, ...questionOnly } = options
+      return converseDeepSeek('', config.model, turns, questionOnly, {
         endpoint: localEndpoint(config.apiKey),
         label: 'Your PC',
         deepseek: false,
