@@ -1,6 +1,8 @@
 import { AudioInputSource } from '@evenrealities/even_hub_sdk'
 import { bridge } from '../platform/bridge'
 import { transcribe } from './whisper'
+import { SAMPLE_RATE, concat, toFloat32 } from '../shared/pcm'
+import { isSilenceHallucination, stripNonSpeech } from '../shared/transcript'
 
 // Browser SpeechRecognition looked available (Lab's presence-check probe
 // constructed it without throwing) but actually using it fails with
@@ -20,9 +22,19 @@ import { transcribe } from './whisper'
 // bookkeeping; this file only owns capturing PCM and turning it into text.
 // peak is the loudest sample in the recording (0 to 1) - reported on the
 // status line so real-hardware use shows what speech actually measures,
-// before any "too quiet to be speech" threshold gets picked.
+// before any "too quiet to be speech" threshold gets picked. audioSeconds
+// and transcribeMs are reported the same way: how long Whisper takes per
+// second of audio on the real phone decides whether live transcription
+// (Conversate-style) can keep up at all, and nothing else measures it.
 export type VoiceResult =
-  { kind: 'transcript'; transcript: string; peak: number } | { kind: 'error'; message: string }
+  | {
+      kind: 'transcript'
+      transcript: string
+      peak: number
+      audioSeconds: number
+      transcribeMs: number
+    }
+  | { kind: 'error'; message: string }
 
 // Driven by the caller's own long-press-to-start / double-press-to-end
 // wiring (see app/main.ts for how each tool claims that gesture while it is
@@ -54,29 +66,6 @@ const MAX_RECORD_MS = 180_000
 let chunks: Uint8Array[] = []
 let unsubscribe: (() => void) | null = null
 let safetyTimer: ReturnType<typeof setTimeout> | null = null
-
-// Signed 16-bit little-endian PCM (see docs/platform.md, Device APIs) ->
-// Float32 samples in [-1, 1], the shape every Transformers.js ASR pipeline
-// expects.
-function toFloat32(bytes: Uint8Array): Float32Array {
-  const view = new DataView(bytes.buffer, bytes.byteOffset, bytes.byteLength)
-  const samples = new Float32Array(Math.floor(bytes.length / 2))
-  for (let i = 0; i < samples.length; i++) {
-    samples[i] = view.getInt16(i * 2, true) / 32768
-  }
-  return samples
-}
-
-function concat(parts: readonly Uint8Array[]): Uint8Array {
-  const total = parts.reduce((sum, p) => sum + p.length, 0)
-  const out = new Uint8Array(total)
-  let offset = 0
-  for (const part of parts) {
-    out.set(part, offset)
-    offset += part.length
-  }
-  return out
-}
 
 // Starts capturing from the glasses mic. Resolves once capture has actually
 // started (or failed to). onSafetyTimeout fires once, MAX_RECORD_MS after
@@ -129,37 +118,6 @@ function peakLevel(samples: Float32Array): number {
   return peak
 }
 
-// Whisper marks non-speech in brackets or parentheses - "[BLANK_AUDIO]",
-// "(upbeat music)", "[Music]" - which are not anything the wearer said.
-function stripNonSpeech(transcript: string): string {
-  return transcript
-    .replace(/\[[^\]]*\]|\([^)]*\)/g, ' ')
-    .replace(/\s+/g, ' ')
-    .trim()
-}
-
-// What Whisper is known to invent from near-silence rather than return
-// nothing: faint room noise in the simulator came back as "You" and was
-// sent to Gemini as a question, then saved as a conversation titled "You".
-// Only whole transcripts that are never a real question on their own -
-// "thank you" is left alone, since someone might actually say it.
-const SILENCE_HALLUCINATIONS = new Set([
-  'you',
-  'thanks for watching',
-  'thank you for watching',
-  'thanks for watching bye',
-  'please subscribe',
-])
-
-function isSilenceHallucination(transcript: string): boolean {
-  const words = transcript
-    .toLowerCase()
-    .replace(/[^a-z ]/g, '')
-    .replace(/\s+/g, ' ')
-    .trim()
-  return SILENCE_HALLUCINATIONS.has(words)
-}
-
 // Ends capture and runs one transcription over everything recorded.
 export async function stop(): Promise<VoiceResult> {
   teardownCapture()
@@ -170,11 +128,19 @@ export async function stop(): Promise<VoiceResult> {
     if (peak < SILENCE_PEAK) {
       return { kind: 'error', message: 'no sound picked up' }
     }
+    const transcribeStart = performance.now()
     const transcript = stripNonSpeech(await transcribe(audio))
+    const transcribeMs = Math.round(performance.now() - transcribeStart)
     if (!transcript || isSilenceHallucination(transcript)) {
       return { kind: 'error', message: `heard nothing - audio level ${peak.toFixed(3)}` }
     }
-    return { kind: 'transcript', transcript, peak }
+    return {
+      kind: 'transcript',
+      transcript,
+      peak,
+      audioSeconds: audio.length / SAMPLE_RATE,
+      transcribeMs,
+    }
   } catch (e) {
     return { kind: 'error', message: e instanceof Error ? e.message : String(e) }
   }

@@ -12,6 +12,7 @@ import { GLYPH_CANDIDATES } from './glyphs'
 import { drawAllBlack, drawTestPattern } from './test-pattern'
 import { drawWeatherIcon, WEATHER_ICON_CONDITIONS } from '../../ui/icons'
 import { ICON_SIZE } from '../../ui/tokens'
+import { liveListenContent, startLiveListen, stopLiveListen } from './liveListen'
 import type { Tool } from '../../core/tool'
 
 // Dev-only: a menu of hardware probes for facts docs/platform.md marks
@@ -291,6 +292,18 @@ const probes: readonly Probe[] = [
     content: () => whisperProbeText,
     onOpen: runWhisperProbe,
     onLongPress: runWhisperProbe,
+  },
+  {
+    // G2-60: the always-on mic and live Whisper measurement - see
+    // liveListen.ts for what each number on screen means. Runs until
+    // long-pressed or Lab is left; the final numbers land on the status
+    // line either way.
+    name: 'Live transcription (long-press to stop)',
+    kind: 'text',
+    content: liveListenContent,
+    onOpen: startLiveListen,
+    onClose: () => stopLiveListen(false),
+    onLongPress: () => stopLiveListen(),
   },
   {
     name: 'Album pick (long-press to open picker)',

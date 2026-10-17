@@ -42,6 +42,42 @@ progress, `[x]` done, `[?]` waiting on a decision.
    navigation steering what the glasses show) is not built yet - today
    this is one-directional, glasses to companion only.
 
+## Vision: Jarvis, one assistant with three modes (2026-10-17)
+
+RJ's own words, condensed. A personal app, not for public release.
+
+1. Chat (working on hardware [HW], G2-58): ask a question, it transcribes
+   and answers, like ChatGPT on the glasses.
+2. Assistant, Siri/Alexa style: wakes on "Hey Jarvis" from anywhere in the
+   launcher (like "Hey Even" on the native G2) and takes simple commands -
+   timer, reminder, notes. Timer and notes by voice exist (D5); the wake
+   word, ending on silence instead of a tap, and timed reminders do not.
+3. Conversate, but better: listens to the conversation and helps in real
+   time. RJ's complaint with the native one is that it gives trivia and
+   often arrives late. Ours has to be personal (About You, notes, past
+   conversations, who you are talking to), fast enough to keep the
+   conversation flowing, and good at general questions too. It should
+   cover everything from small talk to a job interview; interviews and
+   LeetCode-style questions are a benchmark and context for how good it
+   is, not a use case.
+
+Constraint: free. No paid services (Gemini's free tier is the one cloud
+dependency, see D4). Picovoice Porcupine was ruled out for the wake word
+because its free tier reportedly ended 2026-06-30; openWakeWord (free, no
+account, has a "hey jarvis" model, models licensed non-commercial) is the
+chosen route.
+
+How "very good" is measured, so it is a number and not a feeling:
+- Time to first cue: end of the question to first words on the glasses.
+- Usefulness: right/wrong and relevant/trivia, against a fixed question
+  set (small talk, general knowledge, personal, LeetCode).
+
+Order: (a) measure - can the glasses mic stay on, can on-device Whisper
+keep up live (G2-60); (b) benchmark harness on the PC; (c) "Hey Jarvis";
+(d) live transcript, question detection, streamed cues, situations. Modes
+2 and 3 share one foundation: an always-on mic and transcription that
+keeps up, which is why it comes first.
+
 ## Phase 0: foundations (no user-visible features)
 
 - [x] 0.2 `app.json`: added the `network` permission with
@@ -300,7 +336,18 @@ then on hardware by RJ. Results go back into platform.md with a [HW] tag.
       simulator on the production build: transcription runs via the worker,
       and with the worker deliberately broken it falls back cleanly. Not
       verified on hardware: the status line after a recording ends in
-      "via worker" or "via main thread (reason)", which is the check
+      "via worker" or "via main thread (reason)", which is the check.
+      G2-60, the measurement: Lab's "Live transcription" probe keeps the
+      glasses mic open and transcribes it continuously in 5-second chunks
+      through the worker, showing mic dropouts, Whisper time per chunk,
+      lag, main-thread stall and battery. Jarvis's status line also reports
+      "Ns of audio in Xs". Simulator, 40 s run on RJ's PC [LAB-SIM]: no mic
+      gaps, Whisper 2.3 s per 5 s chunk, lag 2.3 s, no main-thread stall.
+      Whisper pads every call to a 30-second window, so its cost per call
+      is roughly fixed: longer chunks are cheaper per second but add lag.
+      Needs a hardware run (Lab is dev-only: npm run dev plus the QR) of
+      several minutes; the result decides whether on-device Whisper can
+      carry live transcription or the design has to change
 - [ ] Photo viewer: album image on the glasses
 
 ## Decisions

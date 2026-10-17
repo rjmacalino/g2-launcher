@@ -699,7 +699,7 @@ export async function finishListening() {
 
   const question: ChatMessage = { role: 'user', text: result.transcript, timestamp: Date.now() }
   status(
-    `Jarvis: heard ${result.transcript.length} chars, audio level ${result.peak.toFixed(3)}, via ${engineDescription()}`,
+    `Jarvis: heard ${result.transcript.length} chars, audio level ${result.peak.toFixed(3)}, ${result.audioSeconds.toFixed(1)}s of audio in ${(result.transcribeMs / 1000).toFixed(1)}s via ${engineDescription()}`,
   )
 
   // Commands first, locally - a timer needs no network, no API key, and no
