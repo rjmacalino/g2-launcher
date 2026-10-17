@@ -100,6 +100,52 @@ export function liveLines(): readonly LiveLine[] {
   return lines
 }
 
+// Jarvis Live as the phone sees it (G2-70): the companion's Live page
+// shows the full transcript and cue history live, and can ask for a cue,
+// while the glasses show the newest few lines.
+export type LiveState = {
+  running: boolean
+  startedAt: number
+  lines: readonly LiveLine[]
+  cue: { text: string; at: number } | null
+  cueNote: string
+  hearing: 'speech' | 'writing' | 'quiet'
+  // The loudest moment in the last second against the room's quiet level.
+  levelRatio: number
+}
+
+const stateListeners = new Set<() => void>()
+
+export function onLiveChange(fn: () => void): () => void {
+  stateListeners.add(fn)
+  return () => stateListeners.delete(fn)
+}
+
+function notifyState() {
+  for (const fn of stateListeners) fn()
+}
+
+export function getLiveState(): LiveState {
+  const level = segmenter?.level()
+  return {
+    running: releaseMic !== null,
+    startedAt,
+    lines,
+    cue,
+    cueNote,
+    hearing: level?.speaking ? 'speech' : transcribing || waiting.length > 0 ? 'writing' : 'quiet',
+    levelRatio: level && level.floor > 0 ? shownLoudest / level.floor : 0,
+  }
+}
+
+// "What do I say?" - the same as a tap on the glasses.
+export function askCueNow(): void {
+  if (!releaseMic) return
+  cueNote = llm && !cue ? 'Thinking...' : cueNote
+  if (policy.onTap(Date.now())) void askForCue(session)
+  redraw()
+}
+
 function label(speaker: string): string {
   if (speaker === 'self') return 'You: '
   if (speaker === 'other') return 'Them: '
@@ -140,6 +186,7 @@ function render(): string {
 function redraw() {
   shownLoudest = recentLoudest
   recentLoudest = 0
+  notifyState()
   const screen = render()
   if (screen === lastScreen) return
   lastScreen = screen
@@ -330,6 +377,7 @@ function endSession() {
 }
 
 function stopLive() {
+  queueMicrotask(notifyState)
   session++
   stopRedraw()
   releaseMic?.()
@@ -355,12 +403,7 @@ export const liveTool: Tool = {
   onClose: endSession,
   // Ask for a cue now - "what do I say?" - instead of waiting for the next
   // question or timed check.
-  onTap: () => {
-    if (!releaseMic) return
-    cueNote = llm && !cue ? 'Thinking...' : cueNote
-    if (policy.onTap(Date.now())) void askForCue(session)
-    redraw()
-  },
+  onTap: askCueNow,
   // The mic stops in the background anyway (core/mic.ts re-arms it); the
   // clock just does not need to tick for a page nobody is looking at.
   onSuspend: stopRedraw,

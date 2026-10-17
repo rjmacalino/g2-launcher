@@ -2,20 +2,14 @@ import { cancel, start, stop } from '../../core/voiceCapture'
 import { engineDescription } from '../../core/whisper'
 import { takePreroll } from '../../core/wakeListener'
 import { dispatchVoiceCommand } from '../../core/voiceDispatch'
-import {
-  assistantActionContext,
-  assistantActions,
-  runAssistantActions,
-} from '../../core/assistantActions'
-import type { LlmTurn as GeminiTurn } from '../../core/llmTypes'
-import { getAboutMe } from '../../core/geminiSettings'
-import { askModel, describeModel } from '../../core/llm'
+import { runAssistantActions } from '../../core/assistantActions'
+import { describeModel } from '../../core/llm'
 import { getLlmConfig, providerInfo } from '../../core/llmSettings'
 import { chatSessions, type ChatMessage, type ChatSession } from './store'
 import { setContent } from '../../platform/page'
 import { status } from '../../platform/bridge'
 import { PAGE_INNER_WIDTH, paginate, type Page } from './paging'
-import { buildDigest } from './digest'
+import { askAssistant } from './assistant'
 import { setCurrentScreen } from '../../core/currentScreen'
 import { requestRebuild } from '../../core/rebuild'
 import type { Tool } from '../../core/tool'
@@ -388,23 +382,6 @@ function renderExchange(messages: readonly ChatMessage[]): string {
   return pages[0].text
 }
 
-// Back-to-back messages from the same side are merged into one turn. A
-// question Gemini failed to answer stays in the history, so the next
-// question asked after it would otherwise be a second "user" turn in a
-// row - and every exchange in the docs' examples alternates user/model.
-// Whether the API actually rejects two in a row is not documented; merging
-// costs nothing and rules out a conversation that could never be answered
-// again after one failure.
-function toGeminiTurns(messages: readonly ChatMessage[]): GeminiTurn[] {
-  const turns: GeminiTurn[] = []
-  for (const m of messages) {
-    const previous = turns[turns.length - 1]
-    if (previous && previous.role === m.role) previous.text += `\n\n${m.text}`
-    else turns.push({ role: m.role, text: m.text })
-  }
-  return turns
-}
-
 const STATUS_FRAMES = ['.', '..', '...']
 // Per direct request: update every second, showing elapsed time, not a
 // faster cosmetic flicker - the counter itself is the "is this alive"
@@ -639,12 +616,6 @@ async function askGemini(question: string) {
   showThinking(question)
 
   let attemptsMade = 1
-  // What Jarvis can do, not just answer (notes, timer - registered by
-  // app/main.ts). The context is best effort and time-limited, so it never
-  // holds the question up for long (see core/assistantActions.ts).
-  const actions = assistantActions()
-  const actionContext = actions.length > 0 ? await assistantActionContext() : ''
-  const aboutMe = await getAboutMe()
   // Streamed answer text fills the first page as it arrives (G2-62), so
   // the wearer starts reading after the first words instead of after the
   // whole reply. Only page 1, and only when it actually changed: every
@@ -671,19 +642,13 @@ async function askGemini(question: string) {
     setContent(firstPage)
   }
   status(`Jarvis: asking ${describeModel(llm)}`)
-  const reply = await askModel(llm, toGeminiTurns(messagesAtAsk), {
+  // The request itself is shared with the phone (assistant.ts, G2-70).
+  const reply = await askAssistant(llm, messagesAtAsk, targetSessionId, {
     onText,
     onRetry: (attempt, max) => {
       attemptsMade = attempt
       if (myAsk === currentAskId) thinkingRetryNote = `\nRetrying (${attempt}/${max})...`
     },
-    // The wearer's other recent conversations, from the in-memory copy
-    // (peek, never a storage read - see features/chat/store.ts). Empty if
-    // the startup load has not finished yet; this question still goes out.
-    background: buildDigest(chatSessions.peek() ?? [], targetSessionId),
-    functions: actions.map(a => a.declaration),
-    actionContext,
-    aboutMe,
   })
   // Only if this is still the latest request - see currentAskId.
   if (myAsk === currentAskId) {
@@ -916,6 +881,39 @@ function startIfPending(): void {
   listenWhenReady = false
   if (depth === 'conversation' && !listening) void beginListening()
 }
+
+// A conversation changed outside this screen (G2-70) - asked or deleted on
+// the phone. Redraws only when what the glasses show would differ: its own
+// saves match what is already on screen, and nothing is touched while a
+// question is being recorded, transcribed or answered here. The shell
+// ignores the rebuild unless Jarvis is the page on screen.
+chatSessions.onChange(() => {
+  const sessions = chatSessions.peek() ?? []
+  if (depth === 'picker') {
+    pickerSessions = sortForPicker(sessions)
+    requestRebuild(chatTool)
+    return
+  }
+  if (currentSessionId === null || busy()) return
+  const session = sessions.find(s => s.id === currentSessionId)
+  if (!session) {
+    showSession(null)
+    requestRebuild(chatTool)
+    publishScreen()
+    return
+  }
+  const last = (messages: readonly ChatMessage[]) => messages[messages.length - 1]?.timestamp
+  if (
+    session.messages.length === currentMessages.length &&
+    last(session.messages) === last(currentMessages)
+  ) {
+    return
+  }
+  currentMessages = session.messages
+  currentSessionTitle = session.title
+  pages = []
+  requestRebuild(chatTool)
+})
 
 export const chatTool: Tool = {
   name: 'Jarvis',

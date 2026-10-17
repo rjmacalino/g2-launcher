@@ -231,12 +231,29 @@ async function save(session: ChatSession): Promise<void> {
   const others = (cache ?? []).filter(s => s.id !== session.id)
   cache = bound([{ ...session, updatedAt: Date.now() }, ...others])
   persist()
+  notify()
 }
 
 async function remove(id: string): Promise<void> {
   await load()
   cache = (cache ?? []).filter(s => s.id !== id)
   persist()
+  notify()
 }
 
-export const chatSessions = { preload, peek, readAll, newSession, save, remove }
+// Conversations change from two places now (G2-70): the glasses and the
+// phone, which can each ask Jarvis, and the phone can delete. Anything
+// showing conversations subscribes here and redraws - announced as soon
+// as the in-memory copy changes, not after the storage write.
+const listeners = new Set<() => void>()
+
+function notify(): void {
+  for (const fn of listeners) fn()
+}
+
+function onChange(fn: () => void): () => void {
+  listeners.add(fn)
+  return () => listeners.delete(fn)
+}
+
+export const chatSessions = { preload, peek, readAll, newSession, save, remove, onChange }
