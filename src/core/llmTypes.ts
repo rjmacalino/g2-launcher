@@ -13,7 +13,10 @@ export const CHAT_INSTRUCTION =
   'small text display the wearer pages through. Answer fully and ' +
   'naturally, the way you would in any chat conversation - do not cut ' +
   'yourself short to save space. Finish your last sentence rather than ' +
-  'trailing off. Plain text only, no markdown, no bullet lists.'
+  'trailing off. Plain text only, no markdown, no bullet lists. When the ' +
+  'answer needs code, write it for a narrow screen: lines under 40 ' +
+  'characters where possible, two-space indents, no code fences, the code ' +
+  'first and only a short explanation after it.'
 
 // Answers used to be held at 400 tokens for one reason only: a single
 // glasses update has a hard size ceiling (docs/platform.md), and anything

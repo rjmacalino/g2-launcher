@@ -1,5 +1,6 @@
 import { status } from '../platform/bridge'
 import type { Route } from './app'
+import { chatSessions } from '../features/chat/store'
 
 // The page half of vite.config.ts's dev-only remote control (G2-71):
 // lets a test script tap and type on the phone page the way a person
@@ -12,6 +13,8 @@ export type DevCommand =
   | { action: 'click'; selector: string; index?: number; text?: string }
   | { action: 'type'; selector: string; text: string; enter?: boolean }
   | { action: 'read'; selector: string }
+  // Saves a made-up conversation, to see long answers without an AI call.
+  | { action: 'seedChat'; question: string; answer: string }
 
 function find(selector: string, index = 0, text?: string): HTMLElement | null {
   const all = [...document.querySelectorAll<HTMLElement>(selector)]
@@ -45,6 +48,19 @@ export function runDevCommand(command: DevCommand, navigate: (route: Route) => v
         el.dispatchEvent(new KeyboardEvent('keydown', { key: 'Enter', bubbles: true }))
       }
       status(`dev: typed into ${command.selector}`)
+      return
+    }
+    case 'seedChat': {
+      const session = chatSessions.newSession({
+        role: 'user',
+        text: command.question,
+        timestamp: Date.now(),
+      })
+      session.messages.push({ role: 'model', text: command.answer, timestamp: Date.now() })
+      void chatSessions.save(session).then(() => {
+        navigate({ tab: 'jarvis', chatId: session.id })
+        status(`dev: seeded chat ${session.id}`)
+      })
       return
     }
     case 'read': {

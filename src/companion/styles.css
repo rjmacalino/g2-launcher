@@ -563,6 +563,52 @@ textarea.field {
   background: var(--color-surface);
 }
 
+.bubble.rich {
+  display: flex;
+  flex-direction: column;
+  gap: 10px;
+  max-width: 100%;
+}
+
+.prose {
+  white-space: pre-wrap;
+}
+
+.code-block {
+  position: relative;
+  margin: 0 -4px;
+  border-radius: var(--radius-small);
+  background: var(--color-bg);
+}
+
+.code-block pre {
+  margin: 0;
+  padding: 12px 14px;
+  padding-right: 64px;
+  overflow-x: auto;
+  white-space: pre;
+  font:
+    13px/1.5 ui-monospace,
+    SFMono-Regular,
+    Menlo,
+    Consolas,
+    monospace;
+  letter-spacing: 0;
+  -webkit-overflow-scrolling: touch;
+}
+
+.code-block .copy {
+  position: absolute;
+  top: 6px;
+  right: 6px;
+  padding: 4px 10px;
+  border: 0;
+  border-radius: 999px;
+  background: var(--color-input-bg);
+  font-size: 12px;
+  font-weight: 500;
+}
+
 .bubble.error {
   align-self: stretch;
   max-width: none;

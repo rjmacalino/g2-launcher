@@ -10,9 +10,9 @@ import type { Tool } from './tool'
 // already imports the tools array, so a tool importing back from main would
 // be a circular module dependency. Registering a handler here at startup
 // keeps the coupling one small function wide instead of a cycle.
-let handler: ((tool: Tool) => void) | null = null
+let handler: ((tool: Tool, after?: () => void) => void) | null = null
 
-export function registerRebuildHandler(fn: (tool: Tool) => void) {
+export function registerRebuildHandler(fn: (tool: Tool, after?: () => void) => void) {
   handler = fn
 }
 
@@ -21,6 +21,7 @@ export function registerRebuildHandler(fn: (tool: Tool) => void) {
 // open" flag is a hint, not proof, for the same reason a late async
 // callback always re-checks before acting (see the `active`/`isOpen` guards
 // this pattern grew out of, e.g. the old GPS tool).
-export function requestRebuild(tool: Tool) {
-  handler?.(tool)
+// after runs once the rebuilt page is on screen, if it is rebuilt at all.
+export function requestRebuild(tool: Tool, after?: () => void) {
+  handler?.(tool, after)
 }

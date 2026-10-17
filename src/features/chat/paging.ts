@@ -27,17 +27,16 @@ import { getTextWidth } from '../../platform/text'
 export const PAGE_INNER_WIDTH = CANVAS_WIDTH - 2 * PADDING - 8
 // Rows visible on one screen.
 export const SCREEN_ROWS = Math.floor((CONTENT_HEIGHT - 2 * PADDING) / ROW_HEIGHT_PX)
-// Rows of text per page - two screens, minus the row kept for the "(2/5)"
-// indicator on a multi-page answer.
-export const PAGE_TEXT_ROWS = 2 * SCREEN_ROWS - 1
-// A page is shown by an in-place update (2000-character firmware ceiling)
-// and also by a full rebuild - after "No" on the leave prompt, or opening a
-// saved conversation - whose ceiling is 1000 (docs/platform.md). Every page
-// stays under the stricter one, indicator included.
-export const PAGE_MAX_CHARS = 900
-// The last lines of a page, repeated at the top of the next one, so the
-// eye lands on text it just read rather than on a cold start.
-export const OVERLAP_ROWS = 2
+// One continuous scroll, like the Teleprompter, per direct request (code in
+// particular reads badly when split): a section is as long as one in-place
+// update allows (2000-character firmware ceiling, docs/platform.md), so most
+// answers are a single native scroll with no breaks at all. A full rebuild
+// has a stricter 1000 ceiling - see rebuildSafe below.
+export const PAGE_MAX_CHARS = 1900
+export const REBUILD_MAX_CHARS = 1000
+// The last lines of a section, repeated at the top of the next one, so a
+// long answer continues where the eye already is.
+export const OVERLAP_ROWS = 3
 
 // Room kept for the indicator row within PAGE_MAX_CHARS.
 const HINT_RESERVE_CHARS = 40
@@ -56,23 +55,32 @@ function breakLongWord(word: string, innerWidth: number): string[] {
   return pieces
 }
 
+// A line's leading spaces are kept - code is unreadable without its
+// indentation - and a wrapped continuation keeps the same indent. Tabs
+// count as two spaces. (Found in the simulator: indented code came out
+// flush left.)
 export function wrapLines(text: string, innerWidth: number): string[] {
   const lines: string[] = []
-  for (const paragraph of text.split('\n')) {
-    let line = ''
-    for (const word of paragraph.split(' ')) {
+  for (const raw of text.split('\n')) {
+    const paragraph = raw.replace(/\t/g, '  ')
+    const indent = paragraph.slice(0, paragraph.length - paragraph.trimStart().length)
+    let line = indent
+    let empty = true
+    for (const word of paragraph.trimStart().split(' ')) {
       if (word === '') continue
-      const candidate = line === '' ? word : `${line} ${word}`
+      const candidate = empty ? `${indent}${word}` : `${line} ${word}`
       if (getTextWidth(candidate) <= innerWidth) {
         line = candidate
+        empty = false
         continue
       }
-      if (line !== '') lines.push(line)
-      const pieces = breakLongWord(word, innerWidth)
-      lines.push(...pieces.slice(0, -1))
-      line = pieces[pieces.length - 1]
+      if (!empty) lines.push(line)
+      const pieces = breakLongWord(word, innerWidth - getTextWidth(indent))
+      lines.push(...pieces.slice(0, -1).map(piece => `${indent}${piece}`))
+      line = `${indent}${pieces[pieces.length - 1]}`
+      empty = false
     }
-    lines.push(line)
+    lines.push(empty ? '' : line)
   }
   return lines
 }
@@ -81,7 +89,10 @@ export function wrapLines(text: string, innerWidth: number): string[] {
 function overlapFrom(page: string[]): string[] {
   let end = page.length
   while (end > 0 && page[end - 1] === '') end--
-  return page.slice(Math.max(0, end - OVERLAP_ROWS), end)
+  const carried = page.slice(Math.max(0, end - OVERLAP_ROWS), end)
+  // Never carry a leading blank line: a section must not start empty.
+  while (carried.length > 0 && carried[0] === '') carried.shift()
+  return carried
 }
 
 export type Page = {
@@ -105,7 +116,7 @@ export function paginate(text: string, innerWidth: number): Page[] {
     const page = [...carried]
     let chars = page.join('\n').length
     const budget = PAGE_MAX_CHARS - HINT_RESERVE_CHARS
-    while (next < lines.length && page.length < PAGE_TEXT_ROWS) {
+    while (next < lines.length) {
       const added = (page.length > 0 ? 1 : 0) + lines[next].length
       // Always take at least one new line, so paging always moves forward.
       if (page.length > carried.length && chars + added > budget) break
@@ -121,10 +132,17 @@ export function paginate(text: string, innerWidth: number): Page[] {
     return [{ text: only, fitsOneScreen: (chunks[0]?.lines.length ?? 0) <= SCREEN_ROWS }]
   }
   return chunks.map((chunk, i) => {
-    const position = `${i + 1}/${chunks.length}`
-    const hint =
-      i < chunks.length - 1 ? `(${position} - keep swiping down for more)` : `(${position})`
-    const rows = [...chunk.lines, hint]
+    const rows = i < chunks.length - 1 ? [...chunk.lines, '(more below)'] : chunk.lines
     return { text: rows.join('\n'), fitsOneScreen: rows.length <= SCREEN_ROWS }
   })
+}
+
+// The start of a section, cut at a line break to fit a full rebuild's
+// 1000-character ceiling. Jarvis shows this first, then the whole section
+// by an in-place update once the page is on screen (tool.ts).
+export function rebuildSafe(text: string): string {
+  const limit = REBUILD_MAX_CHARS - 10
+  if (text.length <= limit) return text
+  const cut = text.lastIndexOf('\n', limit)
+  return text.slice(0, cut > 0 ? cut : limit)
 }

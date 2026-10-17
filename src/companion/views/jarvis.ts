@@ -3,6 +3,7 @@ import { askFromPhone } from '../../features/chat/assistant'
 import { getCurrentScreen, onCurrentScreenChange } from '../../core/currentScreen'
 import { NEW_CHAT, type AppContext, type Page, type Route } from '../app'
 import { formatWhen, h, icon, toast } from '../dom'
+import { splitAnswer } from '../answerBlocks'
 
 // The Jarvis tab (G2-71): every conversation, readable in full, and a
 // composer to ask Jarvis by typing - with or without the glasses. Asked
@@ -118,9 +119,45 @@ function listPage(ctx: AppContext): Page {
   }
 }
 
+async function copy(text: string): Promise<void> {
+  try {
+    await navigator.clipboard.writeText(text)
+  } catch {
+    // The host WebView may not allow the clipboard API; the older way.
+    const area = h('textarea', { style: 'position: fixed; opacity: 0' }) as HTMLTextAreaElement
+    area.value = text
+    document.body.append(area)
+    area.select()
+    document.execCommand('copy')
+    area.remove()
+  }
+  toast('Copied')
+}
+
+// An answer with its code shown as code (G2-72): monospace, scrolling
+// sideways instead of wrapping, with a copy button.
+function answerBody(text: string): (HTMLElement | string)[] {
+  const blocks = splitAnswer(text)
+  if (blocks.length === 1 && blocks[0].kind === 'text') return [text]
+  return blocks.map(block =>
+    block.kind === 'code'
+      ? h(
+          'div',
+          { class: 'code-block' },
+          h('pre', {}, block.text),
+          h('button', { class: 'copy', onclick: () => void copy(block.text) }, 'Copy'),
+        )
+      : h('div', { class: 'prose' }, block.text),
+  )
+}
+
 function bubble(message: ChatMessage): HTMLElement[] {
   return [
-    h('div', { class: `bubble ${message.role}` }, message.text),
+    h(
+      'div',
+      { class: `bubble ${message.role}${message.role === 'model' ? ' rich' : ''}` },
+      ...(message.role === 'model' ? answerBody(message.text) : [message.text]),
+    ),
     h('div', { class: `bubble-meta ${message.role}` }, formatWhen(message.timestamp)),
   ]
 }

@@ -480,12 +480,13 @@ onScreenRequest(request => {
   void openTool(index)
 })
 
-registerRebuildHandler(tool => {
+registerRebuildHandler((tool, after) => {
   if (confirming || alerting) return
   if (screen.kind !== 'tool') return
   if (TOOLS[screen.index] !== tool) return
   bridge.rebuildPageContainer(new RebuildPageContainer(toolContainers(screen.index))).then(ok => {
     if (!ok) status(`Failed to update ${tool.name}`)
+    else after?.()
   })
 })
 

@@ -8,7 +8,7 @@ import { getLlmConfig, providerInfo } from '../../core/llmSettings'
 import { chatSessions, type ChatMessage, type ChatSession } from './store'
 import { setContent } from '../../platform/page'
 import { status } from '../../platform/bridge'
-import { PAGE_INNER_WIDTH, paginate, type Page } from './paging'
+import { PAGE_INNER_WIDTH, paginate, rebuildSafe, type Page } from './paging'
 import { askAssistant } from './assistant'
 import { setCurrentScreen } from '../../core/currentScreen'
 import { requestRebuild } from '../../core/rebuild'
@@ -256,7 +256,7 @@ async function refresh(): Promise<void> {
       // Only the list needs redrawing; the shell ignores this unless
       // Jarvis is actually the page on screen (see app/main.ts's rebuild
       // handler).
-      if (depth === 'picker') requestRebuild(chatTool)
+      if (depth === 'picker') requestRebuild(chatTool, fillSection)
     })
   }
 }
@@ -329,7 +329,6 @@ let pageIndex = 0
 // Same source: "Scroll events can fire rapidly. Use a cooldown" - without
 // one, a single swipe could deliver both reports and turn the page anyway.
 const SCROLL_COOLDOWN_MS = 400
-let armedDirection: 1 | -1 | 0 = 0
 let lastScrollAt = 0
 
 // A short horizontal rule between the question and the answer - U+2500,
@@ -378,7 +377,6 @@ function renderExchange(messages: readonly ChatMessage[]): string {
       : [formatMessage(last)]
   pages = paginate(parts.join(DIVIDER), PAGE_INNER_WIDTH)
   pageIndex = 0
-  armedDirection = 0
   return pages[0].text
 }
 
@@ -891,14 +889,14 @@ chatSessions.onChange(() => {
   const sessions = chatSessions.peek() ?? []
   if (depth === 'picker') {
     pickerSessions = sortForPicker(sessions)
-    requestRebuild(chatTool)
+    requestRebuild(chatTool, fillSection)
     return
   }
   if (currentSessionId === null || busy()) return
   const session = sessions.find(s => s.id === currentSessionId)
   if (!session) {
     showSession(null)
-    requestRebuild(chatTool)
+    requestRebuild(chatTool, fillSection)
     publishScreen()
     return
   }
@@ -912,8 +910,16 @@ chatSessions.onChange(() => {
   currentMessages = session.messages
   currentSessionTitle = session.title
   pages = []
-  requestRebuild(chatTool)
+  requestRebuild(chatTool, fillSection)
 })
+
+// After a rebuild showed only rebuildSafe's start of a long section, put
+// the whole section up.
+function fillSection(): void {
+  if (depth !== 'conversation' || pages.length === 0 || listening) return
+  const full = pages[pageIndex].text
+  if (full !== rebuildSafe(full)) setContent(full)
+}
 
 export const chatTool: Tool = {
   name: 'Jarvis',
@@ -957,12 +963,16 @@ export const chatTool: Tool = {
   // if this open was a long-press.
   onOpen: () => {
     publishScreen()
+    fillSection()
     startIfPending()
   },
   // After the rebuild from picking a row in the list: "New chat" goes
   // straight to recording - per direct request, there is nothing else to do
   // on an empty conversation, so a long-press first was a wasted step.
-  onContentReady: startIfPending,
+  onContentReady: () => {
+    fillSection()
+    startIfPending()
+  },
   // Inside a conversation: ask the next question. (On the list, the shell
   // handles a long-press itself, by opening a new conversation - see
   // app/main.ts.)
@@ -1027,11 +1037,8 @@ export const chatTool: Tool = {
     lastScrollAt = now
     const next = Math.min(Math.max(pageIndex + delta, 0), pages.length - 1)
     if (next === pageIndex) return
-    if (!pages[pageIndex].fitsOneScreen && armedDirection !== delta) {
-      armedDirection = delta
-      return
-    }
-    armedDirection = 0
+    // The firmware only reports a swipe at a section's very top or bottom,
+    // so one swipe there moves on - no second "are you sure" swipe.
     pageIndex = next
     // Any content update starts the new page at its top - including when
     // going back, so a previous page is re-read from its start.
@@ -1043,5 +1050,8 @@ export const chatTool: Tool = {
   // rather than at the start of the answer. Otherwise the first page of the
   // latest exchange. Every page is under the firmware's 1000-character
   // ceiling for a rebuild (features/chat/paging.ts's PAGE_MAX_CHARS).
-  initialContent: () => (pages.length > 0 ? pages[pageIndex].text : renderConversation()),
+  // A rebuild carries at most 1000 characters; a longer section shows its
+  // start, and onContentReady fills in the rest.
+  initialContent: () =>
+    rebuildSafe(pages.length > 0 ? pages[pageIndex].text : renderConversation()),
 }
