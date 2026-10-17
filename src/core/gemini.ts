@@ -130,6 +130,7 @@ function requestBody(
   turns: readonly GeminiTurn[],
   systemInstruction: string,
   functions: readonly FunctionDeclaration[],
+  maxOutputTokens: number,
 ): string {
   return JSON.stringify({
     contents: turns.map(turn => ({ role: turn.role, parts: [{ text: turn.text }] })),
@@ -142,7 +143,7 @@ function requestBody(
     // a request gets an action.
     ...(functions.length > 0 ? { tools: [{ functionDeclarations: functions }] } : {}),
     generationConfig: {
-      maxOutputTokens: MAX_OUTPUT_TOKENS,
+      maxOutputTokens,
       // gemini-3.8-flash "thinks" before answering, and that thinking
       // spends tokens out of the SAME maxOutputTokens budget as the
       // visible reply - confirmed by symptom, not by a doc or a test with
@@ -191,6 +192,11 @@ export type ConverseOptions = {
   // nothing but the network: the PC benchmark (bench/) runs this exact
   // client and prompt outside the WebView, with a test persona instead.
   aboutMe?: string | null
+  // Replaces Jarvis's chat instruction for a different job - Jarvis Live's
+  // cues (features/live/cues.ts) are one short line or nothing, not an
+  // answer. About You and the background are still added after it.
+  instruction?: string
+  maxOutputTokens?: number
 }
 
 // Only added when there are functions to call. Function descriptions alone
@@ -289,12 +295,21 @@ async function attemptOnce(
 export async function converse(
   apiKey: string,
   turns: readonly GeminiTurn[],
-  { onRetry, background, functions = [], actionContext, aboutMe, onText }: ConverseOptions = {},
+  {
+    onRetry,
+    background,
+    functions = [],
+    actionContext,
+    aboutMe,
+    onText,
+    instruction = SYSTEM_INSTRUCTION,
+    maxOutputTokens = MAX_OUTPUT_TOKENS,
+  }: ConverseOptions = {},
 ): Promise<GeminiResult> {
   // Per direct request: "I want my chatbot to know me... to tailor its
   // answer for me." Empty when nothing has been entered on the companion
   // page, which is the same as not having this feature at all.
-  const parts = [SYSTEM_INSTRUCTION]
+  const parts = [instruction]
   if (aboutMe) {
     parts.push(
       `Background on the person you're talking to - use it to tailor your answer naturally, without mentioning that you were told this: ${aboutMe}`,
@@ -305,7 +320,7 @@ export async function converse(
     parts.push(ACTIONS_INSTRUCTION)
     if (actionContext) parts.push(actionContext)
   }
-  const body = requestBody(turns, parts.join('\n\n'), functions)
+  const body = requestBody(turns, parts.join('\n\n'), functions, maxOutputTokens)
 
   let lastErrorMessage = 'unknown error'
   for (let attempt = 1; attempt <= MAX_ATTEMPTS; attempt++) {

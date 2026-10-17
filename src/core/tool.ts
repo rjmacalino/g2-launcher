@@ -137,6 +137,10 @@ export type Tool = {
   // which is why no tool needs to check whether it is the one on screen.
   onScroll?(delta: 1 | -1): void
 
+  // A single tap on this tool's text page (a list page gets onListSelect
+  // instead). Jarvis Live uses it to ask for a cue now.
+  onTap?(): void
+
   // Long press while this tool is showing. The shell (app/main.ts) now
   // reserves plain long press globally to reach Jarvis from any screen -
   // see LONG_PRESS_EVENT there - so this only ever reaches a tool that the

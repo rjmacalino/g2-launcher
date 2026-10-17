@@ -7,6 +7,17 @@ import { concat, toFloat32 } from '../../shared/pcm'
 import { rmsLevel } from '../../shared/endpoint'
 import { isSilenceHallucination, stripNonSpeech } from '../../shared/transcript'
 import { createSegmenter, type Segment } from './segmenter'
+import { converse } from '../../core/gemini'
+import { getAboutMe, getApiKey } from '../../core/geminiSettings'
+import { conversationDigest } from '../../core/assistantContext'
+import {
+  CUE_INSTRUCTION,
+  CUE_MAX_TOKENS,
+  createCuePolicy,
+  parseCue,
+  transcriptForCue,
+} from './cues'
+import { getPrepNotes } from './settings'
 
 // Jarvis Live (G2-65): the third Jarvis mode from docs/roadmap.md's Vision
 // - a better Conversate. While open, it listens to the conversation the
@@ -23,6 +34,10 @@ import { createSegmenter, type Segment } from './segmenter'
 //
 // Lines are labelled You/Them when the glasses say who is speaking (their
 // speakerRole), and left unlabelled when they do not know.
+//
+// Cues (G2-66): below the transcript, one short line from Gemini when it
+// has something worth saying - see cues.ts for what it is told and when it
+// is asked. A tap asks for one right now.
 
 export type LiveLine = { speaker: string; text: string; at: number }
 
@@ -32,6 +47,15 @@ const REDRAW_MS = 1000
 // scroll (docs/platform.md), so the screen only ever shows the newest
 // lines, newest at the bottom, and never needs scrolling.
 const SCREEN_CHARS = 300
+// Less transcript when a cue is showing, so both fit one screen.
+const SCREEN_CHARS_WITH_CUE = 200
+// A cue this old is about a moment that has passed.
+const CUE_EXPIRES_MS = 60_000
+// The same short rule Jarvis uses between question and answer (U+2500,
+// in the firmware font - docs/platform.md's glyph table).
+const DIVIDER = '\u2500'.repeat(12)
+
+type Cue = { text: string; at: number }
 
 let releaseMic: (() => void) | null = null
 let segmenter: ReturnType<typeof createSegmenter> | null = null
@@ -49,6 +73,15 @@ let lastScreen = ''
 // thresholds still need tuning against on real hardware.
 let recentLoudest = 0
 let shownLoudest = 0
+
+let policy = createCuePolicy()
+let cue: Cue | null = null
+// Shown in the cue area instead of a cue: "Thinking..." while a tap's
+// request is out, or why there can be no cues at all.
+let cueNote = ''
+let apiKey: string | null = null
+let aboutMe: string | null = null
+let prepNotes = ''
 
 export function liveLines(): readonly LiveLine[] {
   return lines
@@ -74,17 +107,21 @@ function render(): string {
       : 'quiet'
   const ratio = level && level.floor > 0 ? shownLoudest / level.floor : 0
   const header = `Live ${clock(Date.now() - startedAt)} - ${state} (${ratio.toFixed(1)}x room)`
+  const now = Date.now()
+  if (cue && now - cue.at > CUE_EXPIRES_MS) cue = null
+  const cueText = cue ? `> ${cue.text} (${Math.round((now - cue.at) / 1000)}s)` : cueNote
+  const budget = cueText ? SCREEN_CHARS_WITH_CUE : SCREEN_CHARS
   const shown: string[] = []
   let chars = 0
-  for (let i = lines.length - 1; i >= 0 && chars < SCREEN_CHARS; i--) {
+  for (let i = lines.length - 1; i >= 0 && chars < budget; i--) {
     const line = `${label(lines[i].speaker)}${lines[i].text}`
     shown.unshift(line)
     chars += line.length
   }
   let body = shown.join('\n')
-  if (body.length > SCREEN_CHARS) body = `...${body.slice(body.length - SCREEN_CHARS)}`
-  if (!body) body = 'Listening to the conversation...\n\n(double-tap to end)'
-  return `${header}\n\n${body}`
+  if (body.length > budget) body = `...${body.slice(body.length - budget)}`
+  if (!body) body = 'Listening to the conversation...\n\n(tap for a cue, double-tap to end)'
+  return cueText ? `${header}\n\n${body}\n${DIVIDER}\n${cueText}` : `${header}\n\n${body}`
 }
 
 function redraw() {
@@ -111,6 +148,7 @@ function transcribeNext(mySession: number) {
         dropped = 0
       }
       lines.push({ speaker: segment.speaker, text, at: segment.endedAt })
+      if (policy.onLine(text, Date.now())) void askForCue(mySession)
       redraw()
     })
     .catch(e => status(`Live: transcription failed (${e instanceof Error ? e.message : e})`))
@@ -118,6 +156,48 @@ function transcribeNext(mySession: number) {
       transcribing = false
       transcribeNext(mySession)
     })
+}
+
+async function askForCue(mySession: number) {
+  if (mySession !== session) return
+  if (!apiKey) {
+    cueNote = 'No cues: add a Gemini key in Jarvis on the companion page.'
+    return
+  }
+  if (lines.length === 0) {
+    cueNote = ''
+    return
+  }
+  const askedAt = Date.now()
+  policy.started(askedAt)
+  const background = [
+    prepNotes && `Prep notes from the wearer for this conversation: ${prepNotes}`,
+    conversationDigest(),
+  ]
+    .filter(Boolean)
+    .join('\n\n')
+  try {
+    const reply = await converse(apiKey, [{ role: 'user', text: transcriptForCue(lines) }], {
+      instruction: CUE_INSTRUCTION,
+      maxOutputTokens: CUE_MAX_TOKENS,
+      aboutMe,
+      background,
+    })
+    if (mySession !== session) return
+    if (reply.kind === 'answer') {
+      const text = parseCue(reply.text)
+      if (text) cue = { text, at: Date.now() }
+      const took = ((Date.now() - askedAt) / 1000).toFixed(1)
+      status(`Live: cue in ${took}s${text ? '' : ' (nothing to say)'}`)
+      cueNote = ''
+    } else if (reply.kind === 'error') {
+      status(`Live: cue failed (${reply.message})`)
+      cueNote = cue ? '' : `(cue failed: ${reply.message})`
+    }
+  } finally {
+    policy.finished()
+    if (mySession === session) redraw()
+  }
 }
 
 function onSegment(segment: Segment, mySession: number) {
@@ -136,6 +216,12 @@ async function startLive() {
   waiting = []
   dropped = 0
   startedAt = Date.now()
+  policy = createCuePolicy()
+  cue = null
+  cueNote = ''
+  // Read once per session, not per cue: a cue waits on nothing but Gemini.
+  ;[apiKey, aboutMe, prepNotes] = await Promise.all([getApiKey(), getAboutMe(), getPrepNotes()])
+  if (mySession !== session) return
   segmenter = createSegmenter()
   const release = await openMic((pcm, speaker) => {
     if (mySession !== session || !segmenter) return
@@ -158,9 +244,14 @@ async function startLive() {
   startRedraw()
 }
 
+function tick() {
+  if (releaseMic && policy.onTick(Date.now())) void askForCue(session)
+  redraw()
+}
+
 function startRedraw() {
   if (redrawTimer !== null) return
-  redrawTimer = setInterval(redraw, REDRAW_MS)
+  redrawTimer = setInterval(tick, REDRAW_MS)
 }
 
 function stopRedraw() {
@@ -192,6 +283,14 @@ export const liveTool: Tool = {
     void startLive()
   },
   onClose: stopLive,
+  // Ask for a cue now - "what do I say?" - instead of waiting for the next
+  // question or timed check.
+  onTap: () => {
+    if (!releaseMic) return
+    cueNote = apiKey && !cue ? 'Thinking...' : cueNote
+    if (policy.onTap(Date.now())) void askForCue(session)
+    redraw()
+  },
   // The mic stops in the background anyway (core/mic.ts re-arms it); the
   // clock just does not need to tick for a page nobody is looking at.
   onSuspend: stopRedraw,

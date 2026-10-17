@@ -70,6 +70,8 @@ import { describeLists, notesActions } from '../features/notes/actions'
 import { notes } from '../features/notes/store'
 import { registerVoiceDispatch } from '../core/voiceDispatch'
 import { registerAssistantActions } from '../core/assistantActions'
+import { registerConversationDigest } from '../core/assistantContext'
+import { buildDigest } from '../features/chat/digest'
 import { preload as preloadWhisper } from '../core/whisper'
 import { chatSessions } from '../features/chat/store'
 import {
@@ -784,6 +786,11 @@ registerVoiceDispatch(async transcript => {
 // minutes" in words, "a quarter of an hour"). The context is the names of
 // the wearer's lists, so Gemini uses an existing one rather than inventing
 // a near-duplicate.
+// Jarvis Live's cues know the wearer's other conversations the same way
+// Jarvis does: through the digest of saved chats, handed over here because
+// features never import each other.
+registerConversationDigest(() => buildDigest(chatSessions.peek() ?? [], null))
+
 registerAssistantActions({
   actions: [...notesActions, ...timerActions],
   context: async () => describeLists(await notes.readAll()),
@@ -1047,6 +1054,15 @@ const unsubscribe = bridge.onEvenHubEvent(event => {
     }
     if (canRetryJarvis()) {
       retryJarvis()
+      return
+    }
+  }
+
+  // Any other tool that wants a plain tap on its text page.
+  if (isSingleTap && screen.kind === 'tool') {
+    const tool = TOOLS[screen.index]
+    if (tool.onTap && tool.contentKind?.() !== 'list') {
+      tool.onTap()
       return
     }
   }

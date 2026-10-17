@@ -21,6 +21,7 @@ import {
 } from '../core/geminiSettings'
 import { chatSessions, type ChatSession } from '../features/chat/store'
 import { isWakeWordEnabled, setWakeWordEnabled } from '../core/wakeSettings'
+import { getPrepNotes, setPrepNotes, PREP_NOTES_MAX_CHARS } from '../features/live/settings'
 import { isWakeListening, wakeDescription } from '../core/wakeListener'
 import { type ChatScreenDetail } from '../features/chat/tool'
 import { onCurrentScreenChange, getCurrentScreen } from '../core/currentScreen'
@@ -182,6 +183,7 @@ async function renderJarvisSettings(statusMessage?: string) {
   const existingKey = await getGeminiApiKey()
   const existingAboutMe = await getAboutMe()
   const wakeOn = await isWakeWordEnabled()
+  const prepNotes = await getPrepNotes()
   const wakeState = isWakeListening()
     ? `Listening now: ${wakeDescription()}.`
     : 'Not listening now.'
@@ -223,6 +225,20 @@ async function renderJarvisSettings(statusMessage?: string) {
       <div class="editor-actions">
         <button class="save-about-me">Save</button>
         <button class="cancel clear-about-me">Clear</button>
+      </div>
+      <p class="stub-body">
+        Jarvis Live prep notes: background for your next conversation -
+        who it is with, what it is about, what you want out of it. Jarvis
+        Live uses it for its cues, along with About You above.
+      </p>
+      <textarea
+        class="body prep-notes"
+        placeholder="e.g. Coffee with Sam, a recruiter at a fintech startup. I want to ask about the team and remote work."
+        maxlength="${PREP_NOTES_MAX_CHARS}"
+      >${escapeHtml(prepNotes)}</textarea>
+      <div class="editor-actions">
+        <button class="save-prep-notes">Save</button>
+        <button class="cancel clear-prep-notes">Clear</button>
       </div>
       <p class="stub-body">
         "Hey Jarvis": while this app is open on the glasses, Jarvis listens
@@ -282,6 +298,21 @@ async function renderJarvisSettings(statusMessage?: string) {
   root.querySelector('.clear-about-me')?.addEventListener('click', async () => {
     await setAboutMe('')
     await renderJarvisSettings('About You cleared.')
+  })
+
+  root.querySelector('.save-prep-notes')?.addEventListener('click', async () => {
+    const textarea = root.querySelector<HTMLTextAreaElement>('.prep-notes')
+    if (!textarea) return
+    const typed = textarea.value.trim()
+    const ok = await setPrepNotes(typed)
+    await renderJarvisSettings(
+      ok ? (typed ? 'Prep notes saved.' : 'Prep notes cleared.') : 'Save failed - try again.',
+    )
+  })
+
+  root.querySelector('.clear-prep-notes')?.addEventListener('click', async () => {
+    await setPrepNotes('')
+    await renderJarvisSettings('Prep notes cleared.')
   })
 
   root.querySelector('.toggle-wake')?.addEventListener('click', async () => {

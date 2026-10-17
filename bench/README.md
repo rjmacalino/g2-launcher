@@ -54,3 +54,11 @@ not "2000") in the spoken text, since Whisper may write either. `expect` is
 a list of groups: every group must match, and a group matches if the answer
 contains any one of its words. Personal questions are answered from the
 made-up wearer in `persona.ts`, never real data.
+
+## Other benchmarks
+
+- `npm run bench:wake`: "Hey Jarvis" detection on wake and look-alike
+  phrases spoken by every installed Windows voice. No key needed.
+- `npm run bench:cues`: Jarvis Live cues on scripted conversations - time
+  to cue, and whether the cue answers what was just asked (or correctly
+  says nothing). Needs the Gemini key, like the main benchmark.

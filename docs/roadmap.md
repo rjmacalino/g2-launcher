@@ -396,7 +396,22 @@ then on hardware by RJ. Results go back into platform.md with a [HW] tag.
       frame's average: the simulator's mic has a DC offset that made a
       plain RMS read silence as 0.0042 and bury speech at 2x. Verified in
       the simulator with a two-voice conversation through the speakers
-      (lines appear; accuracy poor on that audio path). Not on hardware
+      (lines appear; accuracy poor on that audio path). Not on hardware.
+      G2-66, cues: Gemini sees the last ~2 minutes of transcript with its
+      own instruction (features/live/cues.ts): one cue of at most 12 words
+      or NONE, never trivia or restating, aimed at answering what the
+      wearer was just asked, a fact from their background, or a follow-up
+      when the talk stalls. Asked at once when a line ends in a question
+      mark or on a tap, otherwise at most every 15 s and only after new
+      conversation; one request at a time, never closer than 6 s (free
+      tier). Context: About You, Jarvis Live prep notes (new, companion
+      page), and the digest of past Jarvis chats (core/assistantContext.ts).
+      Shown under the transcript with its age, gone after a minute. Tools
+      can now take a plain tap (Tool.onTap). bench/cues.ts scores time to
+      cue and correctness on scripted conversations, including a trivia
+      trap and a goodbye that should get NONE. Verified: unit tests, and
+      the screen and tap in the simulator. Not verified: any real cue -
+      no Gemini key on the PC yet
 - [ ] Photo viewer: album image on the glasses
 
 ## Decisions
