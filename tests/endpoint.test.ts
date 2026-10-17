@@ -68,3 +68,13 @@ describe('alreadySpeaking and endsInSpeech', () => {
     expect(endsInSpeech([QUIET, SPEECH, SPEECH, SPEECH, QUIET, QUIET, QUIET])).toBe(false)
   })
 })
+
+describe('rmsLevel with a DC offset', () => {
+  it('measures the sound around the average, not the offset', () => {
+    const offset = 150 / 32768
+    const silent = new Float32Array(1600).fill(offset)
+    expect(rmsLevel(silent)).toBe(0)
+    const tone = silent.map((v, i) => v + (i % 2 === 0 ? 0.01 : -0.01))
+    expect(rmsLevel(tone)).toBeCloseTo(0.01)
+  })
+})

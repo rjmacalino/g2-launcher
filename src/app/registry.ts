@@ -1,6 +1,7 @@
 import type { Tool } from '../core/tool'
 import { chatTool } from '../features/chat/tool'
 import { notesTool } from '../features/notes/tool'
+import { liveTool } from '../features/live/tool'
 
 // Order is the index. The firmware reports the highlighted list row back as
 // currentSelectItemIndex, and that index is what gets persisted in ui.screen, so
@@ -21,12 +22,18 @@ import { notesTool } from '../features/notes/tool'
 // from features/settings/store.ts, none of which this list controls.
 //
 // Jarvis (chatTool) is the one assistant - see features/chat/tool.ts.
+// Jarvis Live (G2-65) is its conversation-listening mode, a launcher entry
+// of its own because it is a different thing to open: it listens to the
+// conversation around the wearer instead of waiting to be asked. Added
+// before Notes rather than after so the two Jarvis entries sit together;
+// a stored screen index from before this restores one entry off, which
+// app/screen.ts tolerates (see above).
 //
 // Lab is dev-only, added last so it never shifts a released build's saved
 // screen index, and imported behind import.meta.env.DEV so a production
 // build tree-shakes the whole features/lab module out rather than merely
 // hiding a menu entry that is still sitting in the package.
-const tools: Tool[] = [chatTool, notesTool]
+const tools: Tool[] = [chatTool, liveTool, notesTool]
 
 if (import.meta.env.DEV) {
   const { labTool } = await import('../features/lab/tool')

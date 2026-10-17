@@ -31,11 +31,26 @@ export type EndpointOptions = {
 // after the simulator heard speech from the PC's speakers at 2.5x the room
 // [LAB-SIM]; on the glasses the mic is far closer to the mouth than that.
 const SPEECH_RATIO = 2
-// ...and at least this loud (RMS of samples scaled to [-1, 1]), so a
-// near-silent room's tiny fluctuations never count as speech.
-const MIN_SPEECH_RMS = 0.005
+// ...and at least this loud (RMS of samples scaled to [-1, 1], around
+// their average - see rmsLevel), so a near-silent room's tiny fluctuations
+// never count as speech.
+const MIN_SPEECH_RMS = 0.001
 // A single loud frame (a tap on the frame, a cough) is not speech.
 const MIN_SPEECH_FRAMES = 3
+
+// The loudness rules, shared with Jarvis Live's segmenter
+// (features/live/segmenter.ts) so both judge speech the same way.
+export function isSpeech(rms: number, floor: number, ratio: number = SPEECH_RATIO): boolean {
+  return rms >= Math.max(floor * ratio, MIN_SPEECH_RMS)
+}
+
+// Down at once, up only slowly and only while quiet: a room getting
+// noisier raises the floor, but speech never does - otherwise a long, loud
+// sentence would slowly become "quiet" and get cut off.
+export function nextFloor(rms: number, floor: number, loud: boolean): number {
+  if (rms < floor) return rms
+  return loud ? floor : floor + (rms - floor) * 0.05
+}
 
 export function createEndpointer({
   initialFloor,
@@ -55,12 +70,8 @@ export function createEndpointer({
     push(rms: number): EndpointDecision {
       elapsed += frameMs
       loudest = Math.max(loudest, rms)
-      const loud = rms >= Math.max(floor * SPEECH_RATIO, MIN_SPEECH_RMS)
-      // Down at once, up only slowly and only while quiet: a room getting
-      // noisier raises the floor, but speech never does - otherwise a
-      // long, loud sentence would slowly become "quiet" and get cut off.
-      if (rms < floor) floor = rms
-      else if (!loud) floor += (rms - floor) * 0.05
+      const loud = isSpeech(rms, floor)
+      floor = nextFloor(rms, floor, loud)
       if (loud) {
         speechFrames += 1
         quietMs = 0
@@ -85,14 +96,20 @@ export function createEndpointer({
 export function endsInSpeech(levels: readonly number[], frames = 3): boolean {
   if (levels.length < frames) return false
   const floor = Math.min(...levels)
-  return levels
-    .slice(-frames)
-    .every(level => level >= Math.max(floor * SPEECH_RATIO, MIN_SPEECH_RMS))
+  return levels.slice(-frames).every(level => isSpeech(level, floor))
 }
 
+// Loudness of one frame: RMS around the frame's own average, not around
+// zero. A mic with a DC offset (the simulator's sits at about +150 out of
+// 32768 in silence [LAB-SIM]) otherwise reads as a constant "sound" that
+// buries speech: there, a plain RMS put the room at 0.0042 and speech at
+// barely 2x it. Real mics often have an offset too.
 export function rmsLevel(samples: Float32Array): number {
   if (samples.length === 0) return 0
+  let mean = 0
+  for (let i = 0; i < samples.length; i++) mean += samples[i]
+  mean /= samples.length
   let sum = 0
-  for (let i = 0; i < samples.length; i++) sum += samples[i] * samples[i]
+  for (let i = 0; i < samples.length; i++) sum += (samples[i] - mean) ** 2
   return Math.sqrt(sum / samples.length)
 }

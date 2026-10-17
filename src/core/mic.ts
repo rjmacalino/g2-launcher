@@ -11,22 +11,27 @@ import { bridge } from '../platform/bridge'
 // re-armed on return (docs/platform.md, Lifecycle): app/main.ts calls
 // micSuspended() and micResumed() around that.
 
-export type MicListener = (pcm: Uint8Array) => void
+// speaker is the glasses' own guess at who is talking in this frame -
+// "self", "other" or "unknown" (the SDK's AudioSpeakerRole). [UNVERIFIED]
+// what it reports on hardware.
+export type MicListener = (pcm: Uint8Array, speaker: string) => void
 
 const listeners = new Set<MicListener>()
 let unsubscribeEvents: (() => void) | null = null
 let on = false
 let starting: Promise<boolean> | null = null
 
-function deliver(pcm: Uint8Array) {
-  for (const listener of listeners) listener(pcm)
+function deliver(pcm: Uint8Array, speaker: string) {
+  for (const listener of listeners) listener(pcm, speaker)
 }
 
 function subscribe() {
   if (unsubscribeEvents) return
   unsubscribeEvents = bridge.onEvenHubEvent(event => {
     const audio = event.audioEvent
-    if (audio && audio.source === AudioInputSource.Glasses) deliver(audio.audioPcm)
+    if (audio && audio.source === AudioInputSource.Glasses) {
+      deliver(audio.audioPcm, String(audio.speakerRole ?? 'unknown'))
+    }
   })
 }
 

@@ -509,9 +509,18 @@ let inForeground = true
 // Never on top of something the wearer is in the middle of: a recording,
 // transcription or answer already under way (saying "Jarvis" inside a
 // question must not start a second one), the leave prompt, the timer
-// alert, or Lab, whose probes hold the mic for their own measurements.
+// alert, Lab, whose probes hold the mic for their own measurements, or
+// Jarvis Live, where "Jarvis" said in conversation is just a word.
+const NO_WAKE_TOOLS = new Set(['Lab', 'Jarvis Live'])
+
 function canWake(): boolean {
-  return inForeground && !confirming && !alerting && activeTool()?.name !== 'Lab' && !isJarvisBusy()
+  return (
+    inForeground &&
+    !confirming &&
+    !alerting &&
+    !NO_WAKE_TOOLS.has(activeTool()?.name ?? '') &&
+    !isJarvisBusy()
+  )
 }
 
 function handleWake() {
@@ -663,7 +672,18 @@ if (result === 0) {
 }
 
 await hydrationPromise
-const restoredScreen = await storedScreenPromise
+const storedScreen = await storedScreenPromise
+
+// Jarvis Live starts listening the moment it opens, so it is never
+// restored into: a cold start or a return from the background must not
+// switch on conversation listening without the wearer choosing it, the
+// same lesson as the old one-shot Jarvis [HW, G2-54]. Also covers a stored
+// index from before Live was added at position 1, which would otherwise
+// restore "Notes" into Live.
+const restoredScreen =
+  storedScreen?.kind === 'tool' && TOOLS[storedScreen.index]?.name === 'Jarvis Live'
+    ? null
+    : storedScreen
 
 // If a recent tool page was stored, rebuild to it. The menu was already shown;
 // the rebuild causes a brief flicker during cold start, which is the trade for

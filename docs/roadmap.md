@@ -383,7 +383,20 @@ then on hardware by RJ. Results go back into platform.md with a [HW] tag.
       Not verified on hardware: detection rate and false wakes on a real
       voice, battery with the mic always on, the loudness thresholds
       (status line reports "room" and "loudest" levels and near-miss
-      scores for tuning)
+      scores for tuning).
+      G2-65, Jarvis Live (the Conversate mode, its own launcher entry
+      between Jarvis and Notes, never restored into on a cold start since
+      it listens on open): cuts the mic stream into utterances at pauses
+      (features/live/segmenter.ts, 700 ms pause, 12 s max) so silence is
+      never transcribed, transcribes each in the worker, and shows the
+      newest lines on the glasses, labelled You/Them when speakerRole says.
+      Header shows the current level against the room, for checking on
+      hardware that the other person is being picked up. "Hey Jarvis" is
+      paused while it is open. Loudness is now measured around each
+      frame's average: the simulator's mic has a DC offset that made a
+      plain RMS read silence as 0.0042 and bury speech at 2x. Verified in
+      the simulator with a two-voice conversation through the speakers
+      (lines appear; accuracy poor on that audio path). Not on hardware
 - [ ] Photo viewer: album image on the glasses
 
 ## Decisions
