@@ -190,7 +190,8 @@ function render(): string {
   }
   let body = shown.join('\n')
   if (body.length > budget) body = `...${body.slice(body.length - budget)}`
-  if (!body) body = 'Listening to the conversation...\n\n(tap for a cue, hold to pause, double-tap to end)'
+  if (!body)
+    body = 'Listening to the conversation...\n\n(tap for a cue, hold to pause, double-tap to end)'
   return cueText ? `${header}\n\n${body}\n${DIVIDER}\n${cueText}` : `${header}\n\n${body}`
 }
 
