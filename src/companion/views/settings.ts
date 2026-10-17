@@ -15,6 +15,8 @@ import { isWakeWordEnabled, setWakeWordEnabled } from '../../core/wakeSettings'
 import { isWakeListening, wakeDescription } from '../../core/wakeListener'
 import { getPrepNotes, setPrepNotes, PREP_NOTES_MAX_CHARS } from '../../features/live/settings'
 import type { AppContext, Page } from '../app'
+import { getCodeSize, setCodeSize } from '../../core/codeSize'
+import type { CodeSize } from '../../ui/codeRender'
 import { h, icon, toast } from '../dom'
 
 // The Settings tab (G2-71). Everything here lives only on this phone - the
@@ -107,6 +109,47 @@ function glassesCard(ctx: AppContext): HTMLElement {
       { class: 'caption', style: 'margin: 8px 0 0' },
       'Listens for its name on the glasses microphone while the app is open. The listening happens on this phone; nothing is stored or sent until you speak to Jarvis.',
     ),
+  )
+}
+
+// How big Jarvis draws code on the glasses (G2-73). Opening a code
+// answer on the glasses shows the change.
+function codeSizeCard(): HTMLElement {
+  const sizes: { id: CodeSize; label: string }[] = [
+    { id: 'small', label: 'Small' },
+    { id: 'medium', label: 'Medium' },
+    { id: 'large', label: 'Large' },
+  ]
+  const control = h('div', { class: 'segmented', role: 'tablist' })
+  const paint = () => {
+    control.replaceChildren(
+      ...sizes.map(size =>
+        h(
+          'button',
+          {
+            class: size.id === getCodeSize() ? 'on' : '',
+            role: 'tab',
+            'aria-selected': String(size.id === getCodeSize()),
+            onclick: async () => {
+              await setCodeSize(size.id)
+              paint()
+              toast(`Code on the glasses: ${size.label.toLowerCase()}`)
+            },
+          },
+          size.label,
+        ),
+      ),
+    )
+  }
+  paint()
+  return card(
+    h('h2', {}, 'Code on the glasses'),
+    h(
+      'p',
+      { class: 'caption', style: 'margin: 0 0 12px' },
+      'Jarvis draws code in a real code font so it lines up. Smaller fits more per screen; larger is easier to read.',
+    ),
+    control,
   )
 }
 
@@ -276,6 +319,7 @@ export function settingsView(ctx: AppContext): Page {
     glassesCard(ctx),
     label('Jarvis'),
     aiCard(ctx),
+    codeSizeCard(),
     textCard(
       'About you',
       'A sentence or two Jarvis knows about you, so answers fit you.',

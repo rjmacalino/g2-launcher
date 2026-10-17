@@ -3,7 +3,7 @@ import { askFromPhone } from '../../features/chat/assistant'
 import { getCurrentScreen, onCurrentScreenChange } from '../../core/currentScreen'
 import { NEW_CHAT, type AppContext, type Page, type Route } from '../app'
 import { formatWhen, h, icon, toast } from '../dom'
-import { splitAnswer } from '../answerBlocks'
+import { splitAnswer } from '../../shared/answerBlocks'
 
 // The Jarvis tab (G2-71): every conversation, readable in full, and a
 // composer to ask Jarvis by typing - with or without the glasses. Asked

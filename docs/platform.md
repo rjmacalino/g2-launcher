@@ -181,6 +181,18 @@ Keys must never ship in the package, it is extractable [DOCS].
   a possible way to tell the wearer from the person they are talking to,
   for Conversate-style features. [UNVERIFIED] what it reports on hardware.
 
+### Font and size: only through images (checked 2026-10-17)
+
+The SDK's text container (v0.0.15) has no font or size field at all - its
+fields are position, size, border, padding, ids, event capture, z-order,
+content and textColor - and textContainerUpgrade adds only offset/length.
+The native Teleprompter's adjustable size is Even's own first-party app
+over its private protocol, not something plugins are given (ask in Even's
+developer Discord whether it is coming). What plugins can do: draw text on
+a canvas in any font and size and send it as images - G2-73's code view
+uses four 288 x 124 tiles covering the content area, a full redraw taking
+about half a second [LAB-SIM].
+
 ### Gemini free tier, measured (2026-10-17)
 
 `gemini-3.8-flash` on the free tier allows **20 requests per day per

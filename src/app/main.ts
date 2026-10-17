@@ -28,6 +28,8 @@ import {
   IMAGE_MAX_WIDTH,
   LIST_ITEM_WIDTH,
   PADDING,
+  TILE_COUNT,
+  tileContainers,
 } from '../platform/page'
 import { readWithTimeout } from '../platform/storage'
 import {
@@ -424,6 +426,15 @@ function toolContainers(index: number) {
       containerTotalNum: bar.length + 1,
       textObject: bar,
       listObject: [toolListContent(tool)],
+      menuObject,
+    }
+  }
+
+  if (kind === 'tiles') {
+    return {
+      containerTotalNum: bar.length + 1 + TILE_COUNT,
+      textObject: [...bar, toolImageCapture()],
+      imageObject: tileContainers(),
       menuObject,
     }
   }
@@ -1113,6 +1124,7 @@ const unsubscribe = bridge.onEvenHubEvent(event => {
   if (isDoubleTap) {
     if (screen.kind === 'tool') {
       const tool = TOOLS[screen.index]
+      if (tool.onBack?.()) return
       if (tool.confirmOnExit?.()) {
         enterConfirm(tool)
         return

@@ -1,4 +1,5 @@
 import {
+  ImageContainerProperty,
   ImageRawDataUpdate,
   ImageRawDataUpdateResult,
   TextContainerUpgrade,
@@ -255,4 +256,48 @@ export function setImage(
       }
       return result
     })
+}
+
+// A 'tiles' page (G2-73): the whole content area as four image containers,
+// 2 x 2 - the platform's maximum of four, each at most 288 wide - so a
+// tool can draw anything across it, in any font or size the glasses' own
+// text cannot do. The code view (ui/codeRender.ts) is the first user.
+export const TILE_WIDTH = IMAGE_MAX_WIDTH
+export const TILE_HEIGHT = Math.floor(CONTENT_HEIGHT / 2)
+export const TILE_COUNT = 4
+const TILE_FIRST_ID = CONTAINER_ID_CONTENT_IMAGE
+
+export function tileContainers(): ImageContainerProperty[] {
+  return Array.from(
+    { length: TILE_COUNT },
+    (_, i) =>
+      new ImageContainerProperty({
+        xPosition: (i % 2) * TILE_WIDTH,
+        yPosition: CONTENT_Y + Math.floor(i / 2) * TILE_HEIGHT,
+        width: TILE_WIDTH,
+        height: TILE_HEIGHT,
+        containerID: TILE_FIRST_ID + i,
+        containerName: `tile.${i}`,
+      }),
+  )
+}
+
+// One at a time, in order: the platform rejects two image sends at once
+// (docs/platform.md). Each costs about 0.1 s, so a full screen is about
+// half a second. Resolves false at the first failure.
+export async function setTiles(images: Uint8Array[]): Promise<boolean> {
+  for (const [i, data] of images.entries()) {
+    const result = await bridge.updateImageRawData(
+      new ImageRawDataUpdate({
+        containerID: TILE_FIRST_ID + i,
+        containerName: `tile.${i}`,
+        imageData: data,
+      }),
+    )
+    if (!ImageRawDataUpdateResult.isSuccess(result)) {
+      status(`Tile ${i} update failed: ${result}`)
+      return false
+    }
+  }
+  return true
 }

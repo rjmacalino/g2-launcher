@@ -62,7 +62,9 @@ export type Tool = {
   // A tool can switch between kinds across its own internal navigation:
   // Teleprompter is a list (choosing a script) until one is picked, then text
   // (reading it), and can return to the list on its next open.
-  contentKind?(): 'text' | 'list' | 'image'
+  // 'tiles': the whole content area as four images (platform/page.ts),
+  // for drawing what the glasses' own text cannot - code, in Jarvis.
+  contentKind?(): 'text' | 'list' | 'image' | 'tiles'
 
   // Item labels shown when contentKind() is 'list'. Native firmware selection
   // and highlight, the same widget the launcher menu itself uses.
@@ -153,6 +155,11 @@ export type Tool = {
   // open lands there. isOpen true: it is already on screen - move there
   // now, and return true if the page needs rebuilding to show it.
   showDetail?(detail: unknown, isOpen: boolean): boolean
+
+  // A double-tap, before the shell treats it as "leave". Return true if
+  // the tool handled it itself - stepping back out of a view within it,
+  // like Jarvis's code view - and no leave prompt should appear.
+  onBack?(): boolean
 
   // Long press while this tool is showing. The shell (app/main.ts) now
   // reserves plain long press globally to reach Jarvis from any screen -

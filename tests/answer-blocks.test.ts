@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'vitest'
-import { splitAnswer } from '../src/companion/answerBlocks'
+import { splitAnswer } from '../src/shared/answerBlocks'
 
 describe('splitAnswer', () => {
   it('leaves an ordinary answer as text', () => {

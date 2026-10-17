@@ -9,6 +9,11 @@ import { chatSessions, type ChatMessage, type ChatSession } from './store'
 import { setContent } from '../../platform/page'
 import { status } from '../../platform/bridge'
 import { PAGE_INNER_WIDTH, paginate, rebuildSafe, type Page } from './paging'
+import { splitAnswer } from '../../shared/answerBlocks'
+import { codeScreens, layoutCode } from '../../shared/codeLayout'
+import { CODE_FONT_PX, codeMetrics, renderCodeTiles, type CodeMetrics } from '../../ui/codeRender'
+import { setTiles } from '../../platform/page'
+import { getCodeSize } from '../../core/codeSize'
 import { askAssistant } from './assistant'
 import { setCurrentScreen } from '../../core/currentScreen'
 import { requestRebuild } from '../../core/rebuild'
@@ -173,6 +178,7 @@ function isChatDetail(x: unknown): x is ChatScreenDetail {
 
 // Shows a saved conversation, or the list when id is null or unknown.
 function showSession(id: string | null): void {
+  codeView = null
   const session = id ? (chatSessions.peek() ?? []).find(s => s.id === id) : undefined
   pages = []
   lastErrorQuestion = null
@@ -371,13 +377,105 @@ function renderExchange(messages: readonly ChatMessage[]): string {
   }
   const last = messages[messages.length - 1]
   const secondLast = messages[messages.length - 2]
+  codeBlocks = []
+  const shown = (m: ChatMessage) =>
+    m.role === 'model' ? { ...m, text: withCodePlaceholders(m.text) } : m
   const parts =
     secondLast && secondLast.role !== last.role
-      ? [formatMessage(secondLast), formatMessage(last)]
-      : [formatMessage(last)]
+      ? [formatMessage(shown(secondLast)), formatMessage(shown(last))]
+      : [formatMessage(shown(last))]
   pages = paginate(parts.join(DIVIDER), PAGE_INNER_WIDTH)
   pageIndex = 0
   return pages[0].text
+}
+
+// THE CODE VIEW (G2-73). The glasses' own text has one proportional font,
+// which scrambles code, so code in an answer is drawn as pictures instead
+// (ui/codeRender.ts) in a real monospace font, at the size chosen on the
+// phone. In the text view each code block is a one-line placeholder; a tap
+// opens the code view, a swipe or tap pages through it, and a double-tap
+// returns to the text.
+let codeBlocks: string[] = []
+type CodeView = { block: number; screen: number; screens: string[][]; metrics: CodeMetrics }
+let codeView: CodeView | null = null
+let drawing = false
+let drawAgain = false
+
+function withCodePlaceholders(text: string): string {
+  const blocks = splitAnswer(text)
+  if (!blocks.some(b => b.kind === 'code')) return text
+  const total = blocks.filter(b => b.kind === 'code').length
+  return blocks
+    .map(block => {
+      if (block.kind === 'text') return block.text
+      codeBlocks.push(block.text)
+      const n = codeBlocks.length
+      const lines = block.text.split('\n').length
+      return `[code${total > 1 ? ` ${n} of ${total}` : ''} - ${lines} lines - tap to view]`
+    })
+    .join('\n\n')
+}
+
+function viewBlock(block: number, screen: number): void {
+  const metrics = codeMetrics(CODE_FONT_PX[getCodeSize()])
+  const screens = codeScreens(layoutCode(codeBlocks[block], metrics.cols), metrics.rows)
+  codeView = { block, screen: Math.min(screen, screens.length - 1), screens, metrics }
+}
+
+async function drawCode(): Promise<void> {
+  if (drawing) {
+    drawAgain = true
+    return
+  }
+  drawing = true
+  try {
+    do {
+      drawAgain = false
+      const view = codeView
+      if (!view) return
+      const lines = view.screens[view.screen]
+      const first = view.screens.slice(0, view.screen).reduce((n, s) => n + s.length - 1, 0) + 1
+      const total = view.screens.reduce((n, s) => n + s.length, 0) - (view.screens.length - 1)
+      const where = codeBlocks.length > 1 ? `Code ${view.block + 1}/${codeBlocks.length} - ` : ''
+      const more = view.screen < view.screens.length - 1 ? 'swipe for more, ' : ''
+      const footer = `${where}lines ${first}-${first + lines.length - 1} of ${total} - ${more}double-tap for text`
+      await setTiles(await renderCodeTiles(lines, view.metrics, footer))
+    } while (drawAgain && codeView)
+  } finally {
+    drawing = false
+  }
+}
+
+function openCodeView(): void {
+  if (codeBlocks.length === 0) return
+  viewBlock(0, 0)
+  status(
+    `Jarvis: code view, ${getCodeSize()} (${codeView?.metrics.cols} x ${codeView?.metrics.rows})`,
+  )
+  requestRebuild(chatTool, () => void drawCode())
+}
+
+// Forward or back one screen, moving on to the next block at the end.
+function moveCode(delta: 1 | -1): void {
+  const view = codeView
+  if (!view) return
+  const next = view.screen + delta
+  if (next >= 0 && next < view.screens.length) {
+    view.screen = next
+  } else if (delta === 1 && view.block < codeBlocks.length - 1) {
+    viewBlock(view.block + 1, 0)
+  } else if (delta === -1 && view.block > 0) {
+    viewBlock(view.block - 1, Number.MAX_SAFE_INTEGER)
+  } else {
+    return
+  }
+  void drawCode()
+}
+
+function closeCodeView(): void {
+  if (!codeView) return
+  codeView = null
+  requestRebuild(chatTool, fillSection)
 }
 
 const STATUS_FRAMES = ['.', '..', '...']
@@ -491,6 +589,7 @@ export function isBusy(): boolean {
 }
 
 async function beginListening() {
+  codeView = null
   const mySession = ++sessionToken
   const viaWake = nextListenViaWake
   nextListenViaWake = false
@@ -858,6 +957,10 @@ function stopListeningIfAny() {
 // and a question still waiting on Gemini gets its "Thinking" counter back.
 function resume(): void {
   if (depth !== 'conversation') return
+  if (codeView) {
+    void drawCode()
+    return
+  }
   if (interrupted) {
     interrupted = false
     pages = []
@@ -886,6 +989,8 @@ function startIfPending(): void {
 // question is being recorded, transcribed or answered here. The shell
 // ignores the rebuild unless Jarvis is the page on screen.
 chatSessions.onChange(() => {
+  // Not under the code view: it shows the answer already on screen.
+  if (codeView) return
   const sessions = chatSessions.peek() ?? []
   if (depth === 'picker') {
     pickerSessions = sortForPicker(sessions)
@@ -916,6 +1021,10 @@ chatSessions.onChange(() => {
 // After a rebuild showed only rebuildSafe's start of a long section, put
 // the whole section up.
 function fillSection(): void {
+  if (codeView) {
+    void drawCode()
+    return
+  }
   if (depth !== 'conversation' || pages.length === 0 || listening) return
   const full = pages[pageIndex].text
   if (full !== rebuildSafe(full)) setContent(full)
@@ -934,7 +1043,7 @@ export const chatTool: Tool = {
   confirmPrompt: () =>
     depth === 'conversation' && !quickAsk ? 'Leave this conversation?' : 'Leave Jarvis?',
   beforeOpen: refresh,
-  contentKind: () => (depth === 'picker' ? 'list' : 'text'),
+  contentKind: () => (depth === 'picker' ? 'list' : codeView ? 'tiles' : 'text'),
   listItems: () => ['New chat', ...pickerSessions.map(s => pickerTitle(s.title))],
   onListSelect: index => {
     if (depth !== 'picker') return
@@ -1004,7 +1113,20 @@ export const chatTool: Tool = {
     publishScreen()
     return 'tool'
   },
-  onClose: stopListeningIfAny,
+  onClose: () => {
+    codeView = null
+    stopListeningIfAny()
+  },
+  onTap: () => {
+    if (depth !== 'conversation' || busy()) return
+    if (codeView) moveCode(1)
+    else openCodeView()
+  },
+  onBack: () => {
+    if (!codeView) return false
+    closeCodeView()
+    return true
+  },
   screenDetail,
   // The companion asking for the list or a saved conversation (G2-69).
   // Never on top of a recording, transcription or answer in progress -
@@ -1030,6 +1152,10 @@ export const chatTool: Tool = {
   // conversation is on screen - recording, transcribing, thinking - which
   // is exactly when pages is empty or a live status is running.
   onScroll: delta => {
+    if (codeView) {
+      moveCode(delta)
+      return
+    }
     if (depth !== 'conversation' || listening || stopActiveStatus !== null) return
     if (pages.length <= 1) return
     const now = Date.now()
