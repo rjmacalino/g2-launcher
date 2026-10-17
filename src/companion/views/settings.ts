@@ -230,13 +230,14 @@ function aiCard(ctx: AppContext): HTMLElement {
         ),
       ),
     )
+    const what = info.local ? 'PC address' : `${info.label} API key`
     const keyField = h('input', {
       class: 'field',
-      type: 'password',
-      placeholder: `${info.label} API key`,
+      type: info.local ? 'text' : 'password',
+      placeholder: info.local ? 'PC address, e.g. 192.168.1.20' : what,
       value: key ?? '',
       autocomplete: 'off',
-      'aria-label': `${info.label} API key`,
+      'aria-label': what,
     }) as HTMLInputElement
     const reveal = h(
       'button',
@@ -246,14 +247,14 @@ function aiCard(ctx: AppContext): HTMLElement {
     reveal.addEventListener('click', () => {
       keyField.type = keyField.type === 'password' ? 'text' : 'password'
     })
-    const save = h('button', { class: 'button primary' }, 'Save key')
+    const save = h('button', { class: 'button primary' }, info.local ? 'Save address' : 'Save key')
     save.addEventListener('click', async () => {
       const typed = keyField.value.trim()
       const ok = await setProviderKey(provider, typed)
       const readBack = await getProviderKey(provider)
       if (!ok) toast('Save failed - try again')
       else if (typed && readBack !== typed) toast('Saved, but it did not read back - try again')
-      else toast(typed ? `${info.label} key saved` : 'Key cleared')
+      else toast(typed ? `${what} saved` : 'Cleared')
       // The model pickers list only providers with a key.
       ctx.refresh()
     })
@@ -269,9 +270,11 @@ function aiCard(ctx: AppContext): HTMLElement {
       h(
         'p',
         { class: 'caption', style: 'margin: 12px 0' },
-        info.free
-          ? `${info.label} has a free tier (a daily limit per model). Its free tier may use what you send to improve Google's products.`
-          : `${info.label} is paid - billed by ${info.label} for what you use.${provider === 'deepseek' ? " It can't search the web, so it won't know about recent events." : ''}`,
+        info.local
+          ? 'Free and unlimited: a small model on your own PC, with Ollama installed. Works while this phone is on the same Wi-Fi as the PC. Less clever than the others, and no web search.'
+          : info.free
+            ? `${info.label} has a free tier (a daily limit per model). Its free tier may use what you send to improve Google's products.`
+            : `${info.label} is paid - billed by ${info.label} for what you use.${provider === 'deepseek' ? " It can't search the web, so it won't know about recent events." : ''}`,
       ),
       h('div', { class: 'key-row' }, keyField, reveal),
       h(
@@ -281,7 +284,7 @@ function aiCard(ctx: AppContext): HTMLElement {
         h(
           'a',
           { class: 'button', href: info.keyUrl, target: '_blank', rel: 'noopener' },
-          'Get a key',
+          info.local ? 'Get Ollama' : 'Get a key',
         ),
       ),
       h('div', { style: 'margin-top: 20px' }, label('Which model does what')),

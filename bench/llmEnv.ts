@@ -15,6 +15,8 @@ const KEY_VARS: Record<Provider, string> = {
   gemini: 'GEMINI_API_KEY',
   deepseek: 'DEEPSEEK_API_KEY',
   claude: 'ANTHROPIC_API_KEY',
+  // Not a key: the PC's address, e.g. localhost (G2-78).
+  local: 'LOCAL_LLM_ADDRESS',
 }
 
 function envFile(): Record<string, string> {

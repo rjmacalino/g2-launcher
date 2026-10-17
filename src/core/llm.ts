@@ -1,6 +1,6 @@
 import { converse as converseGemini } from './gemini'
 import type { ConverseOptions, LlmResult, LlmTurn } from './llmTypes'
-import { providerInfo, type LlmConfig } from './llmProviders'
+import { localEndpoint, providerInfo, type LlmConfig } from './llmProviders'
 
 // The one way Jarvis talks to an AI (G2-68): the same conversation and
 // options go to whichever provider the wearer chose on the companion page
@@ -15,6 +15,15 @@ export async function askModel(
     case 'deepseek': {
       const { converseDeepSeek } = await import('./deepseek')
       return converseDeepSeek(config.apiKey, config.model, turns, options)
+    }
+    case 'local': {
+      // The "key" for a local model is the PC's address (G2-78).
+      const { converseDeepSeek } = await import('./deepseek')
+      return converseDeepSeek('', config.model, turns, options, {
+        endpoint: localEndpoint(config.apiKey),
+        label: 'Your PC',
+        deepseek: false,
+      })
     }
     case 'claude': {
       const { converseClaude } = await import('./claude')

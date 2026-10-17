@@ -34,6 +34,13 @@ const ENDPOINT = 'https://api.deepseek.com/chat/completions'
 
 export const DEEPSEEK_MODELS = ['deepseek-flash', 'deepseek-v4-pro'] as const
 
+// Where the request goes. A model on the wearer's own PC (G2-78, Ollama)
+// speaks the same OpenAI-style format, so it shares this code with its own
+// address and no DeepSeek-only fields.
+export type ChatTarget = { endpoint: string; label: string; deepseek: boolean }
+
+const DEEPSEEK: ChatTarget = { endpoint: ENDPOINT, label: 'DeepSeek', deepseek: true }
+
 type ToolCallPiece = { id?: string; name: string; arguments: string }
 
 function requestBody(
@@ -41,6 +48,7 @@ function requestBody(
   turns: readonly LlmTurn[],
   options: ConverseOptions,
   stream: boolean,
+  deepseek: boolean,
 ): string {
   const functions = options.functions ?? []
   return JSON.stringify({
@@ -54,7 +62,7 @@ function requestBody(
     ],
     max_tokens: options.maxOutputTokens ?? DEFAULT_MAX_OUTPUT_TOKENS,
     stream,
-    thinking: { type: 'disabled' },
+    ...(deepseek ? { thinking: { type: 'disabled' } } : {}),
     ...(functions.length > 0
       ? {
           tools: functions.map(f => ({
@@ -146,16 +154,20 @@ export function foldDeepSeekChunk(
 }
 
 async function attempt(
+  target: ChatTarget,
   apiKey: string,
   model: string,
   turns: readonly LlmTurn[],
   options: ConverseOptions,
 ): Promise<LlmResult | { kind: 'http'; status: number }> {
   const stream = options.onText !== undefined
-  const response = await fetch(ENDPOINT, {
+  const response = await fetch(target.endpoint, {
     method: 'POST',
-    headers: { 'Content-Type': 'application/json', Authorization: `Bearer ${apiKey}` },
-    body: requestBody(model, turns, options, stream),
+    headers: {
+      'Content-Type': 'application/json',
+      ...(apiKey ? { Authorization: `Bearer ${apiKey}` } : {}),
+    },
+    body: requestBody(model, turns, options, stream, target.deepseek),
   })
   if (!response.ok) return { kind: 'http', status: response.status }
   if (!stream || !response.body) return parseDeepSeekReply(await response.json())
@@ -177,6 +189,7 @@ export async function converseDeepSeek(
   model: string,
   turns: readonly LlmTurn[],
   options: ConverseOptions = {},
+  target: ChatTarget = DEEPSEEK,
 ): Promise<LlmResult> {
   let lastErrorMessage = 'unknown error'
   for (let n = 1; n <= MAX_ATTEMPTS; n++) {
@@ -185,9 +198,9 @@ export async function converseDeepSeek(
       await delay(RETRY_DELAY_MS)
     }
     try {
-      const result = await attempt(apiKey, model, turns, options)
+      const result = await attempt(target, apiKey, model, turns, options)
       if (result.kind !== 'http') return result
-      lastErrorMessage = `DeepSeek returned ${result.status}`
+      lastErrorMessage = `${target.label} returned ${result.status}`
       if (isTransient(result.status) && n < MAX_ATTEMPTS) continue
       return { kind: 'error', message: lastErrorMessage }
     } catch (e) {

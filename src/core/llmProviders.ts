@@ -2,7 +2,7 @@
 // so the PC benchmark (bench/) can use it without the phone's storage,
 // which core/llmSettings.ts (the wearer's saved choices) needs.
 
-export type Provider = 'gemini' | 'deepseek' | 'claude'
+export type Provider = 'gemini' | 'deepseek' | 'claude' | 'local'
 
 // How a model trades speed for depth, as shown when picking one (G2-77).
 export type Speed = 'fastest' | 'fast' | 'smart' | 'smartest'
@@ -13,10 +13,20 @@ export type ProviderInfo = {
   id: Provider
   label: string
   free: boolean
+  // For 'local' the key field holds the PC's address instead.
+  local?: boolean
   // Fastest first.
   models: readonly ModelInfo[]
   keyUrl: string
 }
+
+// Small models that fit a 4 GB graphics card, as Ollama names them.
+const LOCAL_MODELS: readonly ModelInfo[] = [
+  // Cue benchmark: 2/6 right, about 3.4 s a cue.
+  { id: 'qwen2.5:3b', label: 'Qwen 2.5 3B', speed: 'fastest' },
+  // 3/6 right, about 4.1 s. Gemma 2 2B scored 4/6 but took about 10 s.
+  { id: 'llama3.2:3b', label: 'Llama 3.2 3B', speed: 'fast' },
+]
 
 // Model IDs as each provider documents them. Gemini's are the ones a free
 // key listed and answered with (models.list and a timed test request,
@@ -57,7 +67,28 @@ export const PROVIDERS: readonly ProviderInfo[] = [
     ],
     keyUrl: 'https://platform.claude.com/settings/keys',
   },
+  {
+    // A model running on the wearer's own PC with Ollama (G2-78): free and
+    // unlimited, but only while the phone can reach the PC. Timings are a
+    // GTX 1650 Ti (4 GB) laptop, bench/ cue run, 2026-10-18.
+    id: 'local',
+    label: 'Your PC',
+    free: true,
+    local: true,
+    models: LOCAL_MODELS,
+    keyUrl: 'https://ollama.com/download',
+  },
 ]
+
+// Ollama's OpenAI-compatible chat endpoint (docs.ollama.com/api/openai-
+// compatibility) on the address typed in, e.g. "192.168.1.20" or
+// "http://192.168.1.20:11434".
+export function localEndpoint(address: string): string {
+  let base = address.trim().replace(/\/+$/, '')
+  if (!/^https?:\/\//.test(base)) base = `http://${base}`
+  if (!/:\d+$/.test(base)) base = `${base}:11434`
+  return `${base}/v1/chat/completions`
+}
 
 export function providerInfo(id: Provider): ProviderInfo {
   return PROVIDERS.find(p => p.id === id) ?? PROVIDERS[0]

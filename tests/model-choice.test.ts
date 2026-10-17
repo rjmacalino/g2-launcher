@@ -43,3 +43,11 @@ describe('model per job (G2-77)', () => {
     expect(body.generationConfig.thinkingConfig).toEqual({ thinkingLevel: 'minimal' })
   })
 })
+
+describe('local model address (G2-78)', () => {
+  it('fills in the scheme and Ollama port when left out', async () => {
+    const { localEndpoint } = await import('../src/core/llmProviders')
+    expect(localEndpoint('192.168.1.20')).toBe('http://192.168.1.20:11434/v1/chat/completions')
+    expect(localEndpoint('http://pc.lan:8080/')).toBe('http://pc.lan:8080/v1/chat/completions')
+  })
+})
