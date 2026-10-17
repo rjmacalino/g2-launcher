@@ -9,7 +9,7 @@ import { isSilenceHallucination, stripNonSpeech } from '../../shared/transcript'
 import { createSegmenter, type Segment } from './segmenter'
 import { converse } from '../../core/gemini'
 import { getAboutMe, getApiKey } from '../../core/geminiSettings'
-import { conversationDigest } from '../../core/assistantContext'
+import { conversationDigest, saveConversation } from '../../core/assistantContext'
 import {
   CUE_INSTRUCTION,
   CUE_MAX_TOKENS,
@@ -18,6 +18,13 @@ import {
   transcriptForCue,
 } from './cues'
 import { getPrepNotes } from './settings'
+import {
+  SUMMARY_INSTRUCTION,
+  SUMMARY_MAX_TOKENS,
+  storedTranscript,
+  summaryRequest,
+  summaryTitle,
+} from './summary'
 
 // Jarvis Live (G2-65): the third Jarvis mode from docs/roadmap.md's Vision
 // - a better Conversate. While open, it listens to the conversation the
@@ -38,6 +45,10 @@ import { getPrepNotes } from './settings'
 // Cues (G2-66): below the transcript, one short line from Gemini when it
 // has something worth saying - see cues.ts for what it is told and when it
 // is asked. A tap asks for one right now.
+//
+// Ending it (G2-67) saves the conversation into Jarvis's history: a short
+// record written by Gemini, with the transcript behind it - see
+// summary.ts. Written in the background after the page has closed.
 
 export type LiveLine = { speaker: string; text: string; at: number }
 
@@ -170,10 +181,7 @@ async function askForCue(mySession: number) {
   }
   const askedAt = Date.now()
   policy.started(askedAt)
-  const background = [
-    prepNotes && `Prep notes from the wearer for this conversation: ${prepNotes}`,
-    conversationDigest(),
-  ]
+  const background = [prepNotesBackground(prepNotes), conversationDigest()]
     .filter(Boolean)
     .join('\n\n')
   try {
@@ -259,6 +267,64 @@ function stopRedraw() {
   redrawTimer = null
 }
 
+function prepNotesBackground(notes: string): string {
+  return notes ? `Prep notes from the wearer for this conversation: ${notes}` : ''
+}
+
+async function saveSession(
+  snapshot: readonly LiveLine[],
+  began: number,
+  key: string | null,
+  me: string | null,
+  notes: string,
+) {
+  let summary: string | null = null
+  if (key) {
+    status('Live: writing the conversation summary')
+    const reply = await converse(key, [{ role: 'user', text: summaryRequest(snapshot) }], {
+      instruction: SUMMARY_INSTRUCTION,
+      maxOutputTokens: SUMMARY_MAX_TOKENS,
+      aboutMe: me,
+      background: prepNotesBackground(notes),
+    })
+    if (reply.kind === 'answer') summary = reply.text.trim()
+    else if (reply.kind === 'error') status(`Live: summary failed (${reply.message})`)
+  }
+  const saved = await saveConversation({
+    title: summaryTitle(summary, began),
+    messages: [
+      {
+        role: 'user',
+        text: `Transcript of a conversation from Jarvis Live:\n${storedTranscript(snapshot)}`,
+        timestamp: began,
+      },
+      {
+        role: 'model',
+        text:
+          summary ??
+          'No summary - add a Gemini key in Jarvis on the companion page to get one next time.',
+        timestamp: Date.now(),
+      },
+    ],
+  })
+  status(
+    saved
+      ? `Live: conversation saved to Jarvis${summary ? ' with a summary' : ''}`
+      : 'Live: could not save the conversation',
+  )
+}
+
+// Leaving Live: stop listening at once, then save what was heard.
+function endSession() {
+  const snapshot = lines
+  const began = startedAt
+  const key = apiKey
+  const me = aboutMe
+  const notes = prepNotes
+  stopLive()
+  if (snapshot.length > 0) void saveSession(snapshot, began, key, me, notes)
+}
+
 function stopLive() {
   session++
   stopRedraw()
@@ -282,7 +348,7 @@ export const liveTool: Tool = {
   onOpen: () => {
     void startLive()
   },
-  onClose: stopLive,
+  onClose: endSession,
   // Ask for a cue now - "what do I say?" - instead of waiting for the next
   // question or timed check.
   onTap: () => {

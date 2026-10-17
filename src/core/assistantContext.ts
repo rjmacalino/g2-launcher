@@ -18,3 +18,26 @@ export function conversationDigest(): string {
     return ''
   }
 }
+
+// Saving a conversation into Jarvis's history from another feature -
+// Jarvis Live's end-of-conversation record (features/live/summary.ts).
+// Registered by app/main.ts, which knows Jarvis's store; same reason as
+// the digest above.
+export type SavedConversation = {
+  title: string
+  messages: { role: 'user' | 'model'; text: string; timestamp: number }[]
+}
+
+let saver: ((conversation: SavedConversation) => Promise<void>) | null = null
+
+export function registerConversationSaver(
+  fn: (conversation: SavedConversation) => Promise<void>,
+): void {
+  saver = fn
+}
+
+export async function saveConversation(conversation: SavedConversation): Promise<boolean> {
+  if (!saver) return false
+  await saver(conversation)
+  return true
+}

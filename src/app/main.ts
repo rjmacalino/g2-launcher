@@ -70,7 +70,8 @@ import { describeLists, notesActions } from '../features/notes/actions'
 import { notes } from '../features/notes/store'
 import { registerVoiceDispatch } from '../core/voiceDispatch'
 import { registerAssistantActions } from '../core/assistantActions'
-import { registerConversationDigest } from '../core/assistantContext'
+import { registerConversationDigest, registerConversationSaver } from '../core/assistantContext'
+import { newId } from '../platform/collection'
 import { buildDigest } from '../features/chat/digest'
 import { preload as preloadWhisper } from '../core/whisper'
 import { chatSessions } from '../features/chat/store'
@@ -790,6 +791,16 @@ registerVoiceDispatch(async transcript => {
 // Jarvis does: through the digest of saved chats, handed over here because
 // features never import each other.
 registerConversationDigest(() => buildDigest(chatSessions.peek() ?? [], null))
+// ...and a finished Jarvis Live conversation is saved into Jarvis's own
+// history, where the wearer can open it and ask about it.
+registerConversationSaver(conversation =>
+  chatSessions.save({
+    id: newId(),
+    title: conversation.title,
+    messages: conversation.messages,
+    updatedAt: Date.now(),
+  }),
+)
 
 registerAssistantActions({
   actions: [...notesActions, ...timerActions],

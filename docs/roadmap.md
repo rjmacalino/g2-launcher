@@ -411,7 +411,17 @@ then on hardware by RJ. Results go back into platform.md with a [HW] tag.
       cue and correctness on scripted conversations, including a trivia
       trap and a goodbye that should get NONE. Verified: unit tests, and
       the screen and tap in the simulator. Not verified: any real cue -
-      no Gemini key on the PC yet
+      no Gemini key on the PC yet.
+      G2-67, memory: ending Jarvis Live saves the conversation into
+      Jarvis's history (core/assistantContext.ts's saver, registered by
+      app/main.ts): Gemini writes a record of at most 120 words (who, what,
+      key points, promises, things to remember), stored as a Jarvis chat
+      titled with its first sentence, with the last 2,500 characters of
+      transcript behind it (Jarvis's store has one 20,000-character budget
+      for all chats). Jarvis's digest then carries it into later
+      questions. Without a key the transcript is still saved. Verified in
+      the simulator: saved and listed in Jarvis. Not verified: a real
+      summary (no key on the PC)
 - [ ] Photo viewer: album image on the glasses
 
 ## Decisions
