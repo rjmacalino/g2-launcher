@@ -277,7 +277,7 @@ then on hardware by RJ. Results go back into platform.md with a [HW] tag.
       documented in the simulator-automation skill), and the no-API-key
       fallback message all behave correctly; a real multi-turn exchange with
       an actual key has not been exercised yet - needs a real-hardware run
-- [ ] Live conversation captions ("Conversate"-inspired): continuously
+- [~] Live conversation captions ("Conversate"-inspired): continuously
       transcribe a conversation with another person and show live captions,
       not a command, distinct from both Jarvis (a command executor) and Chat
       (a deliberate, explicitly-asked conversation) - raised 2026-09-28 as
@@ -289,7 +289,18 @@ then on hardware by RJ. Results go back into platform.md with a [HW] tag.
       engine. AI cues/summarization (real Conversate's other half) needs an
       actual LLM - Gemini (now already integrated, see D4) could serve this
       too, revisiting what "a much lower-quality fully on-device one" would
-      have meant before that was resolved
+      have meant before that was resolved.
+      Restarted 2026-10-17 as the first step toward a Conversate-style
+      Jarvis (live captions, then AI cues, prep notes and a summary, in
+      that order). G2-59, the foundation: Whisper now runs in a Web Worker
+      (core/whisperWorker.ts) so inference stops blocking taps, the cause
+      found in G2-53. Whether the Even app's WebView allows module workers
+      is undocumented, so core/whisper.ts falls back to the main thread on
+      any worker failure and retries the recording there. Verified in the
+      simulator on the production build: transcription runs via the worker,
+      and with the worker deliberately broken it falls back cleanly. Not
+      verified on hardware: the status line after a recording ends in
+      "via worker" or "via main thread (reason)", which is the check
 - [ ] Photo viewer: album image on the glasses
 
 ## Decisions

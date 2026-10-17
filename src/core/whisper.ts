@@ -1,75 +1,139 @@
-// The on-device speech-to-text engine, confirmed working end to end by
-// Lab's "Whisper WASM init" probe (model load + inference both succeed in
-// this WebView). Lives in core/, not features/jarvis, because more than one
-// feature needs it (Jarvis's one-shot commands, Captions' running
-// transcript) and features/* modules never import each other in this
-// codebase - see core/rebuild.ts and core/voiceDispatch.ts for the same
-// reasoning applied to other cross-feature infrastructure. Each caller's own
-// service.ts still owns audio capture; this file's only job is turning
-// samples into text.
-const WHISPER_MODEL = 'Xenova/whisper-tiny.en'
+// The front door to on-device speech-to-text. Callers (core/voiceCapture.ts,
+// app/main.ts's startup preload) use transcribe() and preload() exactly as
+// before; what changed is where the work runs. This file tries to run the
+// engine (core/whisperEngine.ts) in a Web Worker (core/whisperWorker.ts)
+// so inference stops blocking taps and screen updates, and falls back to
+// running it right here on the main thread - the shape confirmed working
+// on real hardware since G2-49 - whenever the worker path fails.
+//
+// The fallback is not optional polish: whether the Even app's WebView
+// allows module workers at all, and whether Transformers.js can load its
+// model inside one there, are both unverified (nothing in the Even Hub
+// docs says either way). A worker that cannot start must never cost the
+// wearer their voice commands, so every way the worker path can fail
+// lands back on the main thread, and the one recording that hit it is
+// retried there rather than lost.
+import type { WorkerRequest, WorkerResponse } from './whisperWorker'
+import * as mainThread from './whisperEngine'
 
-function createPipeline() {
-  return import('@huggingface/transformers').then(({ pipeline }) =>
-    pipeline('automatic-speech-recognition', WHISPER_MODEL, { dtype: 'q8' }),
+// The worker script itself is small (the model is loaded later, on first
+// use), so a worker that has not said 'ready' by now is never going to.
+// Without this, a WebView that accepts `new Worker` but never runs it
+// would leave every recording stuck on "Transcribing" for good.
+const READY_TIMEOUT_MS = 10_000
+
+type Pending = {
+  audio: Float32Array
+  resolve: (text: string) => void
+  reject: (error: Error) => void
+}
+
+let worker: Worker | null = null
+let readyTimer: ReturnType<typeof setTimeout> | null = null
+// Set once, the first time the worker path fails, and never cleared: one
+// failure is taken to mean workers do not work in this WebView, so later
+// recordings go straight to the main thread instead of each one waiting
+// out the same failure again. The next app start tries the worker afresh.
+let fallbackReason: string | null = null
+const pending = new Map<number, Pending>()
+let nextId = 1
+
+function errorText(e: unknown): string {
+  return e instanceof Error ? e.message : String(e)
+}
+
+function fallBackToMainThread(reason: string) {
+  if (fallbackReason !== null) return
+  fallbackReason = reason
+  console.warn(`Whisper worker unavailable, using the main thread: ${reason}`)
+  if (readyTimer !== null) clearTimeout(readyTimer)
+  readyTimer = null
+  worker?.terminate()
+  worker = null
+  for (const [id, request] of pending) {
+    pending.delete(id)
+    mainThread.transcribe(request.audio).then(request.resolve, request.reject)
+  }
+}
+
+function handleMessage(message: WorkerResponse) {
+  if (message.kind === 'ready') {
+    if (readyTimer !== null) clearTimeout(readyTimer)
+    readyTimer = null
+    return
+  }
+  if (message.kind === 'loadFailed') {
+    fallBackToMainThread(`model load failed in worker: ${message.message}`)
+    return
+  }
+  const request = pending.get(message.id)
+  if (!request) return
+  pending.delete(message.id)
+  if (message.kind === 'done') request.resolve(message.text)
+  else request.reject(new Error(message.message))
+}
+
+// Started lazily, on the first preload() or transcribe(), and kept for the
+// app's lifetime - the same "load once" reasoning as the pipeline itself.
+function getWorker(): Worker | null {
+  if (fallbackReason !== null) return null
+  if (worker) return worker
+  try {
+    // Written exactly this way, inline, on purpose: Vite only recognises
+    // `new Worker(new URL('./file', import.meta.url))` as a worker and
+    // bundles the file as one. Moving the URL into a variable breaks that.
+    worker = new Worker(new URL('./whisperWorker.ts', import.meta.url), { type: 'module' })
+  } catch (e) {
+    fallBackToMainThread(`worker could not be created: ${errorText(e)}`)
+    return null
+  }
+  readyTimer = setTimeout(() => fallBackToMainThread('worker never started'), READY_TIMEOUT_MS)
+  worker.addEventListener('message', (event: MessageEvent<WorkerResponse>) =>
+    handleMessage(event.data),
   )
-}
-
-// Loaded once and kept for the app's lifetime, not once per voice command -
-// the load itself (downloading and initialising the model) takes real time,
-// confirmed by the Lab probe, and paying that cost on every single command
-// would make Jarvis unusable.
-let pipelinePromise: ReturnType<typeof createPipeline> | null = null
-
-function getPipeline() {
-  if (!pipelinePromise) pipelinePromise = createPipeline()
-  return pipelinePromise
-}
-
-// Called once at startup (see app/main.ts) so the model is hopefully already
-// loaded, or at least already in flight, by the time the wearer first opens
-// Jarvis. Not awaited there - a slow or failed load must not block startup,
-// and a real failure still surfaces later through transcribe() itself,
-// which is the call that actually needs to report it on screen.
-export function preload() {
-  getPipeline().catch(() => {})
-}
-
-// Serialized through a single queue: a caller with a running recording
-// (Jarvis) can have an interim transcribe() tick still in flight the moment
-// it wants a final one on double-press, and running two inference calls
-// against the same pipeline instance concurrently is not something ONNX
-// Runtime Web is known to handle safely here - found the hard way, as a
-// silent hang with no thrown error, rather than assumed up front. Every
-// caller now waits its turn instead.
-let queue: Promise<unknown> = Promise.resolve()
-
-// Whisper reads a fixed 30-second window. Without chunking, anything past
-// the first 30 seconds of a recording is silently dropped from the
-// transcript - harmless while recordings were capped at 15 seconds, a real
-// bug once they can run to three minutes (see core/voiceCapture.ts).
-// chunk_length_s splits long audio into 30-second windows; stride_length_s
-// overlaps them so a word straddling a boundary is not cut in half.
-const CHUNK_LENGTH_S = 30
-const STRIDE_LENGTH_S = 5
-
-async function runTranscribe(audio: Float32Array): Promise<string> {
-  const transcriber = await getPipeline()
-  const result = await transcriber(audio, {
-    chunk_length_s: CHUNK_LENGTH_S,
-    stride_length_s: STRIDE_LENGTH_S,
+  worker.addEventListener('error', event => {
+    // Handled here, so it must not also reach the page's global error
+    // handler (platform/bridge.ts), which would put a misleading "Error:"
+    // on the status line for something that has already been recovered.
+    event.preventDefault()
+    fallBackToMainThread(`worker error: ${event.message || 'script failed to load'}`)
   })
-  const first = Array.isArray(result) ? result[0] : result
-  return first?.text?.trim() ?? ''
+  worker.addEventListener('messageerror', () => {
+    fallBackToMainThread('worker could not read a message')
+  })
+  return worker
+}
+
+function send(target: Worker, request: WorkerRequest) {
+  target.postMessage(request)
+}
+
+// Called once at startup (see app/main.ts) so the model is hopefully
+// already loaded, or at least in flight, by the time the wearer first
+// speaks. Never throws and never needs awaiting - a failure surfaces later
+// through transcribe(), the call that actually reports it on screen.
+export function preload() {
+  const target = getWorker()
+  if (target) send(target, { kind: 'preload' })
+  else mainThread.preload()
 }
 
 export function transcribe(audio: Float32Array): Promise<string> {
-  const result = queue.then(() => runTranscribe(audio))
-  // Keeps the queue moving even if this call rejects - a failed transcribe
-  // must not permanently wedge every later call behind it.
-  queue = result.then(
-    () => undefined,
-    () => undefined,
-  )
-  return result
+  const target = getWorker()
+  if (!target) return mainThread.transcribe(audio)
+  return new Promise((resolve, reject) => {
+    const id = nextId++
+    pending.set(id, { audio, resolve, reject })
+    // Copied to the worker, not transferred: transferring would empty this
+    // side's copy of the samples, and the fallback above needs them to
+    // retry the recording on the main thread if the worker fails mid-way.
+    send(target, { kind: 'transcribe', id, audio })
+  })
+}
+
+// Which path transcription is taking, for the status line: on real
+// hardware this is the only way to find out whether workers work there.
+export function engineDescription(): string {
+  if (fallbackReason !== null) return `main thread (${fallbackReason})`
+  return worker ? 'worker' : 'not started'
 }

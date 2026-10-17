@@ -1,4 +1,5 @@
 import { cancel, start, stop } from '../../core/voiceCapture'
+import { engineDescription } from '../../core/whisper'
 import { dispatchVoiceCommand } from '../../core/voiceDispatch'
 import {
   assistantActionContext,
@@ -691,13 +692,15 @@ export async function finishListening() {
   }
 
   if (result.kind === 'error') {
-    status(`Jarvis: transcription failed (${result.message})`)
+    status(`Jarvis: transcription failed (${result.message}), via ${engineDescription()}`)
     setContent(`Didn't catch that (${result.message}).\n\nLong-press to try again.`)
     return
   }
 
   const question: ChatMessage = { role: 'user', text: result.transcript, timestamp: Date.now() }
-  status(`Jarvis: heard ${result.transcript.length} chars, audio level ${result.peak.toFixed(3)}`)
+  status(
+    `Jarvis: heard ${result.transcript.length} chars, audio level ${result.peak.toFixed(3)}, via ${engineDescription()}`,
+  )
 
   // Commands first, locally - a timer needs no network, no API key, and no
   // Gemini round trip (see the voice dispatch registered in app/main.ts).

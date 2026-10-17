@@ -47,8 +47,10 @@ const MAX_RECORD_MS = 180_000
 // end, with nothing running while the mic is open, is the version that was
 // actually confirmed working on real hardware (G2-49). True live captions
 // would need inference moved off the main thread (a Web Worker) to be safe
-// to run repeatedly during a recording - a real, separate piece of work,
-// not a tweak to this one.
+// to run repeatedly during a recording. G2-59 built that worker (see
+// core/whisper.ts), but it is not yet confirmed on real hardware, and it
+// still falls back to the main thread where workers fail - so this module
+// keeps the one-transcription-at-the-end shape until both are known.
 let chunks: Uint8Array[] = []
 let unsubscribe: (() => void) | null = null
 let safetyTimer: ReturnType<typeof setTimeout> | null = null
