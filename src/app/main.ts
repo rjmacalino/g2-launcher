@@ -39,7 +39,7 @@ import {
   stopStatusBar,
 } from './statusbar'
 import { registerRebuildHandler } from '../core/rebuild'
-import { setCurrentScreen } from '../core/currentScreen'
+import { onScreenRequest, publishToolScreen, setCurrentScreen } from '../core/currentScreen'
 import { persistScreen, readStoredScreen, type Screen } from './screen'
 import { TOOLS, TOOL_NAMES } from './registry'
 import type { Tool } from '../core/tool'
@@ -449,6 +449,37 @@ function toolContainers(index: number) {
 // the given tool is actually the one on screen right now, and not while a
 // leave prompt is open, so a background data update can never clobber
 // whatever the wearer is currently looking at or answering.
+// The companion page asking the glasses to go somewhere (G2-69): the phone
+// steers, the glasses follow, using the same navigation a gesture would -
+// so what the glasses end up showing is announced back through
+// setCurrentScreen exactly as if the wearer had done it on the glasses.
+// Overrides whatever the glasses were in the middle of, the leave prompt
+// and timer alert included: a choice made on the phone is deliberate.
+onScreenRequest(request => {
+  if (request.kind === 'menu') {
+    if (screen.kind !== 'menu' || confirming || alerting) returnToMenu()
+    return
+  }
+  const index = TOOLS.findIndex(t => t.name === request.name)
+  if (index < 0) return
+  const tool = TOOLS[index]
+  if (screen.kind === 'tool' && screen.index === index && !confirming && !alerting) {
+    if (tool.showDetail?.(request.detail, true)) {
+      bridge.rebuildPageContainer(new RebuildPageContainer(toolContainers(index))).then(ok => {
+        if (!ok) status(`Failed to update ${tool.name}`)
+        else tool.onContentReady?.()
+      })
+    }
+    publishToolScreen(tool)
+    return
+  }
+  tool.showDetail?.(request.detail, false)
+  // openTool does not close the outgoing tool (see enterJarvis).
+  activeTool()?.onClose?.()
+  screenBeforeJarvis = null
+  void openTool(index)
+})
+
 registerRebuildHandler(tool => {
   if (confirming || alerting) return
   if (screen.kind !== 'tool') return
@@ -591,7 +622,7 @@ async function openTool(index: number) {
       // republishes with its own detail from onOpen, and that has to be
       // the LAST write to land, not this one, or the companion would lose
       // the detail moment it was just given.
-      setCurrentScreen({ kind: 'tool', name: tool.name })
+      publishToolScreen(tool)
       // Started only after the page is on screen. Anything a tool does to the
       // content area needs the container to exist first.
       tool.onOpen?.()
@@ -713,7 +744,7 @@ if (restoredScreen && restoredScreen.kind === 'tool') {
     status(`Restored: ${tool.name}`)
     // Same ordering as openTool: baseline before onOpen, so a tool that
     // republishes its own detail from onOpen (Chat) has the last word.
-    setCurrentScreen({ kind: 'tool', name: tool.name })
+    publishToolScreen(tool)
     tool.onOpen?.()
   } else if (!beforeOpenResult.ok) {
     status(`Failed to restore ${tool.name}: ${beforeOpenResult.reason}`)

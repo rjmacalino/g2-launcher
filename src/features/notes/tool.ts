@@ -1,6 +1,13 @@
-import { notes as notesStore, NOTE_ITEM_MAX_CHARS, type ChecklistItem, type NoteDoc } from './store'
+import {
+  notes as notesStore,
+  onNotesChange,
+  NOTE_ITEM_MAX_CHARS,
+  type ChecklistItem,
+  type NoteDoc,
+} from './store'
 import { status } from '../../platform/bridge'
 import { requestRebuild } from '../../core/rebuild'
+import { publishToolScreen } from '../../core/currentScreen'
 import type { Tool } from '../../core/tool'
 
 // A checklist tool, not a text editor. Authoring is phone-only, same as
@@ -25,6 +32,38 @@ let currentNoteId: string | null = null
 
 function currentNote(): NoteDoc | null {
   return allNotes.find(n => n.id === currentNoteId) ?? null
+}
+
+// Where Notes is, for the companion page to follow (G2-69): which list is
+// open, if any. The companion opens that list's editor to match, and
+// asking for a list from the companion sends the same shape back.
+export type NotesScreenDetail = { noteId: string }
+
+function isNotesDetail(x: unknown): x is NotesScreenDetail {
+  return !!x && typeof x === 'object' && typeof (x as NotesScreenDetail).noteId === 'string'
+}
+
+// A list the companion asked for before Notes was open; refresh() opens
+// straight into it.
+let pendingNoteId: string | null = null
+
+// Watching for changes made elsewhere - the companion page, or Jarvis by
+// voice - while Notes is on screen, so the glasses never show a stale
+// list. Only rebuilds when what is on screen would actually differ, which
+// also means the glasses' own check-offs (already reflected in memory)
+// never cause a second, pointless rebuild.
+let stopWatching: (() => void) | null = null
+
+async function reloadFromStore(): Promise<void> {
+  const before = notesTool.listItems?.() ?? []
+  allNotes = (await notesStore.readAll()).sort((a, b) => b.updatedAt - a.updatedAt)
+  if (depth === 'checklist' && !currentNote()) {
+    depth = 'picker'
+    currentNoteId = null
+    publishToolScreen(notesTool)
+  }
+  const after = notesTool.listItems?.() ?? []
+  if (before.join('\n') !== after.join('\n')) requestRebuild(notesTool)
 }
 
 // Unchecked items first, in their stored order; done items after. Not
@@ -57,6 +96,11 @@ async function refresh(): Promise<void> {
   allNotes = (await notesStore.readAll()).sort((a, b) => b.updatedAt - a.updatedAt)
   depth = 'picker'
   currentNoteId = null
+  if (pendingNoteId && allNotes.some(n => n.id === pendingNoteId)) {
+    depth = 'checklist'
+    currentNoteId = pendingNoteId
+  }
+  pendingNoteId = null
 }
 
 export const notesTool: Tool = {
@@ -87,6 +131,7 @@ export const notesTool: Tool = {
       if (note) {
         currentNoteId = note.id
         depth = 'checklist'
+        publishToolScreen(notesTool)
       }
       return
     }
@@ -138,9 +183,43 @@ export const notesTool: Tool = {
     if (depth === 'checklist') {
       depth = 'picker'
       currentNoteId = null
+      publishToolScreen(notesTool)
       return 'tool'
     }
     return 'menu'
+  },
+  screenDetail: () =>
+    depth === 'checklist' && currentNoteId ? { noteId: currentNoteId } : undefined,
+  showDetail: (detail, isOpen) => {
+    const wanted = isNotesDetail(detail) ? detail.noteId : null
+    if (!isOpen) {
+      pendingNoteId = wanted
+      return false
+    }
+    if (wanted && !allNotes.some(n => n.id === wanted)) {
+      // A list made on the phone moments ago is not in this cache yet.
+      void notesStore.readAll().then(fresh => {
+        allNotes = fresh.sort((a, b) => b.updatedAt - a.updatedAt)
+        if (!allNotes.some(n => n.id === wanted)) return
+        depth = 'checklist'
+        currentNoteId = wanted
+        requestRebuild(notesTool)
+        publishToolScreen(notesTool)
+      })
+      return false
+    }
+    const changed = wanted !== currentNoteId || (wanted === null) !== (depth === 'picker')
+    depth = wanted ? 'checklist' : 'picker'
+    currentNoteId = wanted
+    return changed
+  },
+  onOpen: () => {
+    stopWatching?.()
+    stopWatching = onNotesChange(() => void reloadFromStore())
+  },
+  onClose: () => {
+    stopWatching?.()
+    stopWatching = null
   },
   // Never actually rendered: contentKind is always 'list' for this tool, and
   // initialContent only matters when contentKind is 'text'. Required by the

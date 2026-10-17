@@ -141,6 +141,19 @@ export type Tool = {
   // instead). Jarvis Live uses it to ask for a cue now.
   onTap?(): void
 
+  // Where inside this tool the wearer is, for the companion page to follow
+  // (core/currentScreen.ts) - which list, which conversation. The shell
+  // includes it every time it announces this tool is open, so the
+  // companion never briefly sees a less specific place first.
+  screenDetail?(): unknown
+
+  // The companion page asking for this tool at a particular place, in the
+  // same shape screenDetail returns (undefined: the tool's top level).
+  // isOpen false: the tool is about to be opened - set things up so the
+  // open lands there. isOpen true: it is already on screen - move there
+  // now, and return true if the page needs rebuilding to show it.
+  showDetail?(detail: unknown, isOpen: boolean): boolean
+
   // Long press while this tool is showing. The shell (app/main.ts) now
   // reserves plain long press globally to reach Jarvis from any screen -
   // see LONG_PRESS_EVENT there - so this only ever reaches a tool that the

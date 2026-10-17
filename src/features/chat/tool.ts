@@ -159,12 +159,44 @@ export type ChatScreenDetail =
 // this tool's own screen entry, after the shell's own generic baseline
 // publish (see app/main.ts's setCurrentScreen calls) - that ordering is
 // what stops the baseline from clobbering this richer detail.
+function screenDetail(): ChatScreenDetail {
+  return depth === 'picker'
+    ? { depth: 'picker' }
+    : { depth: 'conversation', sessionId: currentSessionId }
+}
+
 function publishScreen(): void {
-  const detail: ChatScreenDetail =
-    depth === 'picker'
-      ? { depth: 'picker' }
-      : { depth: 'conversation', sessionId: currentSessionId }
-  setCurrentScreen({ kind: 'tool', name: 'Jarvis', detail })
+  setCurrentScreen({ kind: 'tool', name: 'Jarvis', detail: screenDetail() })
+}
+
+// A saved conversation the companion page asked for before Jarvis was open
+// (G2-69); refresh() opens straight into it, to read, not to record.
+let openSessionId: string | null = null
+
+function isChatDetail(x: unknown): x is ChatScreenDetail {
+  return !!x && typeof x === 'object' && 'depth' in x
+}
+
+// Shows a saved conversation, or the list when id is null or unknown.
+function showSession(id: string | null): void {
+  const session = id ? (chatSessions.peek() ?? []).find(s => s.id === id) : undefined
+  pages = []
+  lastErrorQuestion = null
+  interrupted = false
+  quickAsk = false
+  listenWhenReady = false
+  if (!session) {
+    depth = 'picker'
+    currentSessionId = null
+    currentMessages = []
+    currentSessionTitle = null
+    pickerSessions = sortForPicker(chatSessions.peek() ?? [])
+    return
+  }
+  depth = 'conversation'
+  currentSessionId = session.id
+  currentMessages = session.messages
+  currentSessionTitle = session.title
 }
 
 // List containers have a firmware hard limit of 20 items (docs/platform.md).
@@ -220,6 +252,10 @@ async function refresh(): Promise<void> {
   pages = []
   const cached = chatSessions.peek()
   pickerSessions = sortForPicker(cached ?? [])
+  if (openSessionId) {
+    showSession(openSessionId)
+    openSessionId = null
+  }
   if (cached === null) {
     void chatSessions.readAll().then(loaded => {
       pickerSessions = sortForPicker(loaded)
@@ -961,6 +997,23 @@ export const chatTool: Tool = {
     return 'tool'
   },
   onClose: stopListeningIfAny,
+  screenDetail,
+  // The companion asking for the list or a saved conversation (G2-69).
+  // Never on top of a recording, transcription or answer in progress -
+  // switching would lose the question; the glasses stay put, and the
+  // companion follows them back.
+  showDetail: (detail, isOpen) => {
+    const wanted = isChatDetail(detail) && detail.depth === 'conversation' ? detail.sessionId : null
+    if (!isOpen) {
+      openSessionId = wanted
+      return false
+    }
+    if (busy()) return false
+    if (wanted === currentSessionId && (wanted !== null || depth === 'picker')) return false
+    syncPickerFromCurrent()
+    showSession(wanted)
+    return true
+  },
   onSuspend: stopListeningIfAny,
   onResume: resume,
   // Called only for a swipe at a page's top (-1) or bottom (1) edge - the
