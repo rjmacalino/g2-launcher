@@ -20,6 +20,8 @@ import {
   ABOUT_ME_MAX_CHARS,
 } from '../core/geminiSettings'
 import { chatSessions, type ChatSession } from '../features/chat/store'
+import { isWakeWordEnabled, setWakeWordEnabled } from '../core/wakeSettings'
+import { isWakeListening, wakeDescription } from '../core/wakeListener'
 import { type ChatScreenDetail } from '../features/chat/tool'
 import { onCurrentScreenChange, getCurrentScreen } from '../core/currentScreen'
 import { TOOL_NAMES } from '../app/registry'
@@ -179,6 +181,10 @@ async function renderJarvisSettings(statusMessage?: string) {
   if (!root) return
   const existingKey = await getGeminiApiKey()
   const existingAboutMe = await getAboutMe()
+  const wakeOn = await isWakeWordEnabled()
+  const wakeState = isWakeListening()
+    ? `Listening now: ${wakeDescription()}.`
+    : 'Not listening now.'
 
   root.innerHTML = `
     ${backButton()}
@@ -217,6 +223,16 @@ async function renderJarvisSettings(statusMessage?: string) {
       <div class="editor-actions">
         <button class="save-about-me">Save</button>
         <button class="cancel clear-about-me">Clear</button>
+      </div>
+      <p class="stub-body">
+        "Hey Jarvis": while this app is open on the glasses, Jarvis listens
+        for its name on the glasses microphone, the same as long-pressing.
+        The listening happens on this phone; nothing is recorded, stored or
+        sent anywhere until you say it. Turn it off to save battery.
+      </p>
+      <p class="jarvis-settings-status">${escapeHtml(wakeState)}</p>
+      <div class="editor-actions">
+        <button class="${wakeOn ? 'cancel ' : ''}toggle-wake">${wakeOn ? 'Turn off "Hey Jarvis"' : 'Turn on "Hey Jarvis"'}</button>
       </div>
     </div>
   `
@@ -266,6 +282,17 @@ async function renderJarvisSettings(statusMessage?: string) {
   root.querySelector('.clear-about-me')?.addEventListener('click', async () => {
     await setAboutMe('')
     await renderJarvisSettings('About You cleared.')
+  })
+
+  root.querySelector('.toggle-wake')?.addEventListener('click', async () => {
+    const ok = await setWakeWordEnabled(!wakeOn)
+    await renderJarvisSettings(
+      ok
+        ? wakeOn
+          ? '"Hey Jarvis" turned off.'
+          : '"Hey Jarvis" turned on.'
+        : 'Save failed - try again.',
+    )
   })
 }
 

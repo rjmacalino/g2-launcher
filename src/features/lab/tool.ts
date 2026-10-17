@@ -1,4 +1,4 @@
-import { AudioInputSource, OsEventTypeList } from '@evenrealities/even_hub_sdk'
+import { OsEventTypeList } from '@evenrealities/even_hub_sdk'
 import {
   IMAGE_MAX_HEIGHT,
   IMAGE_MAX_WIDTH,
@@ -13,6 +13,7 @@ import { drawAllBlack, drawTestPattern } from './test-pattern'
 import { drawWeatherIcon, WEATHER_ICON_CONDITIONS } from '../../ui/icons'
 import { ICON_SIZE } from '../../ui/tokens'
 import { liveListenContent, startLiveListen, stopLiveListen } from './liveListen'
+import { openMic } from '../../core/mic'
 import type { Tool } from '../../core/tool'
 
 // Dev-only: a menu of hardware probes for facts docs/platform.md marks
@@ -54,6 +55,14 @@ let partialUpdateCount = 0
 let micFrameCount = 0
 let micLastSpeaker = 'none yet'
 let micUnsubscribe: (() => void) | null = null
+let micRelease: (() => void) | null = null
+
+function stopMicProbe() {
+  micUnsubscribe?.()
+  micUnsubscribe = null
+  micRelease?.()
+  micRelease = null
+}
 
 let imuLast = { x: 0, y: 0, z: 0 }
 let imuUnsubscribe: (() => void) | null = null
@@ -189,17 +198,18 @@ const probes: readonly Probe[] = [
           `Frames: ${micFrameCount}\nLast speakerRole: ${micLastSpeaker}\n(long-press to stop)`,
         )
       })
-      bridge.audioControl(true, AudioInputSource.Glasses).then(ok => status(`Lab: mic on -> ${ok}`))
+      // speakerRole is on the raw event, which core/mic.ts does not pass
+      // on, so this listens to events itself above; the shared mic only
+      // keeps the mic on, without switching it off under "Hey Jarvis" after.
+      void openMic(() => {}).then(release => {
+        status(`Lab: mic on -> ${release !== null}`)
+        micRelease = release
+      })
     },
-    onClose: () => {
-      micUnsubscribe?.()
-      micUnsubscribe = null
-      bridge.audioControl(false)
-    },
+    onClose: stopMicProbe,
     onLongPress: () => {
-      micUnsubscribe?.()
-      micUnsubscribe = null
-      bridge.audioControl(false).then(ok => status(`Lab: mic off -> ${ok}`))
+      stopMicProbe()
+      status('Lab: mic probe stopped')
     },
   },
   {

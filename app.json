@@ -23,7 +23,7 @@
     },
     {
       "name": "g2-microphone",
-      "desc": "Records a short clip from the glasses microphone when you long-press to speak to Jarvis, so what you say can be recognised. Recording stops as soon as a result is ready; nothing is recorded otherwise."
+      "desc": "While the app is open, listens on the glasses microphone for \"Hey Jarvis\" (you can turn this off), and records what you say to Jarvis after it or after a long-press so it can be recognised. All listening happens on your phone; audio is never stored, and nothing is sent anywhere until you speak to Jarvis."
     }
   ],
   "supported_languages": ["en"]

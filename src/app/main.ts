@@ -80,7 +80,12 @@ import {
   prepareOpen as prepareJarvisOpen,
   isAtPicker as isJarvisAtPicker,
   onReturnRequested as onJarvisReturnRequested,
+  armWakeListen as armJarvisWakeListen,
+  isBusy as isJarvisBusy,
 } from '../features/chat/tool'
+import { startWakeListening, stopWakeListening } from '../core/wakeListener'
+import { isWakeWordEnabled, onWakeSettingChanged } from '../core/wakeSettings'
+import { micResumed, micSuspended } from '../core/mic'
 import { describeDuration, formatDuration } from '../shared/duration'
 
 // The shell. Owns which page is showing, builds pages, and routes input. It knows
@@ -477,6 +482,54 @@ function enterJarvis() {
   openTool(JARVIS_INDEX)
 }
 
+// A new Jarvis question from wherever the wearer is: the long-press
+// gesture, and "Hey Jarvis" (G2-64), which does exactly the same thing.
+// Inside Jarvis: on its list it opens a new conversation, staying in
+// Jarvis rather than treating the list as a screen to come back to; in a
+// conversation it asks the next question there (Jarvis's own onLongPress).
+// Anywhere else: a new conversation, handing back afterward.
+function askJarvis() {
+  if (screen.kind === 'tool' && screen.index === JARVIS_INDEX) {
+    if (isJarvisAtPicker()) {
+      prepareJarvisOpen('newChat')
+      openTool(JARVIS_INDEX)
+    } else {
+      activeTool()?.onLongPress?.()
+    }
+    return
+  }
+  enterJarvis()
+}
+
+// Foreground state, for whether "Hey Jarvis" may act: the mic is stopped
+// in the background anyway, but a wake already in flight from just before
+// must not open Jarvis on a page nobody is looking at.
+let inForeground = true
+
+// Never on top of something the wearer is in the middle of: a recording,
+// transcription or answer already under way (saying "Jarvis" inside a
+// question must not start a second one), the leave prompt, the timer
+// alert, or Lab, whose probes hold the mic for their own measurements.
+function canWake(): boolean {
+  return inForeground && !confirming && !alerting && activeTool()?.name !== 'Lab' && !isJarvisBusy()
+}
+
+function handleWake() {
+  status('Jarvis: heard "Hey Jarvis"')
+  armJarvisWakeListen()
+  askJarvis()
+}
+
+async function applyWakeSetting(enabled: boolean) {
+  if (!enabled) {
+    stopWakeListening()
+    status('"Hey Jarvis" is off')
+    return
+  }
+  const ok = await startWakeListening({ onWake: handleWake, canWake })
+  status(ok ? 'Listening for "Hey Jarvis"' : '"Hey Jarvis" could not start the microphone')
+}
+
 // Back to wherever the long-press into Jarvis came from - after a command
 // has run, or on leaving a conversation it started.
 function returnFromJarvis() {
@@ -799,6 +852,13 @@ onTimerExpired(showTimerAlert)
 // preload() itself already guarantees (see core/whisper.ts).
 preloadWhisper()
 
+// "Hey Jarvis" listening, unless turned off on the companion page, which
+// can also switch it on and off while the app runs.
+onWakeSettingChanged(enabled => void applyWakeSetting(enabled))
+void isWakeWordEnabled().then(enabled => {
+  if (enabled) void applyWakeSetting(true)
+})
+
 // Same idea for Jarvis's saved conversations: loaded once in the background
 // so opening Jarvis reads an in-memory copy instead of storage (see
 // features/chat/store.ts for why a storage read on that path is exactly
@@ -994,6 +1054,8 @@ const unsubscribe = bridge.onEvenHubEvent(event => {
   // screen on every page, so it gets corrected first. The active tool may have
   // had a subscription stopped under it by the OS.
   if (sysType === OsEventTypeList.FOREGROUND_ENTER_EVENT) {
+    inForeground = true
+    micResumed()
     startStatusBar()
     startWeather()
     resumeTimerTicking()
@@ -1003,6 +1065,8 @@ const unsubscribe = bridge.onEvenHubEvent(event => {
 
   // Going to background. Stop what the wearer cannot see.
   if (sysType === OsEventTypeList.FOREGROUND_EXIT_EVENT) {
+    inForeground = false
+    micSuspended()
     activeTool()?.onSuspend?.()
     stopStatusBar()
     stopWeather()
@@ -1065,15 +1129,8 @@ const unsubscribe = bridge.onEvenHubEvent(event => {
     const tool = activeTool()
     if (tool?.name === 'Lab') {
       tool.onLongPress?.()
-    } else if (screen.kind === 'tool' && screen.index === JARVIS_INDEX) {
-      if (isJarvisAtPicker()) {
-        prepareJarvisOpen('newChat')
-        openTool(JARVIS_INDEX)
-      } else {
-        tool?.onLongPress?.()
-      }
     } else {
-      enterJarvis()
+      askJarvis()
     }
     return
   }

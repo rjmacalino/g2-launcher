@@ -51,7 +51,8 @@ RJ's own words, condensed. A personal app, not for public release.
 2. Assistant, Siri/Alexa style: wakes on "Hey Jarvis" from anywhere in the
    launcher (like "Hey Even" on the native G2) and takes simple commands -
    timer, reminder, notes. Timer and notes by voice exist (D5); the wake
-   word, ending on silence instead of a tap, and timed reminders do not.
+   word and ending on silence exist (G2-63/64, simulator-verified); timed
+   reminders do not.
 3. Conversate, but better: listens to the conversation and helps in real
    time. RJ's complaint with the native one is that it gives trivia and
    often arrives late. Ours has to be personal (About You, notes, past
@@ -364,7 +365,25 @@ then on hardware by RJ. Results go back into platform.md with a [HW] tag.
       where a plain request works, core/gemini.ts stops trying it for the
       session. Covered by unit tests against a fake stream (split chunks,
       function calls, both fallbacks); not yet run against the real API
-      or on hardware. The benchmark now reports time to first words
+      or on hardware. The benchmark now reports time to first words.
+      G2-63/G2-64, "Hey Jarvis": openWakeWord's pipeline ported to
+      TypeScript (core/wakeWord.ts) with its official models bundled
+      (public/models/wake, non-commercial licence). bench/wake.ts: 20 of
+      20 right on Windows voices once detection needs 4 chunks in a row
+      ("Hey Charles" fooled a single chunk). Runs in a worker
+      (core/wakeWorker.ts, main-thread fallback) on audio from the new
+      shared mic (core/mic.ts), whenever the app is in the foreground and
+      Jarvis is not already busy. A wake does what a long-press does, but
+      the recording starts 1.5 s back (so "Hey Jarvis, set a timer" in
+      one breath keeps the command), drops "Hey Jarvis" from the
+      transcript, and ends by itself on silence (shared/endpoint.ts) - tap
+      still works. On by default; a switch on the companion page's Jarvis
+      settings turns it off. Verified in the simulator through the PC's
+      speakers and mic: wake, preroll, end, transcription via the worker.
+      Not verified on hardware: detection rate and false wakes on a real
+      voice, battery with the mic always on, the loudness thresholds
+      (status line reports "room" and "loudest" levels and near-miss
+      scores for tuning)
 - [ ] Photo viewer: album image on the glasses
 
 ## Decisions

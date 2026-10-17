@@ -1,5 +1,6 @@
 import { cancel, start, stop } from '../../core/voiceCapture'
 import { engineDescription } from '../../core/whisper'
+import { takePreroll } from '../../core/wakeListener'
 import { dispatchVoiceCommand } from '../../core/voiceDispatch'
 import {
   assistantActionContext,
@@ -459,8 +460,27 @@ function busy(): boolean {
   return listening || transcribing || waitingHere()
 }
 
+// Set by the shell just before "Hey Jarvis" opens or continues a
+// conversation (G2-64), consumed by the next beginListening: that
+// recording starts from the audio just before the wake word, ends by
+// itself when the wearer stops talking, and drops "Hey Jarvis" from the
+// transcript. A long-press recording is unchanged and ends on a tap.
+let nextListenViaWake = false
+
+export function armWakeListen(): void {
+  nextListenViaWake = true
+}
+
+// For the shell's "may Hey Jarvis start something now" check: never on top
+// of a recording, a transcription or a question still being answered.
+export function isBusy(): boolean {
+  return busy()
+}
+
 async function beginListening() {
   const mySession = ++sessionToken
+  const viaWake = nextListenViaWake
+  nextListenViaWake = false
   listening = true
   interrupted = false
   // A new recording means a new question, not a retry of the old one -
@@ -468,10 +488,28 @@ async function beginListening() {
   // longer what a tap should resend.
   lastErrorQuestion = null
   pages = []
-  const ok = await start(() => {
-    if (mySession !== sessionToken) return
-    finishListening()
-  })
+  const ok = await start(
+    () => {
+      if (mySession !== sessionToken) return
+      finishListening()
+    },
+    viaWake
+      ? {
+          preroll: takePreroll(),
+          stripWake: true,
+          // Every ending is transcribed, "no-speech" included: the loudness
+          // check misses quiet speech [LAB-SIM: speaker-to-mic speech at
+          // 2.5x the room level], and a command said in one breath with
+          // "Hey Jarvis" sits in the preroll it never looks at. Whisper is
+          // the real judge; with nothing but "Hey Jarvis" it fails as
+          // 'heard only "Hey Jarvis"'.
+          onEndpoint: () => {
+            if (mySession !== sessionToken || !listening) return
+            void finishListening()
+          },
+        }
+      : {},
+  )
   if (mySession !== sessionToken) return
   if (!ok) {
     listening = false
@@ -482,9 +520,10 @@ async function beginListening() {
   // Status-line breadcrumbs through the whole voice flow (here, on a tap,
   // on an interruption), so a report of "stuck" says exactly which step
   // it stopped at - see the companion page's status line.
-  status('Jarvis: recording')
+  status(viaWake ? 'Jarvis: recording (Hey Jarvis)' : 'Jarvis: recording')
+  const hint = viaWake ? '(stops when you do, or tap)' : '(tap when done)'
   startLiveStatus(mySession, (dots, elapsedSeconds) => {
-    setContent(`Listening${dots} (${elapsedSeconds}s)\n\n(tap when done)`)
+    setContent(`Listening${dots} (${elapsedSeconds}s)\n\n${hint}`)
   })
 }
 
@@ -731,7 +770,7 @@ export async function finishListening() {
 
   const question: ChatMessage = { role: 'user', text: result.transcript, timestamp: Date.now() }
   status(
-    `Jarvis: heard ${result.transcript.length} chars, audio level ${result.peak.toFixed(3)}, ${result.audioSeconds.toFixed(1)}s of audio in ${(result.transcribeMs / 1000).toFixed(1)}s via ${engineDescription()}`,
+    `Jarvis: heard ${result.transcript.length} chars, audio level ${result.peak.toFixed(3)}, ${result.audioSeconds.toFixed(1)}s of audio in ${(result.transcribeMs / 1000).toFixed(1)}s via ${engineDescription()}${result.levels === null ? '' : `, room ${result.levels.floor.toFixed(4)} loudest ${result.levels.loudest.toFixed(4)}`}`,
   )
 
   // Commands first, locally - a timer needs no network, no API key, and no

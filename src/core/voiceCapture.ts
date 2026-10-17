@@ -1,8 +1,8 @@
-import { AudioInputSource } from '@evenrealities/even_hub_sdk'
-import { bridge } from '../platform/bridge'
 import { transcribe } from './whisper'
+import { openMic } from './mic'
 import { SAMPLE_RATE, concat, toFloat32 } from '../shared/pcm'
-import { isSilenceHallucination, stripNonSpeech } from '../shared/transcript'
+import { isSilenceHallucination, stripNonSpeech, stripWakePhrase } from '../shared/transcript'
+import { createEndpointer, endsInSpeech, rmsLevel, type EndpointDecision } from '../shared/endpoint'
 
 // Browser SpeechRecognition looked available (Lab's presence-check probe
 // constructed it without throwing) but actually using it fails with
@@ -33,8 +33,24 @@ export type VoiceResult =
       peak: number
       audioSeconds: number
       transcribeMs: number
+      // The room's quiet level and the loudest moment as the end-of-speech
+      // detector saw them, for tuning it on hardware. Only for recordings
+      // that end on silence.
+      levels: { floor: number; loudest: number } | null
     }
   | { kind: 'error'; message: string }
+
+// How a recording started by "Hey Jarvis" differs from a long-press one
+// (G2-64). preroll: the audio from just before the wake word fired, so
+// words said straight after it are kept. onEndpoint: called once when the
+// wearer has stopped talking (or never started), so the caller can end the
+// recording without a tap. stripWake: remove "Hey Jarvis" from the start
+// of the transcript, since the preroll contains it.
+export type CaptureOptions = {
+  preroll?: readonly Uint8Array[]
+  onEndpoint?: (decision: Exclude<EndpointDecision, 'listening'>) => void
+  stripWake?: boolean
+}
 
 // Driven by the caller's own long-press-to-start / double-press-to-end
 // wiring (see app/main.ts for how each tool claims that gesture while it is
@@ -64,8 +80,19 @@ const MAX_RECORD_MS = 180_000
 // still falls back to the main thread where workers fail - so this module
 // keeps the one-transcription-at-the-end shape until both are known.
 let chunks: Uint8Array[] = []
-let unsubscribe: (() => void) | null = null
+let releaseMic: (() => void) | null = null
 let safetyTimer: ReturnType<typeof setTimeout> | null = null
+let options: CaptureOptions = {}
+let endpointer: ReturnType<typeof createEndpointer> | null = null
+// Bumped by every start and teardown, so audio from a recording that has
+// already ended never reaches the next one's endpointer.
+let captureToken = 0
+// How the end-of-speech detector ended the last recording, if it did.
+let endpointDecision: EndpointDecision | null = null
+
+function levelsOf(parts: readonly Uint8Array[]): number[] {
+  return parts.map(part => rmsLevel(toFloat32(part)))
+}
 
 // Starts capturing from the glasses mic. Resolves once capture has actually
 // started (or failed to). onSafetyTimeout fires once, MAX_RECORD_MS after
@@ -73,31 +100,51 @@ let safetyTimer: ReturnType<typeof setTimeout> | null = null
 // who never double-presses should still get the recording ended for them.
 // The caller's onSafetyTimeout is expected to call stop() itself, exactly
 // as it would on a real double-press.
-export async function start(onSafetyTimeout: () => void): Promise<boolean> {
-  chunks = []
-  unsubscribe = bridge.onEvenHubEvent(event => {
-    const audio = event.audioEvent
-    if (!audio || audio.source !== AudioInputSource.Glasses) return
-    chunks.push(audio.audioPcm)
+export async function start(
+  onSafetyTimeout: () => void,
+  captureOptions: CaptureOptions = {},
+): Promise<boolean> {
+  const myCapture = ++captureToken
+  options = captureOptions
+  chunks = [...(captureOptions.preroll ?? [])]
+  const onEndpoint = captureOptions.onEndpoint
+  const prerollLevels = levelsOf(captureOptions.preroll ?? [])
+  endpointer = onEndpoint
+    ? createEndpointer({
+        initialFloor: prerollLevels.length > 0 ? Math.min(...prerollLevels) : undefined,
+        alreadySpeaking: endsInSpeech(prerollLevels),
+      })
+    : null
+  let endpointReported = false
+  endpointDecision = null
+  const release = await openMic(pcm => {
+    if (myCapture !== captureToken) return
+    chunks.push(pcm)
+    if (!endpointer || !onEndpoint || endpointReported) return
+    const decision = endpointer.push(rmsLevel(toFloat32(pcm)))
+    if (decision === 'listening') return
+    endpointReported = true
+    endpointDecision = decision
+    onEndpoint(decision)
   })
-  const ok = await bridge.audioControl(true, AudioInputSource.Glasses)
-  if (!ok) {
-    unsubscribe?.()
-    unsubscribe = null
+  if (!release) return false
+  if (myCapture !== captureToken) {
+    release()
     return false
   }
+  releaseMic = release
   safetyTimer = setTimeout(onSafetyTimeout, MAX_RECORD_MS)
   return true
 }
 
 function teardownCapture() {
+  captureToken++
   if (safetyTimer !== null) {
     clearTimeout(safetyTimer)
     safetyTimer = null
   }
-  unsubscribe?.()
-  unsubscribe = null
-  bridge.audioControl(false)
+  releaseMic?.()
+  releaseMic = null
 }
 
 // Below this, the recording is digital silence - the microphone delivered
@@ -129,10 +176,20 @@ export async function stop(): Promise<VoiceResult> {
       return { kind: 'error', message: 'no sound picked up' }
     }
     const transcribeStart = performance.now()
-    const transcript = stripNonSpeech(await transcribe(audio))
+    const heard = stripNonSpeech(await transcribe(audio))
     const transcribeMs = Math.round(performance.now() - transcribeStart)
-    if (!transcript || isSilenceHallucination(transcript)) {
+    if (!heard || isSilenceHallucination(heard)) {
       return { kind: 'error', message: `heard nothing - audio level ${peak.toFixed(3)}` }
+    }
+    const transcript = options.stripWake ? stripWakePhrase(heard) : heard
+    if (!transcript) return { kind: 'error', message: 'heard only "Hey Jarvis"' }
+    // No speech after "Hey Jarvis", and Whisper did not hear "Hey Jarvis"
+    // in the preroll either: the audio was too faint to trust, and what came
+    // back is the kind of thing Whisper invents from near-silence ["Great
+    // job." from six quiet seconds in the simulator]. With the wake phrase
+    // heard, the audio was clear enough that the rest is real.
+    if (options.stripWake && endpointDecision === 'no-speech' && transcript === heard) {
+      return { kind: 'error', message: `no speech after "Hey Jarvis" (noise read as "${heard}")` }
     }
     return {
       kind: 'transcript',
@@ -140,6 +197,7 @@ export async function stop(): Promise<VoiceResult> {
       peak,
       audioSeconds: audio.length / SAMPLE_RATE,
       transcribeMs,
+      levels: endpointer ? { floor: endpointer.floor(), loudest: endpointer.loudest() } : null,
     }
   } catch (e) {
     return { kind: 'error', message: e instanceof Error ? e.message : String(e) }

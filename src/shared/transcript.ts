@@ -33,3 +33,17 @@ export function isSilenceHallucination(transcript: string): boolean {
     .trim()
   return SILENCE_HALLUCINATIONS.has(words)
 }
+
+// A recording started by "Hey Jarvis" keeps the audio from just before
+// the wake word fired (so words said straight after it are not lost), which
+// means the transcript starts with the wake phrase - and sometimes the
+// tail of whatever was said before it. Everything up to and including the
+// first wake phrase within the first few words is removed. Spellings are
+// what Whisper is likely to write for "Jarvis"; a transcript without one
+// comes back unchanged.
+const WAKE_PHRASE =
+  /^(?:\S+\s+){0,5}?(?:(?:hey|hi|ok|okay|hay|a)[\s,.!]*)?\b(?:jarvis|jarvas|jarvus|jarves|jervis|javis|charvis)\b[\s,.!?:;-]*/i
+
+export function stripWakePhrase(transcript: string): string {
+  return transcript.replace(WAKE_PHRASE, '').trim()
+}

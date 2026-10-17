@@ -156,6 +156,31 @@ Community apps solve it three ways:
 
 Keys must never ship in the package, it is extractable [DOCS].
 
+### Always-on listening and on-device models (learned building G2-59 to G2-64)
+
+- The SDK `console.log`s every event it receives, audio included, with no
+  switch to turn it off (its dist is obfuscated; found by reading it).
+  With the mic held open that is ten 3,200-sample events a second;
+  platform/bridge.ts filters just those lines out [LAB-SIM].
+- The simulator's microphone is the PC's own: Windows text-to-speech played
+  through the speakers reached the app as glasses audio, and woke "Hey
+  Jarvis" [LAB-SIM]. Speech heard that way sits only about 2x above the
+  room's level, far weaker than a voice at the glasses' mic, so it is a
+  poor place to tune loudness thresholds.
+- onnxruntime-web left to locate its own `.wasm` inside a module worker
+  under the Vite dev server got the HTML page back ("expected magic word
+  00 61 73 6d, found 3c 21 64 6f"); core/wakeEngine.ts sets
+  `ort.env.wasm.wasmPaths` from a `?url` import. Importing any entry other
+  than `onnxruntime-web/webgpu` (the one Transformers.js uses) adds a
+  second ~28 MB WASM file to the package [LAB-SIM].
+- Module workers run in the simulator's WebView, for both Whisper and the
+  wake word [LAB-SIM]. [UNVERIFIED] in the Even app's WebView on a phone;
+  both fall back to the main thread, and the companion page and status
+  line say which one is running.
+- Each audio event carries `speakerRole` (self, other, unknown), see above:
+  a possible way to tell the wearer from the person they are talking to,
+  for Conversate-style features. [UNVERIFIED] what it reports on hardware.
+
 ## 4. Lifecycle and background
 
 | Fact | Source |

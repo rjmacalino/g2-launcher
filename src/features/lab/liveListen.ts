@@ -1,7 +1,7 @@
-import { AudioInputSource } from '@evenrealities/even_hub_sdk'
 import { bridge, status } from '../../platform/bridge'
 import { setContent } from '../../platform/page'
 import { engineDescription, transcribe } from '../../core/whisper'
+import { openMic } from '../../core/mic'
 import { SAMPLE_RATE, bytesToSeconds, concat, toFloat32 } from '../../shared/pcm'
 import { createFrameTracker } from '../../shared/frameGaps'
 import { isSilenceHallucination, stripNonSpeech } from '../../shared/transcript'
@@ -207,13 +207,16 @@ export function startLiveListen() {
     error: null,
   }
   session = s
-  unsubscribe = bridge.onEvenHubEvent(event => {
-    const audio = event.audioEvent
-    if (audio && audio.source === AudioInputSource.Glasses) onAudio(s, audio.audioPcm)
-  })
-  bridge.audioControl(true, AudioInputSource.Glasses).then(ok => {
-    status(`Lab live: mic on -> ${ok}`)
-    if (!ok && s.token === session?.token) s.error = 'mic did not start'
+  // Through the shared mic (core/mic.ts), so stopping this probe does not
+  // switch the mic off under "Hey Jarvis".
+  void openMic(pcm => onAudio(s, pcm)).then(release => {
+    status(`Lab live: mic on -> ${release !== null}`)
+    if (s.token !== session?.token) {
+      release?.()
+      return
+    }
+    if (release) unsubscribe = release
+    else s.error = 'mic did not start'
   })
   redrawTimer = setInterval(() => {
     const at = Date.now()
@@ -240,7 +243,6 @@ export function stopLiveListen(showResult = true) {
   batteryTimer = null
   unsubscribe?.()
   unsubscribe = null
-  bridge.audioControl(false)
   const result = summary(s)
   status(result)
   lastScreen = `Stopped.\n${render(s).split('\n').slice(0, -1).join('\n')}`
