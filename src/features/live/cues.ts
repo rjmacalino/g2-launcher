@@ -59,7 +59,7 @@ const MAX_CUE_CHARS = 90
 export function parseCue(reply: string): string | null {
   let text = reply.trim().replace(/\s+/g, ' ')
   text = text.replace(/^(cue|jarvis)\s*:\s*/i, '')
-  text = text.replace(/^["'“‘]+|["'”’]+$/g, '').trim()
+  text = text.replace(/^["'\u201c\u2018]+|["'\u201d\u2019]+$/g, '').trim()
   if (!text || /^none\b/i.test(text) || /^n\/a$/i.test(text)) return null
   if (text.length > MAX_CUE_CHARS) text = `${text.slice(0, MAX_CUE_CHARS - 3).trimEnd()}...`
   return text

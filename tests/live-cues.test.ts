@@ -16,6 +16,10 @@ describe('parseCue', () => {
     expect(parseCue('Cue: Use a hash map, one pass, O(n)')).toBe('Use a hash map, one pass, O(n)')
   })
 
+  it('strips curly quotes too', () => {
+    expect(parseCue('\u201cAsk about her team\u201d')).toBe('Ask about her team')
+  })
+
   it('keeps a cue that merely starts with a word like "nonetheless"', () => {
     expect(parseCue('Nonetheless, mention the March deadline')).toBe(
       'Nonetheless, mention the March deadline',
