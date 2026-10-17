@@ -570,6 +570,15 @@ textarea.field {
   max-width: 100%;
 }
 
+.sources {
+  color: var(--color-text-dim);
+  font-size: 12px;
+}
+
+.sources a {
+  color: inherit;
+}
+
 .prose {
   white-space: pre-wrap;
 }

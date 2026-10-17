@@ -12,6 +12,9 @@ export type ChatMessage = {
   role: 'user' | 'model'
   text: string
   timestamp: number
+  // Web pages an answer drew on, when the AI searched (G2-76). Shown on
+  // the phone; the glasses show only the answer.
+  sources?: { title: string; url: string }[]
 }
 
 export type ChatSession = {

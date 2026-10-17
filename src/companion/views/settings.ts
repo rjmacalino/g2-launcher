@@ -223,7 +223,7 @@ function aiCard(ctx: AppContext): HTMLElement {
         { class: 'caption', style: 'margin: 12px 0' },
         info.free
           ? `${info.label} has a free tier. Its free tier may use what you send to improve Google's products.`
-          : `${info.label} is paid - billed by ${info.label} for what you use.`,
+          : `${info.label} is paid - billed by ${info.label} for what you use.${provider === 'deepseek' ? " It can't search the web, so it won't know about recent events." : ''}`,
       ),
       modelSelect,
       h('div', { class: 'key-row', style: 'margin-top: 8px' }, keyField, reveal),

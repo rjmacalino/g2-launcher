@@ -144,12 +144,28 @@ function answerBody(text: string): (HTMLElement | string)[] {
   )
 }
 
+// Where a searched answer came from (G2-76): page titles, each opening
+// the page.
+function sources(message: ChatMessage): HTMLElement | null {
+  if (!message.sources || message.sources.length === 0) return null
+  return h(
+    'div',
+    { class: 'sources' },
+    'Sources: ',
+    ...message.sources.flatMap((source, i) => [
+      i > 0 ? ' - ' : '',
+      h('a', { href: source.url, target: '_blank', rel: 'noopener' }, source.title),
+    ]),
+  )
+}
+
 function bubble(message: ChatMessage): HTMLElement[] {
   return [
     h(
       'div',
       { class: `bubble ${message.role}${message.role === 'model' ? ' rich' : ''}` },
       ...(message.role === 'model' ? answerBody(message.text) : [message.text]),
+      sources(message),
     ),
     h('div', { class: `bubble-meta ${message.role}` }, formatWhen(message.timestamp)),
   ]

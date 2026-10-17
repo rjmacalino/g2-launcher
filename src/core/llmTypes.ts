@@ -50,8 +50,11 @@ export type FunctionCall = { name: string; args: Record<string, unknown> }
 // text that came alongside them is dropped on purpose: the confirmation
 // shown is written from what the action actually did, not from what the
 // model expected it to do.
+// A web page an answer drew on, when the AI searched (G2-76).
+export type Source = { title: string; url: string }
+
 export type LlmResult =
-  | { kind: 'answer'; text: string }
+  | { kind: 'answer'; text: string; sources?: Source[] }
   | { kind: 'actions'; calls: FunctionCall[] }
   | { kind: 'error'; message: string }
 
@@ -96,6 +99,11 @@ export type ConverseOptions = {
   // output_config.effort); the others ignore it. Live's cues ask for
   // 'low' because a late cue is a useless cue.
   effort?: 'low' | 'medium' | 'high'
+  // Let the AI search the web when a question needs it (G2-76): Google
+  // Search grounding on Gemini, Anthropic's web search on Claude. DeepSeek
+  // has no search of its own and ignores this. The model decides whether
+  // to search; most questions do not need it.
+  webSearch?: boolean
 }
 
 // Only added when there are functions to call. Function descriptions alone

@@ -11,6 +11,7 @@ import {
   type FunctionDeclaration,
   type FunctionSchema,
   type LlmResult,
+  type Source,
   type LlmTurn,
 } from './llmTypes'
 import { parseSseEvents } from '../shared/sse'
@@ -80,7 +81,16 @@ function requestBody(
   systemInstruction: string,
   functions: readonly FunctionDeclaration[],
   maxOutputTokens: number,
+  webSearch: boolean,
 ): string {
+  const tools = [
+    ...(functions.length > 0 ? [{ functionDeclarations: functions }] : []),
+    // Google Search grounding (G2-76), the Tool field from the
+    // generateContent reference. Google's grounding guide says Gemini 3
+    // models can use it alongside function calling; if this endpoint
+    // refuses the pair anyway, converse() drops search (searchRefused).
+    ...(webSearch ? [{ googleSearch: {} }] : []),
+  ]
   return JSON.stringify({
     contents: turns.map(turn => ({ role: turn.role, parts: [{ text: turn.text }] })),
     systemInstruction: {
@@ -90,7 +100,7 @@ function requestBody(
     // chooses between a function call or a natural language response",
     // which is exactly the behaviour wanted - a question gets an answer,
     // a request gets an action.
-    ...(functions.length > 0 ? { tools: [{ functionDeclarations: functions }] } : {}),
+    ...(tools.length > 0 ? { tools } : {}),
     generationConfig: {
       maxOutputTokens,
       // gemini-3.8-flash "thinks" before answering, and that thinking
@@ -117,6 +127,10 @@ function requestBody(
 // here (the WebView, a proxy, the endpoint), so later questions skip
 // straight to the request known to work instead of failing first each time.
 let streamingBroken = false
+
+// Set when Gemini refuses a request because of the search tool: later
+// questions go without it instead of failing first every time.
+let searchRefused = false
 
 type Attempt = { kind: 'reply'; data: unknown } | { kind: 'http'; status: number }
 
@@ -196,7 +210,10 @@ export async function converse(
   options: ConverseOptions = {},
 ): Promise<GeminiResult> {
   const { onRetry, functions = [], onText, maxOutputTokens = DEFAULT_MAX_OUTPUT_TOKENS } = options
-  const body = requestBody(turns, buildSystemPrompt(options), functions, maxOutputTokens)
+  let search = options.webSearch === true && !searchRefused
+  const build = () =>
+    requestBody(turns, buildSystemPrompt(options), functions, maxOutputTokens, search)
+  let body = build()
 
   let lastErrorMessage = 'unknown error'
   for (let attempt = 1; attempt <= MAX_ATTEMPTS; attempt++) {
@@ -207,6 +224,16 @@ export async function converse(
     try {
       const result = await attemptOnce(apiKey, body, onText)
       if (result.kind === 'http') {
+        // A bad request with search on: most likely search is what this
+        // model or key will not take. Ask again without it, and stop
+        // offering it for the rest of the session.
+        if (result.status === 400 && search) {
+          searchRefused = true
+          search = false
+          body = build()
+          attempt--
+          continue
+        }
         lastErrorMessage = `Gemini returned ${result.status}`
         if (isTransient(result.status) && attempt < MAX_ATTEMPTS) continue
         return { kind: 'error', message: lastErrorMessage }
@@ -247,7 +274,41 @@ function chunkText(chunk: unknown): string {
 // read - so a streamed reply ends in exactly the same result as a plain
 // one, function calls included. Exported for tests.
 export function mergeStreamChunks(chunks: readonly unknown[]): unknown {
-  return { candidates: [{ content: { parts: chunks.flatMap(partsOf) } }] }
+  // Search sources arrive on one of the chunks, usually the last.
+  let groundingMetadata: unknown
+  for (const chunk of chunks) {
+    if (!isRecord(chunk) || !Array.isArray(chunk.candidates)) continue
+    const candidate: unknown = chunk.candidates[0]
+    if (isRecord(candidate) && isRecord(candidate.groundingMetadata)) {
+      groundingMetadata = candidate.groundingMetadata
+    }
+  }
+  return {
+    candidates: [
+      {
+        content: { parts: chunks.flatMap(partsOf) },
+        ...(groundingMetadata ? { groundingMetadata } : {}),
+      },
+    ],
+  }
+}
+
+// The pages a searched answer drew on: groundingMetadata.groundingChunks
+// with web { uri, title }, at most three, one per title.
+function sourcesOf(candidate: Record<string, unknown>): Source[] {
+  const metadata = candidate.groundingMetadata
+  if (!isRecord(metadata) || !Array.isArray(metadata.groundingChunks)) return []
+  const sources: Source[] = []
+  for (const chunk of metadata.groundingChunks) {
+    if (!isRecord(chunk) || !isRecord(chunk.web)) continue
+    const { uri, title } = chunk.web
+    if (typeof uri !== 'string') continue
+    const name = typeof title === 'string' && title ? title : uri
+    if (sources.some(s => s.title === name)) continue
+    sources.push({ title: name, url: uri })
+    if (sources.length === 3) break
+  }
+  return sources
 }
 
 // Reads candidates[0].content.parts without trusting the exact shape - this
@@ -282,5 +343,7 @@ export function parseReply(data: unknown): GeminiResult {
   }
   if (calls.length > 0) return { kind: 'actions', calls }
   const text = texts.join('').trim()
-  return text.length > 0 ? { kind: 'answer', text } : empty
+  if (text.length === 0) return empty
+  const sources = sourcesOf(first)
+  return sources.length > 0 ? { kind: 'answer', text, sources } : { kind: 'answer', text }
 }

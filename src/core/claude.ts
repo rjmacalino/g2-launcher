@@ -7,6 +7,7 @@ import {
   type FunctionCall,
   type LlmResult,
   type LlmTurn,
+  type Source,
 } from './llmTypes'
 
 // Claude as Jarvis's model (G2-68), a paid option next to Gemini's free
@@ -44,6 +45,35 @@ const CLAUDE_MAX_TOKENS = 16000
 // and dropped connections on its own).
 const MAX_PARSE_RETRIES = 1
 
+// Web search (G2-76), Anthropic's server tool: the newer version with
+// dynamic filtering on the models the claude-api skill lists for it, the
+// basic one otherwise (Haiku). Three searches at most per question.
+const DYNAMIC_SEARCH_MODELS = new Set(['claude-opus-5-5', 'claude-sonnet-5-5'])
+const MAX_SEARCHES = 3
+// A turn using a server tool can pause ("pause_turn") and is resumed by
+// sending it back as it is; a couple of resumes covers a few searches.
+const MAX_RESUMES = 2
+
+function searchTool(model: string) {
+  return DYNAMIC_SEARCH_MODELS.has(model)
+    ? { type: 'web_search_20260209' as const, name: 'web_search' as const, max_uses: MAX_SEARCHES }
+    : { type: 'web_search_20250305' as const, name: 'web_search' as const, max_uses: MAX_SEARCHES }
+}
+
+// The pages the search results came from, at most three.
+function sourcesOf(content: readonly Anthropic.Beta.BetaContentBlock[]): Source[] {
+  const sources: Source[] = []
+  for (const block of content) {
+    if (block.type !== 'web_search_tool_result' || !Array.isArray(block.content)) continue
+    for (const result of block.content) {
+      if (sources.some(s => s.url === result.url)) continue
+      sources.push({ title: result.title || result.url, url: result.url })
+      if (sources.length === 3) return sources
+    }
+  }
+  return sources
+}
+
 export async function converseClaude(
   apiKey: string,
   model: string,
@@ -53,63 +83,74 @@ export async function converseClaude(
   const client = new Anthropic({ apiKey, dangerouslyAllowBrowser: true })
   const functions = options.functions ?? []
   const withFallback = FALLBACK_MODELS.has(model)
+  const tools = [
+    ...functions.map(f => ({
+      name: f.name,
+      description: f.description,
+      input_schema: toJsonSchema(f.parameters) as Anthropic.Beta.BetaTool.InputSchema,
+      eager_input_streaming: true,
+    })),
+    ...(options.webSearch ? [searchTool(model)] : []),
+  ]
 
   for (let parseRetries = 0; ; parseRetries++) {
     let text = ''
+    const messages: Anthropic.Beta.BetaMessageParam[] = turns.map(turn => ({
+      role: turn.role === 'model' ? ('assistant' as const) : ('user' as const),
+      content: turn.text,
+    }))
+    const content: Anthropic.Beta.BetaContentBlock[] = []
     try {
-      const stream = client.beta.messages.stream({
-        model,
-        max_tokens: CLAUDE_MAX_TOKENS,
-        system: buildSystemPrompt(options),
-        messages: turns.map(turn => ({
-          role: turn.role === 'model' ? ('assistant' as const) : ('user' as const),
-          content: turn.text,
-        })),
-        ...(options.effort ? { output_config: { effort: options.effort } } : {}),
-        ...(functions.length > 0
-          ? {
-              tools: functions.map(f => ({
-                name: f.name,
-                description: f.description,
-                input_schema: toJsonSchema(f.parameters) as Anthropic.Beta.BetaTool.InputSchema,
-                eager_input_streaming: true,
-              })),
-            }
-          : {}),
-        ...(withFallback
-          ? { betas: ['server-side-fallback-2026-07-01'], fallbacks: 'default' as const }
-          : {}),
-      })
-      stream.on('text', delta => {
-        text += delta
-        options.onText?.(text)
-      })
-      const message = await stream.finalMessage()
+      for (let resumes = 0; ; resumes++) {
+        const stream = client.beta.messages.stream({
+          model,
+          max_tokens: CLAUDE_MAX_TOKENS,
+          system: buildSystemPrompt(options),
+          messages,
+          ...(options.effort ? { output_config: { effort: options.effort } } : {}),
+          ...(tools.length > 0 ? { tools } : {}),
+          ...(withFallback
+            ? { betas: ['server-side-fallback-2026-07-01'], fallbacks: 'default' as const }
+            : {}),
+        })
+        stream.on('text', delta => {
+          text += delta
+          options.onText?.(text)
+        })
+        const message = await stream.finalMessage()
+        content.push(...message.content)
 
-      if (message.stop_reason === 'refusal') {
-        return { kind: 'error', message: 'Claude declined to answer this' }
-      }
-      const calls: FunctionCall[] = []
-      const texts: string[] = []
-      for (const block of message.content) {
-        if (block.type === 'tool_use') {
-          calls.push({ name: block.name, args: isRecord(block.input) ? block.input : {} })
-        } else if (block.type === 'text') {
-          texts.push(block.text)
+        if (message.stop_reason === 'refusal') {
+          return { kind: 'error', message: 'Claude declined to answer this' }
         }
-      }
-      if (calls.length > 0) {
-        // A tool input cut off by the token limit can still parse; never
-        // run a half-written call.
-        if (message.stop_reason === 'max_tokens') {
-          return { kind: 'error', message: 'reply cut off' }
+        if (message.stop_reason === 'pause_turn' && resumes < MAX_RESUMES) {
+          messages.push({ role: 'assistant', content: message.content })
+          continue
         }
-        return { kind: 'actions', calls }
+        const calls: FunctionCall[] = []
+        const texts: string[] = []
+        for (const block of content) {
+          if (block.type === 'tool_use') {
+            calls.push({ name: block.name, args: isRecord(block.input) ? block.input : {} })
+          } else if (block.type === 'text') {
+            texts.push(block.text)
+          }
+        }
+        if (calls.length > 0) {
+          // A tool input cut off by the token limit can still parse; never
+          // run a half-written call.
+          if (message.stop_reason === 'max_tokens') {
+            return { kind: 'error', message: 'reply cut off' }
+          }
+          return { kind: 'actions', calls }
+        }
+        const answer = texts.join('').trim()
+        if (!answer) return { kind: 'error', message: 'empty response' }
+        const sources = sourcesOf(content)
+        return sources.length > 0
+          ? { kind: 'answer', text: answer, sources }
+          : { kind: 'answer', text: answer }
       }
-      const answer = texts.join('').trim()
-      return answer
-        ? { kind: 'answer', text: answer }
-        : { kind: 'error', message: 'empty response' }
     } catch (e) {
       if (e instanceof Anthropic.AuthenticationError) {
         return { kind: 'error', message: 'Claude rejected the API key' }

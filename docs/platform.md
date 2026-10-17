@@ -193,6 +193,20 @@ a canvas in any font and size and send it as images - G2-73's code view
 uses four 288 x 124 tiles covering the content area, a full redraw taking
 about half a second [LAB-SIM].
 
+### Web search (G2-76)
+
+Gemini: Google Search grounding, a `googleSearch` Tool next to the
+function declarations in generateContent; sources arrive in
+`candidates[0].groundingMetadata.groundingChunks[].web {uri, title}`.
+Google's grounding guide says Gemini 3 models can combine it with
+function calling; core/gemini.ts drops it for the session if a request
+with it is refused (400). Free: 5,000 searches a month, then billed per
+search query on Gemini 3 models. Google's terms ask apps to show the
+returned Search Suggestions (`searchEntryPoint`) - not shown here; needed
+before any public release. Claude: Anthropic's server tool,
+`web_search_20260209` on Opus/Sonnet 5.5, `web_search_20250305` on Haiku.
+DeepSeek: no search. [UNVERIFIED with a real key for all three.]
+
 ### Gemini free tier, measured (2026-10-17)
 
 `gemini-3.8-flash` on the free tier allows **20 requests per day per

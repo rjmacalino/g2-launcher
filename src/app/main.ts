@@ -50,7 +50,10 @@ import {
   onUpdate as onWeatherUpdate,
   start as startWeather,
   stop as stopWeather,
+  getDaily as getDailyWeather,
 } from '../features/weather/service'
+import { CONDITION_LABELS, currentConditionWord } from '../features/weather/conditions'
+import { parseQuickQuestion, type QuickQuestion } from '../shared/quickQuestions'
 import {
   getTimer,
   onBackground as suspendTimerTicking,
@@ -806,7 +809,43 @@ setStatusBarTimer(timerBarText())
 // app-level knowledge (see core/voiceDispatch.ts for why). Today just the
 // Timer. Anything that is not a command is not handled here: Jarvis sends
 // it to Gemini itself, as part of its conversation (features/chat/tool.ts).
+// Questions answered from what the app already knows (G2-76): instant,
+// and no AI request. null means "not known here" - the AI, which can
+// search, gets the question instead.
+function answerQuick(question: QuickQuestion): string | null {
+  const now = new Date()
+  switch (question.kind) {
+    case 'time':
+      return `It's ${now.toLocaleTimeString([], { hour: 'numeric', minute: '2-digit' })}.`
+    case 'date':
+      return `It's ${now.toLocaleDateString([], { weekday: 'long', day: 'numeric', month: 'long', year: 'numeric' })}.`
+    case 'weather': {
+      if (question.when === 'now') {
+        const current = getCurrentWeather()
+        if (!current) return null
+        return `${currentConditionWord(current)}, ${Math.round(current.celsius)} degrees right now.`
+      }
+      const day = getDailyWeather()[question.when === 'today' ? 0 : 1]
+      if (!day) return null
+      const label = question.when === 'today' ? 'Today' : 'Tomorrow'
+      return `${label}: ${CONDITION_LABELS[day.condition].toLowerCase()}, high ${Math.round(day.highCelsius)}, low ${Math.round(day.lowCelsius)} degrees.`
+    }
+    case 'rain': {
+      const day = getDailyWeather()[question.when === 'today' ? 0 : 1]
+      if (!day) return null
+      const wet = day.condition === 'rain' || day.condition === 'storm'
+      const label = question.when === 'today' ? 'today' : 'tomorrow'
+      return wet
+        ? `Yes, ${CONDITION_LABELS[day.condition].toLowerCase()} is forecast ${label}.`
+        : `No rain forecast ${label} - ${CONDITION_LABELS[day.condition].toLowerCase()}.`
+    }
+  }
+}
+
 registerVoiceDispatch(async transcript => {
+  const quick = parseQuickQuestion(transcript)
+  const answer = quick ? answerQuick(quick) : null
+  if (answer) return { handled: true, message: answer }
   const command = parseVoiceCommand(transcript)
   switch (command.kind) {
     case 'startTimer':

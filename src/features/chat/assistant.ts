@@ -63,6 +63,9 @@ export async function askAssistant(
     functions: actions.map(a => a.declaration),
     actionContext,
     aboutMe,
+    // Questions about now - news, scores, prices, opening hours - need the
+    // web; the model decides when (G2-76).
+    webSearch: true,
   })
 }
 
@@ -117,7 +120,15 @@ export async function askFromPhone(
   const replyText = reply.kind === 'actions' ? await runAssistantActions(reply.calls) : reply.text
   session = {
     ...session,
-    messages: [...session.messages, { role: 'model', text: replyText, timestamp: Date.now() }],
+    messages: [
+      ...session.messages,
+      {
+        role: 'model',
+        text: replyText,
+        timestamp: Date.now(),
+        ...(reply.kind === 'answer' && reply.sources ? { sources: reply.sources } : {}),
+      },
+    ],
   }
   await chatSessions.save(session)
   return { kind: 'answered', session }

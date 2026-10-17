@@ -810,7 +810,12 @@ async function askGemini(question: string) {
   // Correctness, not a render decision - a retry would be pointless and
   // wrong for a question that just got handled.
   if (lastErrorQuestion === question) lastErrorQuestion = null
-  const answer: ChatMessage = { role: 'model', text: replyText, timestamp: Date.now() }
+  const answer: ChatMessage = {
+    role: 'model',
+    text: replyText,
+    timestamp: Date.now(),
+    ...(reply.kind === 'answer' && reply.sources ? { sources: reply.sources } : {}),
+  }
 
   // An action as the very first thing said is a command from a blank
   // start, so it is not kept as a conversation - same rule as a local
