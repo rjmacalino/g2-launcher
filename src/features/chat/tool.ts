@@ -501,6 +501,10 @@ async function beginListening() {
 let thinkingStartedAt = 0
 let thinkingRetryNote = ''
 
+// How often a streaming answer may redraw the glasses. Each redraw is a
+// Bluetooth update; a few per second reads as live without flooding it.
+const STREAM_DRAW_MS = 300
+
 function showThinking(question: string): void {
   stopThinking = startLiveStatus(
     sessionToken,
@@ -563,7 +567,33 @@ async function askGemini(question: string) {
   const actions = assistantActions()
   const actionContext = actions.length > 0 ? await assistantActionContext() : ''
   const aboutMe = await getAboutMe()
+  // Streamed answer text fills the first page as it arrives (G2-62), so
+  // the wearer starts reading after the first words instead of after the
+  // whole reply. Only page 1, and only when it actually changed: every
+  // content update resets scroll, so once page 1 is full it is left alone,
+  // and a wearer who has scrolled is never yanked back to the top. The
+  // finished answer then replaces this with the normal paged view below.
+  const streamStartedAt = Date.now()
+  let streamedPage = ''
+  let lastStreamDrawAt = 0
+  const onText = (textSoFar: string) => {
+    if (myAsk !== currentAskId || !stillRelevant()) return
+    if (lastScrollAt > streamStartedAt) return
+    const now = Date.now()
+    if (now - lastStreamDrawAt < STREAM_DRAW_MS) return
+    const firstPage = paginate(
+      `You: ${question}${DIVIDER}Jarvis: ${textSoFar}`,
+      PAGE_INNER_WIDTH,
+    )[0]?.text
+    if (!firstPage || firstPage === streamedPage) return
+    stopThinking?.()
+    stopThinking = null
+    streamedPage = firstPage
+    lastStreamDrawAt = now
+    setContent(firstPage)
+  }
   const reply = await converse(apiKey, toGeminiTurns(messagesAtAsk), {
+    onText,
     onRetry: (attempt, max) => {
       attemptsMade = attempt
       if (myAsk === currentAskId) thinkingRetryNote = `\nRetrying (${attempt}/${max})...`

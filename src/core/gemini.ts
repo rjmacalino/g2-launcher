@@ -27,6 +27,16 @@
 // capacity issue, not a request problem).
 export const GEMINI_MODEL = 'gemini-3.8-flash'
 const ENDPOINT = `https://generativelanguage.googleapis.com/v1beta/models/${GEMINI_MODEL}:generateContent`
+// The same request, answered as a stream of partial replies (G2-62), so the
+// first words reach the glasses while the rest is still being written.
+// Endpoint and alt=sse are from the API reference (ai.google.dev/api/
+// generate-content), which says the body is "a stream of
+// GenerateContentResponse instances" but does not spell out the framing;
+// alt=sse is read as server-sent events (data: lines), and anything that
+// does not parse falls back to the non-streaming request (see converse).
+// [UNVERIFIED with a real key, and its CORS behaviour from the WebView is
+// unchecked - generateContent's was confirmed, this one's was not.]
+const STREAM_ENDPOINT = `https://generativelanguage.googleapis.com/v1beta/models/${GEMINI_MODEL}:streamGenerateContent?alt=sse`
 
 // Answers are read by paging on the glasses (features/chat/paging.ts), so
 // they are full answers, not glance-length ones - per direct request. The
@@ -105,47 +115,50 @@ function delay(ms: number): Promise<void> {
   return new Promise(resolve => setTimeout(resolve, ms))
 }
 
-async function requestOnce(
-  apiKey: string,
-  turns: readonly GeminiTurn[],
-  systemInstruction: string,
-  functions: readonly FunctionDeclaration[],
-): Promise<Response> {
-  return fetch(ENDPOINT, {
+function requestOnce(apiKey: string, url: string, body: string): Promise<Response> {
+  return fetch(url, {
     method: 'POST',
     headers: {
       'Content-Type': 'application/json',
       'x-goog-api-key': apiKey,
     },
-    body: JSON.stringify({
-      contents: turns.map(turn => ({ role: turn.role, parts: [{ text: turn.text }] })),
-      systemInstruction: {
-        parts: [{ text: systemInstruction }],
-      },
-      // No toolConfig: the reference's default mode is AUTO, "the model
-      // chooses between a function call or a natural language response",
-      // which is exactly the behaviour wanted - a question gets an answer,
-      // a request gets an action.
-      ...(functions.length > 0 ? { tools: [{ functionDeclarations: functions }] } : {}),
-      generationConfig: {
-        maxOutputTokens: MAX_OUTPUT_TOKENS,
-        // gemini-3.8-flash "thinks" before answering, and that thinking
-        // spends tokens out of the SAME maxOutputTokens budget as the
-        // visible reply - confirmed by symptom, not by a doc or a test with
-        // a real key: raising the cap from 120 to 350 should have produced
-        // several real sentences, but answers kept coming back only ~10
-        // words long everywhere, including the companion page, which has no
-        // display-side limit at all to blame instead. That only makes sense
-        // if most of the 350-token budget was being spent on invisible
-        // thinking tokens before the model got to the actual answer text.
-        // thinkingBudget: 0 turns thinking off - a short conversational
-        // reply has no real use for it anyway - so the whole cap goes to
-        // text that actually gets shown. Needs a real-key check to confirm,
-        // same as every other Gemini behaviour here that was not just taken
-        // from documentation.
-        thinkingConfig: { thinkingBudget: 0 },
-      },
-    }),
+    body,
+  })
+}
+
+function requestBody(
+  turns: readonly GeminiTurn[],
+  systemInstruction: string,
+  functions: readonly FunctionDeclaration[],
+): string {
+  return JSON.stringify({
+    contents: turns.map(turn => ({ role: turn.role, parts: [{ text: turn.text }] })),
+    systemInstruction: {
+      parts: [{ text: systemInstruction }],
+    },
+    // No toolConfig: the reference's default mode is AUTO, "the model
+    // chooses between a function call or a natural language response",
+    // which is exactly the behaviour wanted - a question gets an answer,
+    // a request gets an action.
+    ...(functions.length > 0 ? { tools: [{ functionDeclarations: functions }] } : {}),
+    generationConfig: {
+      maxOutputTokens: MAX_OUTPUT_TOKENS,
+      // gemini-3.8-flash "thinks" before answering, and that thinking
+      // spends tokens out of the SAME maxOutputTokens budget as the
+      // visible reply - confirmed by symptom, not by a doc or a test with
+      // a real key: raising the cap from 120 to 350 should have produced
+      // several real sentences, but answers kept coming back only ~10
+      // words long everywhere, including the companion page, which has no
+      // display-side limit at all to blame instead. That only makes sense
+      // if most of the 350-token budget was being spent on invisible
+      // thinking tokens before the model got to the actual answer text.
+      // thinkingBudget: 0 turns thinking off - a short conversational
+      // reply has no real use for it anyway - so the whole cap goes to
+      // text that actually gets shown. Needs a real-key check to confirm,
+      // same as every other Gemini behaviour here that was not just taken
+      // from documentation.
+      thinkingConfig: { thinkingBudget: 0 },
+    },
   })
 }
 
@@ -169,6 +182,10 @@ export type ConverseOptions = {
   // they act on.
   functions?: readonly FunctionDeclaration[]
   actionContext?: string
+  // When given, the reply is streamed and this is called with all the
+  // answer text so far each time more arrives. Not called for a reply
+  // that is function calls. The final result is still the return value.
+  onText?: (textSoFar: string) => void
   // The wearer's "About You" text from the companion page. Passed in by
   // the caller rather than read from storage here, so this module touches
   // nothing but the network: the PC benchmark (bench/) runs this exact
@@ -191,10 +208,88 @@ const ACTIONS_INSTRUCTION =
   'a short title-case name without the word "list". Keep list items short. ' +
   'Several things asked at once are several function calls.'
 
+// Set the first time a streamed request fails where the same request
+// without streaming then works: streaming itself is what does not work
+// here (the WebView, a proxy, the endpoint), so later questions skip
+// straight to the request known to work instead of failing first each time.
+let streamingBroken = false
+
+type Attempt = { kind: 'reply'; data: unknown } | { kind: 'http'; status: number }
+
+async function attemptPlain(apiKey: string, body: string): Promise<Attempt> {
+  const response = await requestOnce(apiKey, ENDPOINT, body)
+  if (!response.ok) return { kind: 'http', status: response.status }
+  return { kind: 'reply', data: await response.json() }
+}
+
+// Resolves to null when the stream answered but yielded nothing readable,
+// so the caller can retry without streaming.
+async function attemptStreamed(
+  apiKey: string,
+  body: string,
+  onText: (textSoFar: string) => void,
+): Promise<Attempt | null> {
+  const response = await requestOnce(apiKey, STREAM_ENDPOINT, body)
+  if (!response.ok) return { kind: 'http', status: response.status }
+  if (!response.body) return null
+  const reader = response.body.getReader()
+  const decoder = new TextDecoder()
+  const chunks: unknown[] = []
+  let buffer = ''
+  let text = ''
+  const take = (payloads: readonly string[]) => {
+    for (const payload of payloads) {
+      let chunk: unknown
+      try {
+        chunk = JSON.parse(payload)
+      } catch {
+        continue
+      }
+      chunks.push(chunk)
+      const more = chunkText(chunk)
+      if (more) {
+        text += more
+        onText(text)
+      }
+    }
+  }
+  for (;;) {
+    const { done, value } = await reader.read()
+    if (done) break
+    const parsed = parseSseEvents(buffer + decoder.decode(value, { stream: true }))
+    buffer = parsed.rest
+    take(parsed.events)
+  }
+  take(parseSseEvents(`${buffer}${decoder.decode()}\n\n`).events)
+  return chunks.length > 0 ? { kind: 'reply', data: mergeStreamChunks(chunks) } : null
+}
+
+// One try: streamed when asked for and not known to be broken, falling
+// back to the plain request when the stream fails in a way the plain
+// request might not (no response at all, unreadable, or a refusal that is
+// not a transient overload).
+async function attemptOnce(
+  apiKey: string,
+  body: string,
+  onText: ((textSoFar: string) => void) | undefined,
+): Promise<Attempt> {
+  if (!onText || streamingBroken) return attemptPlain(apiKey, body)
+  let streamed: Attempt | null
+  try {
+    streamed = await attemptStreamed(apiKey, body, onText)
+  } catch {
+    streamed = null
+  }
+  if (streamed && (streamed.kind === 'reply' || isTransient(streamed.status))) return streamed
+  const plain = await attemptPlain(apiKey, body)
+  if (plain.kind === 'reply') streamingBroken = true
+  return plain
+}
+
 export async function converse(
   apiKey: string,
   turns: readonly GeminiTurn[],
-  { onRetry, background, functions = [], actionContext, aboutMe }: ConverseOptions = {},
+  { onRetry, background, functions = [], actionContext, aboutMe, onText }: ConverseOptions = {},
 ): Promise<GeminiResult> {
   // Per direct request: "I want my chatbot to know me... to tailor its
   // answer for me." Empty when nothing has been entered on the companion
@@ -210,7 +305,7 @@ export async function converse(
     parts.push(ACTIONS_INSTRUCTION)
     if (actionContext) parts.push(actionContext)
   }
-  const systemInstruction = parts.join('\n\n')
+  const body = requestBody(turns, parts.join('\n\n'), functions)
 
   let lastErrorMessage = 'unknown error'
   for (let attempt = 1; attempt <= MAX_ATTEMPTS; attempt++) {
@@ -219,14 +314,13 @@ export async function converse(
       await delay(RETRY_DELAY_MS)
     }
     try {
-      const response = await requestOnce(apiKey, turns, systemInstruction, functions)
-      if (!response.ok) {
-        lastErrorMessage = `Gemini returned ${response.status}`
-        if (isTransient(response.status) && attempt < MAX_ATTEMPTS) continue
+      const result = await attemptOnce(apiKey, body, onText)
+      if (result.kind === 'http') {
+        lastErrorMessage = `Gemini returned ${result.status}`
+        if (isTransient(result.status) && attempt < MAX_ATTEMPTS) continue
         return { kind: 'error', message: lastErrorMessage }
       }
-      const data: unknown = await response.json()
-      return parseReply(data)
+      return parseReply(result.data)
     } catch (e) {
       lastErrorMessage = e instanceof Error ? e.message : String(e)
       if (attempt < MAX_ATTEMPTS) continue
@@ -239,8 +333,53 @@ export async function converse(
   return { kind: 'error', message: lastErrorMessage }
 }
 
+// Server-sent events: events end with a blank line, and an event's payload
+// is its "data:" lines joined. Returns the complete events in buffer and
+// the unfinished remainder to prepend to the next piece of the stream.
+// Exported for tests.
+export function parseSseEvents(buffer: string): { events: string[]; rest: string } {
+  const blocks = buffer.replace(/\r\n?/g, '\n').split('\n\n')
+  const rest = blocks.pop() ?? ''
+  const events: string[] = []
+  for (const block of blocks) {
+    const data = block
+      .split('\n')
+      .filter(line => line.startsWith('data:'))
+      .map(line => line.slice(5).replace(/^ /, ''))
+      .join('\n')
+    if (data && data !== '[DONE]') events.push(data)
+  }
+  return { events, rest }
+}
+
 function isRecord(x: unknown): x is Record<string, unknown> {
   return !!x && typeof x === 'object' && !Array.isArray(x)
+}
+
+function partsOf(chunk: unknown): unknown[] {
+  if (!isRecord(chunk) || !Array.isArray(chunk.candidates)) return []
+  const first: unknown = chunk.candidates[0]
+  if (!isRecord(first) || !isRecord(first.content) || !Array.isArray(first.content.parts)) {
+    return []
+  }
+  return first.content.parts
+}
+
+// The answer text in one streamed chunk, skipping thought parts the same
+// way parseReply does.
+function chunkText(chunk: unknown): string {
+  return partsOf(chunk)
+    .map(part =>
+      isRecord(part) && part.thought !== true && typeof part.text === 'string' ? part.text : '',
+    )
+    .join('')
+}
+
+// Every streamed chunk's parts in order, as one response parseReply can
+// read - so a streamed reply ends in exactly the same result as a plain
+// one, function calls included. Exported for tests.
+export function mergeStreamChunks(chunks: readonly unknown[]): unknown {
+  return { candidates: [{ content: { parts: chunks.flatMap(partsOf) } }] }
 }
 
 // Reads candidates[0].content.parts without trusting the exact shape - this

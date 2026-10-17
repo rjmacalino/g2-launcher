@@ -38,6 +38,10 @@ type Result = {
   wer: number
   whisperMs: number
   geminiMs: number | null
+  // When the first streamed words arrived - what the wearer actually waits
+  // for, since Jarvis shows them straight away (G2-62). Null when nothing
+  // streamed (a function call, an error, or streaming fell back).
+  firstWordsMs: number | null
   answer: string | null
   verdict: Verdict | 'skipped' | 'error'
 }
@@ -132,6 +136,7 @@ async function main() {
       wer: wordErrorRate(q.text, heard),
       whisperMs,
       geminiMs: null,
+      firstWordsMs: null,
       answer: null,
       verdict: 'skipped',
     }
@@ -142,6 +147,9 @@ async function main() {
       const reply = await converse(key, [{ role: 'user', text: heard }], {
         aboutMe: ABOUT_ME,
         background: backgroundText,
+        onText: () => {
+          result.firstWordsMs ??= performance.now() - geminiStart
+        },
       })
       result.geminiMs = performance.now() - geminiStart
       if (reply.kind === 'answer') {
@@ -157,7 +165,9 @@ async function main() {
     const timing =
       result.geminiMs === null
         ? `hear ${seconds(whisperMs)}s`
-        : `hear ${seconds(whisperMs)}s + answer ${seconds(result.geminiMs)}s`
+        : `hear ${seconds(whisperMs)}s + first words ${
+            result.firstWordsMs === null ? '-' : `${seconds(result.firstWordsMs)}s`
+          }, full answer ${seconds(result.geminiMs)}s`
     console.log(
       `[${result.verdict.toUpperCase()}] ${q.id}  (${timing}, WER ${result.wer.toFixed(2)})`,
     )
@@ -181,9 +191,17 @@ async function main() {
     )
   }
   const totals = results.flatMap(r => (r.geminiMs === null ? [] : [r.whisperMs + r.geminiMs]))
+  const firstWords = results.flatMap(r =>
+    r.firstWordsMs === null ? [] : [r.whisperMs + r.firstWordsMs],
+  )
+  if (firstWords.length > 0) {
+    console.log(
+      `\nTime to first words (hear + first words): avg ${seconds(average(firstWords))}s, max ${seconds(Math.max(...firstWords))}s`,
+    )
+  }
   if (totals.length > 0) {
     console.log(
-      `\nTime to answer (hear + answer): avg ${seconds(average(totals))}s, max ${seconds(Math.max(...totals))}s`,
+      `Time to full answer (hear + full answer): avg ${seconds(average(totals))}s, max ${seconds(Math.max(...totals))}s`,
     )
   }
 

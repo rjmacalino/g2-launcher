@@ -35,7 +35,9 @@ the free tier's per-minute limit; set `BENCH_GEMINI_GAP_MS` to change that.
 
 - `hear`: Whisper time on this PC. A phone is usually slower; Lab's
   "Live transcription" probe measures the phone.
-- `answer`: Gemini time, close to what the glasses see (same round trip).
+- `first words`: when Gemini's first streamed words arrived. Jarvis shows
+  them straight away, so hear + first words is what the wearer waits for.
+- `full answer`: when the whole reply had arrived.
 - `WER`: word error rate of what Whisper heard. 0 is perfect.
 - `PASS`/`FAIL`: the answer contains the expected words. `REVIEW` means
   there is nothing automatic to check (small talk, interview phrasing), so

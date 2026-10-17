@@ -356,7 +356,15 @@ then on hardware by RJ. Results go back into platform.md with a [HW] tag.
       storage, so it runs outside the WebView. First run, hearing only (no
       key on the PC yet): Whisper 1.2 to 2.7 s per question on RJ's PC,
       12 of 14 heard perfectly ("steakhouse" heard as "stake house"). The
-      Windows voice is studio-clean, so real speech will score worse
+      Windows voice is studio-clean, so real speech will score worse.
+      G2-62, streaming answers: Jarvis asks Gemini for a streamed reply
+      (streamGenerateContent, alt=sse) and fills page 1 as the words
+      arrive, at most every 300 ms, never after the wearer scrolls; the
+      finished answer then renders paged as before. If streaming fails
+      where a plain request works, core/gemini.ts stops trying it for the
+      session. Covered by unit tests against a fake stream (split chunks,
+      function calls, both fallbacks); not yet run against the real API
+      or on hardware. The benchmark now reports time to first words
 - [ ] Photo viewer: album image on the glasses
 
 ## Decisions
