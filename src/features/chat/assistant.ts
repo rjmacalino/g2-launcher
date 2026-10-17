@@ -99,7 +99,7 @@ export async function askFromPhone(
     return { kind: 'command', reply: command.message, session }
   }
 
-  const llm = await getLlmConfig()
+  const llm = await getLlmConfig('phone')
   if (!llm) return { kind: 'no-key' }
 
   let session: ChatSession = existing

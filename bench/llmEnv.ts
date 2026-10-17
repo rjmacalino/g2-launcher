@@ -37,7 +37,8 @@ export function llmFromEnv(): LlmConfig | null {
     const apiKey = get(KEY_VARS[provider])
     if (!apiKey) continue
     const info = providerInfo(provider)
-    const model = info.models.includes(get('LLM_MODEL')) ? get('LLM_MODEL') : info.models[0]
+    const ids = info.models.map(m => m.id)
+    const model = ids.includes(get('LLM_MODEL')) ? get('LLM_MODEL') : ids[0]
     return { provider, apiKey, model }
   }
   return null

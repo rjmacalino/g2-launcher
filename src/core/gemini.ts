@@ -47,7 +47,8 @@ export { parseSseEvents }
 // (hit a transient 503 "high demand" on the two tries made here, a Google
 // capacity issue, not a request problem).
 export const GEMINI_MODEL = 'gemini-3.8-flash'
-const ENDPOINT = `https://generativelanguage.googleapis.com/v1beta/models/${GEMINI_MODEL}:generateContent`
+const API = 'https://generativelanguage.googleapis.com/v1beta/models'
+const endpoint = (model: string) => `${API}/${model}:generateContent`
 // The same request, answered as a stream of partial replies (G2-62), so the
 // first words reach the glasses while the rest is still being written.
 // Endpoint and alt=sse are from the API reference (ai.google.dev/api/
@@ -57,7 +58,16 @@ const ENDPOINT = `https://generativelanguage.googleapis.com/v1beta/models/${GEMI
 // does not parse falls back to the non-streaming request (see converse).
 // [UNVERIFIED with a real key, and its CORS behaviour from the WebView is
 // unchecked - generateContent's was confirmed, this one's was not.]
-const STREAM_ENDPOINT = `https://generativelanguage.googleapis.com/v1beta/models/${GEMINI_MODEL}:streamGenerateContent?alt=sse`
+const streamEndpoint = (model: string) => `${API}/${model}:streamGenerateContent?alt=sse`
+
+// Thinking off, in the form each model takes (G2-77, tested with a real
+// key 2026-10-18): 3.8 and 3.6 Flash accept thinkingBudget: 0, the Lite
+// models refuse it with a 400 and take thinkingLevel "minimal" instead.
+const BUDGET_MODELS = new Set(['gemini-3.8-flash', 'gemini-3.6-flash'])
+
+export function thinkingConfig(model: string): Record<string, unknown> {
+  return BUDGET_MODELS.has(model) ? { thinkingBudget: 0 } : { thinkingLevel: 'minimal' }
+}
 
 // The provider-neutral types, under the names the rest of the app has
 // always imported from here.
@@ -82,6 +92,7 @@ function requestBody(
   functions: readonly FunctionDeclaration[],
   maxOutputTokens: number,
   webSearch: boolean,
+  model: string,
 ): string {
   const tools = [
     ...(functions.length > 0 ? [{ functionDeclarations: functions }] : []),
@@ -117,7 +128,7 @@ function requestBody(
       // text that actually gets shown. Needs a real-key check to confirm,
       // same as every other Gemini behaviour here that was not just taken
       // from documentation.
-      thinkingConfig: { thinkingBudget: 0 },
+      thinkingConfig: thinkingConfig(model),
     },
   })
 }
@@ -134,8 +145,8 @@ let searchRefused = false
 
 type Attempt = { kind: 'reply'; data: unknown } | { kind: 'http'; status: number }
 
-async function attemptPlain(apiKey: string, body: string): Promise<Attempt> {
-  const response = await requestOnce(apiKey, ENDPOINT, body)
+async function attemptPlain(apiKey: string, model: string, body: string): Promise<Attempt> {
+  const response = await requestOnce(apiKey, endpoint(model), body)
   if (!response.ok) return { kind: 'http', status: response.status }
   return { kind: 'reply', data: await response.json() }
 }
@@ -144,10 +155,11 @@ async function attemptPlain(apiKey: string, body: string): Promise<Attempt> {
 // so the caller can retry without streaming.
 async function attemptStreamed(
   apiKey: string,
+  model: string,
   body: string,
   onText: (textSoFar: string) => void,
 ): Promise<Attempt | null> {
-  const response = await requestOnce(apiKey, STREAM_ENDPOINT, body)
+  const response = await requestOnce(apiKey, streamEndpoint(model), body)
   if (!response.ok) return { kind: 'http', status: response.status }
   if (!response.body) return null
   const reader = response.body.getReader()
@@ -188,18 +200,19 @@ async function attemptStreamed(
 // not a transient overload).
 async function attemptOnce(
   apiKey: string,
+  model: string,
   body: string,
   onText: ((textSoFar: string) => void) | undefined,
 ): Promise<Attempt> {
-  if (!onText || streamingBroken) return attemptPlain(apiKey, body)
+  if (!onText || streamingBroken) return attemptPlain(apiKey, model, body)
   let streamed: Attempt | null
   try {
-    streamed = await attemptStreamed(apiKey, body, onText)
+    streamed = await attemptStreamed(apiKey, model, body, onText)
   } catch {
     streamed = null
   }
   if (streamed && (streamed.kind === 'reply' || isTransient(streamed.status))) return streamed
-  const plain = await attemptPlain(apiKey, body)
+  const plain = await attemptPlain(apiKey, model, body)
   if (plain.kind === 'reply') streamingBroken = true
   return plain
 }
@@ -208,11 +221,12 @@ export async function converse(
   apiKey: string,
   turns: readonly GeminiTurn[],
   options: ConverseOptions = {},
+  model: string = GEMINI_MODEL,
 ): Promise<GeminiResult> {
   const { onRetry, functions = [], onText, maxOutputTokens = DEFAULT_MAX_OUTPUT_TOKENS } = options
   let search = options.webSearch === true && !searchRefused
   const build = () =>
-    requestBody(turns, buildSystemPrompt(options), functions, maxOutputTokens, search)
+    requestBody(turns, buildSystemPrompt(options), functions, maxOutputTokens, search, model)
   let body = build()
 
   let lastErrorMessage = 'unknown error'
@@ -222,7 +236,7 @@ export async function converse(
       await delay(RETRY_DELAY_MS)
     }
     try {
-      const result = await attemptOnce(apiKey, body, onText)
+      const result = await attemptOnce(apiKey, model, body, onText)
       if (result.kind === 'http') {
         // A bad request with search on: most likely search is what this
         // model or key will not take. Ask again without it, and stop

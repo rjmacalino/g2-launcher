@@ -21,7 +21,7 @@ export async function askModel(
       return converseClaude(config.apiKey, config.model, turns, options)
     }
     default:
-      return converseGemini(config.apiKey, turns, options)
+      return converseGemini(config.apiKey, turns, options, config.model)
   }
 }
 

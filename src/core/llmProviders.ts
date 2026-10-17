@@ -1,46 +1,91 @@
 // The AI providers Jarvis can use (G2-68) and their models - pure data,
 // so the PC benchmark (bench/) can use it without the phone's storage,
-// which core/llmSettings.ts (the wearer's saved choice) needs.
+// which core/llmSettings.ts (the wearer's saved choices) needs.
 
 export type Provider = 'gemini' | 'deepseek' | 'claude'
+
+// How a model trades speed for depth, as shown when picking one (G2-77).
+export type Speed = 'fastest' | 'fast' | 'smart' | 'smartest'
+
+export type ModelInfo = { id: string; label: string; speed: Speed }
 
 export type ProviderInfo = {
   id: Provider
   label: string
   free: boolean
-  models: readonly string[]
+  // Fastest first.
+  models: readonly ModelInfo[]
   keyUrl: string
 }
 
-// Model IDs as each provider documents them (Gemini: core/gemini.ts;
-// DeepSeek: api-docs.deepseek.com, 2026-10-17; Claude: Anthropic's current
-// model list - Opus 5.5 is the default, the others are the wearer's call).
+// Model IDs as each provider documents them. Gemini's are the ones a free
+// key listed and answered with (models.list and a timed test request,
+// 2026-10-18): 3.5 Flash-Lite about 1.0 s, 3.6 Flash about 1.7 s for a
+// one-line answer; each model has its own free daily limit, and Gemini 4
+// Argon has none at all, so it is not offered. DeepSeek: api-docs.
+// deepseek.com, 2026-10-17. Claude: Anthropic's current model list.
 export const PROVIDERS: readonly ProviderInfo[] = [
   {
     id: 'gemini',
     label: 'Gemini',
     free: true,
-    models: ['gemini-3.8-flash'],
+    models: [
+      { id: 'gemini-3.5-flash-lite', label: '3.5 Flash-Lite', speed: 'fastest' },
+      { id: 'gemini-3.6-flash', label: '3.6 Flash', speed: 'fast' },
+      { id: 'gemini-3.8-flash', label: '3.8 Flash', speed: 'smart' },
+    ],
     keyUrl: 'https://aistudio.google.com/apikey',
   },
   {
     id: 'deepseek',
     label: 'DeepSeek',
     free: false,
-    models: ['deepseek-flash', 'deepseek-v4-pro'],
+    models: [
+      { id: 'deepseek-flash', label: 'Flash', speed: 'fast' },
+      { id: 'deepseek-v4-pro', label: 'V4 Pro', speed: 'smart' },
+    ],
     keyUrl: 'https://platform.deepseek.com/api_keys',
   },
   {
     id: 'claude',
     label: 'Claude',
     free: false,
-    models: ['claude-opus-5-5', 'claude-sonnet-5-5', 'claude-haiku-5-5'],
+    models: [
+      { id: 'claude-haiku-5-5', label: 'Haiku 5.5', speed: 'fastest' },
+      { id: 'claude-sonnet-5-5', label: 'Sonnet 5.5', speed: 'smart' },
+      { id: 'claude-opus-5-5', label: 'Opus 5.5', speed: 'smartest' },
+    ],
     keyUrl: 'https://platform.claude.com/settings/keys',
   },
 ]
 
 export function providerInfo(id: Provider): ProviderInfo {
   return PROVIDERS.find(p => p.id === id) ?? PROVIDERS[0]
+}
+
+export function modelInfo(provider: Provider, model: string): ModelInfo | undefined {
+  return providerInfo(provider).models.find(m => m.id === model)
+}
+
+// What each AI job is for (G2-77), each with its own model: spoken
+// questions on the glasses want a quick answer, typed ones on the phone
+// (code, long explanations) can wait for a better one, and a Wingman cue
+// is useless if it is late.
+export type Purpose = 'glasses' | 'phone' | 'wingman'
+
+// The model a job gets until the wearer picks one.
+export function defaultModel(provider: Provider, purpose: Purpose): string {
+  const models = providerInfo(provider).models
+  const pick = (...speeds: Speed[]) => {
+    for (const speed of speeds) {
+      const found = models.find(m => m.speed === speed)
+      if (found) return found.id
+    }
+    return models[0].id
+  }
+  if (purpose === 'wingman') return pick('fastest', 'fast')
+  if (purpose === 'glasses') return pick('fast', 'fastest')
+  return pick('smart', 'smartest', 'fast')
 }
 
 export type LlmConfig = { provider: Provider; apiKey: string; model: string }

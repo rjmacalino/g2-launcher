@@ -332,7 +332,11 @@ async function startLive() {
   cue = null
   cueNote = ''
   // Read once per session, not per cue: a cue waits on nothing but Gemini.
-  ;[llm, aboutMe, prepNotes] = await Promise.all([getLlmConfig(), getAboutMe(), getPrepNotes()])
+  ;[llm, aboutMe, prepNotes] = await Promise.all([
+    getLlmConfig('wingman'),
+    getAboutMe(),
+    getPrepNotes(),
+  ])
   if (mySession !== session) return
   segmenter = createSegmenter()
   paused = false

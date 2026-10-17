@@ -715,7 +715,7 @@ async function askGemini(question: string) {
   const stillRelevant = () => depth === 'conversation' && currentSessionId === targetSessionId
 
   // Whichever AI the wearer chose on the companion page (G2-68).
-  const llm = await getLlmConfig()
+  const llm = await getLlmConfig('glasses')
   // Not the voice-capture session token - see finishListening for how that
   // silently dropped questions on a brief trip to the background.
   if (!stillRelevant()) return

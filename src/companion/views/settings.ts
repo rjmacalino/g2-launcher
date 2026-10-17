@@ -2,14 +2,14 @@ import { bridge, onStatus, recentStatus } from '../../platform/bridge'
 import { ABOUT_ME_MAX_CHARS, getAboutMe, setAboutMe } from '../../core/geminiSettings'
 import {
   PROVIDERS,
-  getProvider,
+  getChoice,
   getProviderKey,
-  getProviderModel,
   providerInfo,
-  setProvider,
+  providersWithKeys,
+  setChoice,
   setProviderKey,
-  setProviderModel,
   type Provider,
+  type Purpose,
 } from '../../core/llmSettings'
 import { isWakeWordEnabled, setWakeWordEnabled } from '../../core/wakeSettings'
 import { isWakeListening, wakeDescription } from '../../core/wakeListener'
@@ -153,12 +153,62 @@ function codeSizeCard(): HTMLElement {
   )
 }
 
+// Which provider's key the Keys section is showing; kept across redraws.
+let editingKey: Provider = 'gemini'
+
+const JOBS: { purpose: Purpose; title: string; hint: string }[] = [
+  { purpose: 'glasses', title: 'Jarvis on the glasses', hint: 'Spoken questions - quick wins' },
+  { purpose: 'phone', title: 'Jarvis on the phone', hint: 'Typed questions and code - depth wins' },
+  { purpose: 'wingman', title: 'Wingman', hint: 'Cues mid-conversation - speed wins' },
+]
+
+// One job's model, from the providers there is a key for (G2-77).
+async function jobPicker(
+  job: (typeof JOBS)[number],
+  withKeys: readonly Provider[],
+): Promise<HTMLElement> {
+  const choice = await getChoice(job.purpose)
+  const select = h(
+    'select',
+    { class: 'field', 'aria-label': job.title },
+    withKeys.map(id => {
+      const info = providerInfo(id)
+      const group = h(
+        'optgroup',
+        { label: info.label },
+        info.models.map(m =>
+          h(
+            'option',
+            {
+              value: `${id}/${m.id}`,
+              selected: id === choice.provider && m.id === choice.model,
+            },
+            `${m.label} - ${m.speed}`,
+          ),
+        ),
+      )
+      return group
+    }),
+  ) as HTMLSelectElement
+  select.addEventListener('change', async () => {
+    const [provider, model] = select.value.split('/') as [Provider, string]
+    if (await setChoice(job.purpose, { provider, model })) toast(`${job.title} updated`)
+  })
+  return h(
+    'div',
+    { style: 'margin-top: 12px' },
+    h('div', { class: 'section-label' }, job.title),
+    h('div', { class: 'caption', style: 'margin: 0 0 6px' }, job.hint),
+    select,
+  )
+}
+
 function aiCard(ctx: AppContext): HTMLElement {
   const body = h('div', {}, h('div', { class: 'caption' }, 'Loading...'))
   void (async () => {
-    const provider = await getProvider()
+    const provider = editingKey
     const info = providerInfo(provider)
-    const [key, model] = await Promise.all([getProviderKey(provider), getProviderModel(provider)])
+    const [key, withKeys] = await Promise.all([getProviderKey(provider), providersWithKeys()])
 
     const segmented = h(
       'div',
@@ -170,26 +220,16 @@ function aiCard(ctx: AppContext): HTMLElement {
             class: p.id === provider ? 'on' : '',
             role: 'tab',
             'aria-selected': String(p.id === provider),
-            onclick: async () => {
+            onclick: () => {
               if (p.id === provider) return
-              await setProvider(p.id as Provider)
-              toast(`Jarvis now uses ${p.label}`)
+              editingKey = p.id
               ctx.refresh()
             },
           },
-          p.label,
+          withKeys.includes(p.id) ? `${p.label} \u2713` : p.label,
         ),
       ),
     )
-    const modelSelect = h(
-      'select',
-      { class: 'field', 'aria-label': 'Model' },
-      info.models.map(m => h('option', { value: m, selected: m === model }, m)),
-    ) as HTMLSelectElement
-    modelSelect.addEventListener('change', async () => {
-      await setProviderModel(provider, modelSelect.value)
-      toast(`Model set to ${modelSelect.value}`)
-    })
     const keyField = h('input', {
       class: 'field',
       type: 'password',
@@ -214,19 +254,26 @@ function aiCard(ctx: AppContext): HTMLElement {
       if (!ok) toast('Save failed - try again')
       else if (typed && readBack !== typed) toast('Saved, but it did not read back - try again')
       else toast(typed ? `${info.label} key saved` : 'Key cleared')
+      // The model pickers list only providers with a key.
+      ctx.refresh()
     })
 
+    const jobs =
+      withKeys.length === 0
+        ? [h('p', { class: 'caption' }, 'Add a key above to choose models.')]
+        : await Promise.all(JOBS.map(job => jobPicker(job, withKeys)))
+
     body.replaceChildren(
+      label('Keys'),
       segmented,
       h(
         'p',
         { class: 'caption', style: 'margin: 12px 0' },
         info.free
-          ? `${info.label} has a free tier. Its free tier may use what you send to improve Google's products.`
+          ? `${info.label} has a free tier (a daily limit per model). Its free tier may use what you send to improve Google's products.`
           : `${info.label} is paid - billed by ${info.label} for what you use.${provider === 'deepseek' ? " It can't search the web, so it won't know about recent events." : ''}`,
       ),
-      modelSelect,
-      h('div', { class: 'key-row', style: 'margin-top: 8px' }, keyField, reveal),
+      h('div', { class: 'key-row' }, keyField, reveal),
       h(
         'div',
         { class: 'button-row' },
@@ -237,6 +284,8 @@ function aiCard(ctx: AppContext): HTMLElement {
           'Get a key',
         ),
       ),
+      h('div', { style: 'margin-top: 20px' }, label('Which model does what')),
+      ...jobs,
     )
   })()
   return card(
