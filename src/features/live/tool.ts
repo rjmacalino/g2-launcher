@@ -7,8 +7,9 @@ import { concat, toFloat32 } from '../../shared/pcm'
 import { rmsLevel } from '../../shared/endpoint'
 import { isSilenceHallucination, stripNonSpeech } from '../../shared/transcript'
 import { createSegmenter, type Segment } from './segmenter'
-import { converse } from '../../core/gemini'
-import { getAboutMe, getApiKey } from '../../core/geminiSettings'
+import { getAboutMe } from '../../core/geminiSettings'
+import { askModel } from '../../core/llm'
+import { getLlmConfig, type LlmConfig } from '../../core/llmSettings'
 import { conversationDigest, saveConversation } from '../../core/assistantContext'
 import {
   CUE_INSTRUCTION,
@@ -90,7 +91,8 @@ let cue: Cue | null = null
 // Shown in the cue area instead of a cue: "Thinking..." while a tap's
 // request is out, or why there can be no cues at all.
 let cueNote = ''
-let apiKey: string | null = null
+// The AI chosen on the companion page, read once per session (G2-68).
+let llm: LlmConfig | null = null
 let aboutMe: string | null = null
 let prepNotes = ''
 
@@ -171,8 +173,8 @@ function transcribeNext(mySession: number) {
 
 async function askForCue(mySession: number) {
   if (mySession !== session) return
-  if (!apiKey) {
-    cueNote = 'No cues: add a Gemini key in Jarvis on the companion page.'
+  if (!llm) {
+    cueNote = 'No cues: add an AI key in Jarvis on the companion page.'
     return
   }
   if (lines.length === 0) {
@@ -185,7 +187,8 @@ async function askForCue(mySession: number) {
     .filter(Boolean)
     .join('\n\n')
   try {
-    const reply = await converse(apiKey, [{ role: 'user', text: transcriptForCue(lines) }], {
+    const reply = await askModel(llm, [{ role: 'user', text: transcriptForCue(lines) }], {
+      effort: 'low',
       instruction: CUE_INSTRUCTION,
       maxOutputTokens: CUE_MAX_TOKENS,
       aboutMe,
@@ -228,7 +231,7 @@ async function startLive() {
   cue = null
   cueNote = ''
   // Read once per session, not per cue: a cue waits on nothing but Gemini.
-  ;[apiKey, aboutMe, prepNotes] = await Promise.all([getApiKey(), getAboutMe(), getPrepNotes()])
+  ;[llm, aboutMe, prepNotes] = await Promise.all([getLlmConfig(), getAboutMe(), getPrepNotes()])
   if (mySession !== session) return
   segmenter = createSegmenter()
   const release = await openMic((pcm, speaker) => {
@@ -274,14 +277,15 @@ function prepNotesBackground(notes: string): string {
 async function saveSession(
   snapshot: readonly LiveLine[],
   began: number,
-  key: string | null,
+  key: LlmConfig | null,
   me: string | null,
   notes: string,
 ) {
   let summary: string | null = null
   if (key) {
     status('Live: writing the conversation summary')
-    const reply = await converse(key, [{ role: 'user', text: summaryRequest(snapshot) }], {
+    const reply = await askModel(key, [{ role: 'user', text: summaryRequest(snapshot) }], {
+      effort: 'low',
       instruction: SUMMARY_INSTRUCTION,
       maxOutputTokens: SUMMARY_MAX_TOKENS,
       aboutMe: me,
@@ -302,7 +306,7 @@ async function saveSession(
         role: 'model',
         text:
           summary ??
-          'No summary - add a Gemini key in Jarvis on the companion page to get one next time.',
+          'No summary - add an AI key in Jarvis on the companion page to get one next time.',
         timestamp: Date.now(),
       },
     ],
@@ -318,7 +322,7 @@ async function saveSession(
 function endSession() {
   const snapshot = lines
   const began = startedAt
-  const key = apiKey
+  const key = llm
   const me = aboutMe
   const notes = prepNotes
   stopLive()
@@ -353,7 +357,7 @@ export const liveTool: Tool = {
   // question or timed check.
   onTap: () => {
     if (!releaseMic) return
-    cueNote = apiKey && !cue ? 'Thinking...' : cueNote
+    cueNote = llm && !cue ? 'Thinking...' : cueNote
     if (policy.onTap(Date.now())) void askForCue(session)
     redraw()
   },

@@ -15,21 +15,28 @@ npm run bench -- --no-gemini
 ```
 
 `--only` takes a category or a question id. `--no-gemini` measures hearing
-only.
+only, even with a key.
 
-## Gemini key
+## AI key
 
-Gemini answers need your API key on this PC. Create a file named
-`.env.local` in the project folder (it is gitignored, never committed)
-with one line:
+Answers need an AI key on this PC. Create a file named `.env.local` in the
+project folder (it is gitignored, never committed) with one of:
 
 ```
-GEMINI_API_KEY=your-key-here
+GEMINI_API_KEY=your-key
+DEEPSEEK_API_KEY=your-key
+ANTHROPIC_API_KEY=your-key
 ```
 
-Without it, the run measures hearing only. A full run sends one request
-per question (14 today) and waits 4 seconds between them to stay inside
-the free tier's per-minute limit; set `BENCH_GEMINI_GAP_MS` to change that.
+With more than one, add `LLM_PROVIDER=gemini`, `deepseek` or `claude` to
+choose (otherwise the first one found is used, in that order), and
+optionally `LLM_MODEL=` one of that provider's models (see
+`src/core/llmProviders.ts`). Running the same benchmark with each is how
+to compare them.
+
+Without a key, the run measures hearing only. A full run sends one request
+per question (14 today) and waits 4 seconds between them to stay inside a
+free tier's per-minute limit; set `BENCH_GEMINI_GAP_MS` to change that.
 
 ## Reading the output
 

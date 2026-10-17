@@ -14,10 +14,11 @@
 // network round trip a phone makes). Whisper time is the PC's, usually
 // faster than a phone - Lab's live transcription probe measures the phone.
 import { existsSync, mkdirSync, readFileSync, writeFileSync } from 'node:fs'
-import { join, resolve } from 'node:path'
+import { join } from 'node:path'
 import { spawnSync } from 'node:child_process'
 import { fileURLToPath } from 'node:url'
-import { converse, GEMINI_MODEL } from '../src/core/gemini'
+import { askModel, describeModel } from '../src/core/llm'
+import { llmFromEnv } from './llmEnv'
 import { getPipeline, transcribe, WHISPER_MODEL } from '../src/core/whisperEngine'
 import { toFloat32 } from '../src/shared/pcm'
 import { isSilenceHallucination, stripNonSpeech } from '../src/shared/transcript'
@@ -47,11 +48,10 @@ type Result = {
 }
 
 const BENCH_DIR = fileURLToPath(new URL('.', import.meta.url))
-const ROOT = resolve(BENCH_DIR, '..')
 const AUDIO_DIR = join(BENCH_DIR, 'audio')
 const RESULTS_DIR = join(BENCH_DIR, 'results')
 
-// Pause between Gemini requests so a full run stays inside the free tier's
+// Pause between AI requests so a full run stays inside a free tier's
 // per-minute request limit. converse() already retries a 429 on its own;
 // this keeps a run from needing to. Override with BENCH_GEMINI_GAP_MS.
 const GEMINI_GAP_MS = Number(process.env.BENCH_GEMINI_GAP_MS ?? 4000)
@@ -59,19 +59,6 @@ const GEMINI_GAP_MS = Number(process.env.BENCH_GEMINI_GAP_MS ?? 4000)
 function argValue(name: string): string | null {
   const i = process.argv.indexOf(name)
   return i >= 0 ? (process.argv[i + 1] ?? null) : null
-}
-
-// The key is read from the environment or .env.local (gitignored), never
-// from the repo, and never printed.
-function geminiKey(): string | null {
-  if (process.env.GEMINI_API_KEY) return process.env.GEMINI_API_KEY
-  const envFile = join(ROOT, '.env.local')
-  if (!existsSync(envFile)) return null
-  for (const line of readFileSync(envFile, 'utf8').split(/\r?\n/)) {
-    const match = /^\s*GEMINI_API_KEY\s*=\s*(.+?)\s*$/.exec(line)
-    if (match) return match[1].replace(/^["']|["']$/g, '')
-  }
-  return null
 }
 
 function ensureAudio(questions: readonly Question[]) {
@@ -111,8 +98,12 @@ async function main() {
   const questions = only ? all.filter(q => q.id === only || q.category === only) : all
   if (questions.length === 0) throw new Error(`no question or category named "${only}"`)
 
-  const key = process.argv.includes('--no-gemini') ? null : geminiKey()
-  if (!key) console.log('No GEMINI_API_KEY (env or .env.local): measuring hearing only.')
+  const llm = process.argv.includes('--no-gemini') ? null : llmFromEnv()
+  console.log(
+    llm
+      ? `Answering with ${describeModel(llm)}`
+      : 'No AI key (see bench/README.md): measuring hearing only.',
+  )
 
   ensureAudio(questions)
 
@@ -141,10 +132,10 @@ async function main() {
       verdict: 'skipped',
     }
 
-    if (key && heard) {
+    if (llm && heard) {
       if (index > 0) await delay(GEMINI_GAP_MS)
       const geminiStart = performance.now()
-      const reply = await converse(key, [{ role: 'user', text: heard }], {
+      const reply = await askModel(llm, [{ role: 'user', text: heard }], {
         aboutMe: ABOUT_ME,
         background: backgroundText,
         onText: () => {
@@ -213,7 +204,7 @@ async function main() {
     JSON.stringify(
       {
         date: new Date().toISOString(),
-        geminiModel: GEMINI_MODEL,
+        model: llm ? describeModel(llm) : null,
         whisperModel: WHISPER_MODEL,
         whisperLoadMs,
         results,

@@ -12,15 +12,20 @@ import {
   type Script,
 } from '../features/teleprompter/store'
 import { setActiveScriptContent, clearActiveScriptIfCurrent } from '../features/teleprompter/tool'
-import {
-  getApiKey as getGeminiApiKey,
-  setApiKey as setGeminiApiKey,
-  getAboutMe,
-  setAboutMe,
-  ABOUT_ME_MAX_CHARS,
-} from '../core/geminiSettings'
+import { getAboutMe, setAboutMe, ABOUT_ME_MAX_CHARS } from '../core/geminiSettings'
 import { chatSessions, type ChatSession } from '../features/chat/store'
 import { isWakeWordEnabled, setWakeWordEnabled } from '../core/wakeSettings'
+import {
+  PROVIDERS,
+  getProvider,
+  getProviderKey,
+  getProviderModel,
+  providerInfo,
+  setProvider,
+  setProviderKey,
+  setProviderModel,
+  type Provider,
+} from '../core/llmSettings'
 import { getPrepNotes, setPrepNotes, PREP_NOTES_MAX_CHARS } from '../features/live/settings'
 import { isWakeListening, wakeDescription } from '../core/wakeListener'
 import { type ChatScreenDetail } from '../features/chat/tool'
@@ -180,7 +185,10 @@ async function syncToGlassesScreen(): Promise<void> {
 // devtools, which real hardware does not have an easy way to reach.
 async function renderJarvisSettings(statusMessage?: string) {
   if (!root) return
-  const existingKey = await getGeminiApiKey()
+  const provider = await getProvider()
+  const info = providerInfo(provider)
+  const existingKey = await getProviderKey(provider)
+  const model = await getProviderModel(provider)
   const existingAboutMe = await getAboutMe()
   const wakeOn = await isWakeWordEnabled()
   const prepNotes = await getPrepNotes()
@@ -192,20 +200,36 @@ async function renderJarvisSettings(statusMessage?: string) {
     ${backButton()}
     <div class="editor jarvis-settings">
       <p class="stub-body">
-        Jarvis answers a question it does not recognise as a command
-        (like "timer 5 minutes") by asking Google's Gemini API. This needs
-        your own free API key from
-        <a href="https://aistudio.google.com/apikey" target="_blank" rel="noopener">aistudio.google.com</a>.
-        Leave this blank and Jarvis still works for commands, it just will
-        not answer open-ended questions.
+        Which AI answers Jarvis - questions, commands it does not know
+        offline, and Jarvis Live's cues and summaries. Gemini has a free
+        tier; DeepSeek and Claude are paid, billed by them for what you
+        use. Each keeps its own key and model, so you can switch back and
+        forth. Keys stay on this phone only.
       </p>
       ${statusMessage ? `<p class="jarvis-settings-status">${escapeHtml(statusMessage)}</p>` : ''}
+      <select class="title llm-provider">
+        ${PROVIDERS.map(
+          p =>
+            `<option value="${p.id}"${p.id === provider ? ' selected' : ''}>${p.label}${p.free ? ' (free tier)' : ' (paid)'}</option>`,
+        ).join('')}
+      </select>
+      <select class="title llm-model">
+        ${info.models
+          .map(m => `<option value="${m}"${m === model ? ' selected' : ''}>${m}</option>`)
+          .join('')}
+      </select>
       <input
-        class="title gemini-key"
+        class="title llm-key"
         type="password"
-        placeholder="Gemini API key"
+        placeholder="${info.label} API key"
         value="${escapeHtml(existingKey ?? '')}"
       />
+      <p class="stub-body">
+        Get a ${info.label} key at
+        <a href="${info.keyUrl}" target="_blank" rel="noopener">${escapeHtml(info.keyUrl.replace('https://', ''))}</a>.
+        Without a key, Jarvis still runs commands like timers; it just
+        cannot answer open-ended questions.
+      </p>
       <div class="editor-actions">
         <button class="save">Save</button>
         <button class="cancel clear">Clear</button>
@@ -257,12 +281,26 @@ async function renderJarvisSettings(statusMessage?: string) {
   // returns there.
   attachBack({ kind: 'chat-list' })
 
+  root.querySelector('.llm-provider')?.addEventListener('change', async event => {
+    const chosen = (event.target as HTMLSelectElement).value as Provider
+    const ok = await setProvider(chosen)
+    await renderJarvisSettings(
+      ok ? `Jarvis now uses ${providerInfo(chosen).label}.` : 'Save failed - try again.',
+    )
+  })
+
+  root.querySelector('.llm-model')?.addEventListener('change', async event => {
+    const chosen = (event.target as HTMLSelectElement).value
+    const ok = await setProviderModel(provider, chosen)
+    await renderJarvisSettings(ok ? `Model set to ${chosen}.` : 'Save failed - try again.')
+  })
+
   root.querySelector('.save')?.addEventListener('click', async () => {
-    const input = root.querySelector<HTMLInputElement>('.gemini-key')
+    const input = root.querySelector<HTMLInputElement>('.llm-key')
     if (!input) return
     const typed = input.value.trim()
-    const wroteOk = await setGeminiApiKey(typed)
-    const readBack = await getGeminiApiKey()
+    const wroteOk = await setProviderKey(provider, typed)
+    const readBack = await getProviderKey(provider)
     if (!wroteOk) {
       await renderJarvisSettings('Save failed - the device rejected the write. Try again.')
     } else if (typed.length > 0 && readBack !== typed) {
@@ -277,7 +315,7 @@ async function renderJarvisSettings(statusMessage?: string) {
   })
 
   root.querySelector('.clear')?.addEventListener('click', async () => {
-    await setGeminiApiKey('')
+    await setProviderKey(provider, '')
     await renderJarvisSettings('Cleared.')
   })
 

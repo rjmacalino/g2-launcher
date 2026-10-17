@@ -483,6 +483,22 @@ then on hardware by RJ. Results go back into platform.md with a [HW] tag.
   Gemini as the model underneath. The old features/jarvis tool is deleted;
   the merged tool's code still lives in features/chat. References above
   and below to "Chat" or "Gemini" as a tool predate the merge.
+- D6 Choice of AI (2026-10-17, G2-68): per direct request, the wearer picks
+  which AI answers on the companion page - Gemini (free tier, still the
+  default), DeepSeek or Claude (both paid, billed by the provider) - each
+  with its own key and model, so switching loses nothing. One dispatcher
+  (core/llm.ts) sends the same conversation, system prompt
+  (core/llmTypes.ts) and actions to whichever is chosen. DeepSeek is plain
+  HTTP to its OpenAI-compatible endpoint with thinking off (latency, and
+  thinking plus tools would require resending reasoning every turn).
+  Claude goes through Anthropic's official TypeScript SDK, loaded only when
+  chosen, with dangerouslyAllowBrowser (the wearer's own key on their own
+  phone, same as the Gemini key), Claude Opus 5.5 by default, server-side
+  refusal fallback on Opus and Sonnet, and low effort for Jarvis Live's
+  cues. Both APIs answered real CORS preflights. Verified with unit tests,
+  including the real Claude SDK against a faked stream; not yet with a
+  real key for either. The PC benchmarks take any of the three keys from
+  .env.local (bench/llmEnv.ts), so the providers can be compared.
 - D5 Jarvis acts, not just answers (2026-10-15, G2-58): per direct request
   ("an alexa + gemini combine"), Jarvis controls Notes and the Timer by
   voice. Gemini function calling decides WHAT to do; the action runs on the

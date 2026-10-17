@@ -5,10 +5,8 @@
 // RJ found wrong with the native Conversate (late, and trivia).
 //
 // npm run bench:cues                 needs GEMINI_API_KEY (.env.local)
-import { readFileSync, existsSync } from 'node:fs'
-import { join } from 'node:path'
-import { fileURLToPath } from 'node:url'
-import { converse } from '../src/core/gemini'
+import { askModel, describeModel } from '../src/core/llm'
+import { llmFromEnv, NO_KEY_HELP } from './llmEnv'
 import {
   CUE_INSTRUCTION,
   CUE_MAX_TOKENS,
@@ -103,27 +101,15 @@ const SCENARIOS: Scenario[] = [
   },
 ]
 
-const ROOT = fileURLToPath(new URL('..', import.meta.url))
-
-function geminiKey(): string | null {
-  if (process.env.GEMINI_API_KEY) return process.env.GEMINI_API_KEY
-  const envFile = join(ROOT, '.env.local')
-  if (!existsSync(envFile)) return null
-  for (const line of readFileSync(envFile, 'utf8').split(/\r?\n/)) {
-    const match = /^\s*GEMINI_API_KEY\s*=\s*(.+?)\s*$/.exec(line)
-    if (match) return match[1].replace(/^["']|["']$/g, '')
-  }
-  return null
-}
-
 const GAP_MS = Number(process.env.BENCH_GEMINI_GAP_MS ?? 4000)
 
 async function main() {
-  const key = geminiKey()
-  if (!key) {
-    console.log('No GEMINI_API_KEY (env or .env.local) - cues need Gemini. See bench/README.md.')
+  const llm = llmFromEnv()
+  if (!llm) {
+    console.log(NO_KEY_HELP)
     process.exit(1)
   }
+  console.log(`Cues from ${describeModel(llm)}\n`)
   const times: number[] = []
   let passed = 0
   let scored = 0
@@ -131,7 +117,8 @@ async function main() {
     if (index > 0) await new Promise(done => setTimeout(done, GAP_MS))
     const lines: CueLine[] = scenario.lines.map(([speaker, text], i) => ({ speaker, text, at: i }))
     const started = performance.now()
-    const reply = await converse(key, [{ role: 'user', text: transcriptForCue(lines) }], {
+    const reply = await askModel(llm, [{ role: 'user', text: transcriptForCue(lines) }], {
+      effort: 'low',
       instruction: CUE_INSTRUCTION,
       maxOutputTokens: CUE_MAX_TOKENS,
       aboutMe: ABOUT_ME,

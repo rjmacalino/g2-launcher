@@ -12,13 +12,15 @@
     },
     {
       "name": "network",
-      "desc": "Downloads the weather forecast for your location from Open-Meteo, the on-device speech recognition model used for voice commands (downloaded once, then cached on the device), and, only if you add your own Gemini API key, sends what you ask Jarvis to Google's Gemini API - anything that is not a command like a timer.",
+      "desc": "Downloads the weather forecast for your location from Open-Meteo, the on-device speech recognition model used for voice commands (downloaded once, then cached on the device), and, only if you add your own API key for the AI you choose (Google Gemini, DeepSeek or Anthropic Claude), sends what you ask Jarvis - and, in Jarvis Live, the transcript of the conversation - to that AI.",
       "whitelist": [
         "https://api.open-meteo.com",
         "https://huggingface.co",
         "https://cdn-lfs.huggingface.co",
         "https://cdn-lfs-us-1.huggingface.co",
-        "https://generativelanguage.googleapis.com"
+        "https://generativelanguage.googleapis.com",
+        "https://api.deepseek.com",
+        "https://api.anthropic.com"
       ]
     },
     {

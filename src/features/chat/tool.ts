@@ -7,8 +7,10 @@ import {
   assistantActions,
   runAssistantActions,
 } from '../../core/assistantActions'
-import { converse, type GeminiTurn } from '../../core/gemini'
-import { getAboutMe, getApiKey as getGeminiApiKey } from '../../core/geminiSettings'
+import type { LlmTurn as GeminiTurn } from '../../core/llmTypes'
+import { getAboutMe } from '../../core/geminiSettings'
+import { askModel, describeModel } from '../../core/llm'
+import { getLlmConfig, providerInfo } from '../../core/llmSettings'
 import { chatSessions, type ChatMessage, type ChatSession } from './store'
 import { setContent } from '../../platform/page'
 import { status } from '../../platform/bridge'
@@ -572,14 +574,15 @@ async function askGemini(question: string) {
   if (targetSessionId === null) return
   const stillRelevant = () => depth === 'conversation' && currentSessionId === targetSessionId
 
-  const apiKey = await getGeminiApiKey()
+  // Whichever AI the wearer chose on the companion page (G2-68).
+  const llm = await getLlmConfig()
   // Not the voice-capture session token - see finishListening for how that
   // silently dropped questions on a brief trip to the background.
   if (!stillRelevant()) return
-  if (!apiKey) {
+  if (!llm) {
     setContent(
-      'No Gemini API key set up yet - Jarvis needs one to answer questions.\n\n' +
-        'Add it in Jarvis on the companion page, then try again.',
+      'No AI key set up yet - Jarvis needs one to answer questions.\n\n' +
+        'Add one in Jarvis on the companion page, then try again.',
     )
     return
   }
@@ -631,7 +634,8 @@ async function askGemini(question: string) {
     lastStreamDrawAt = now
     setContent(firstPage)
   }
-  const reply = await converse(apiKey, toGeminiTurns(messagesAtAsk), {
+  status(`Jarvis: asking ${describeModel(llm)}`)
+  const reply = await askModel(llm, toGeminiTurns(messagesAtAsk), {
     onText,
     onRetry: (attempt, max) => {
       attemptsMade = attempt
@@ -665,7 +669,7 @@ async function askGemini(question: string) {
     lastErrorQuestion = question
     const triedNote = attemptsMade > 1 ? ` after ${attemptsMade} tries` : ''
     setContent(
-      `You: ${shortQuestion(question)}${DIVIDER}Couldn't reach Gemini${triedNote} (${reply.message}).` +
+      `You: ${shortQuestion(question)}${DIVIDER}Couldn't reach ${providerInfo(llm.provider).label}${triedNote} (${reply.message}).` +
         '\n\n(tap to retry, double-tap to go back)',
     )
     return
