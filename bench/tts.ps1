@@ -24,6 +24,9 @@ foreach ($q in $questions) {
   $path = Join-Path $OutDir ($q.id + '.wav')
   $voice = New-Object System.Speech.Synthesis.SpeechSynthesizer
   try {
+    # Optional per item: the name of an installed voice, for example
+    # "Microsoft Zira Desktop". Without it, the system default speaks.
+    if ($q.voice) { $voice.SelectVoice($q.voice) }
     $voice.SetOutputToWaveFile($path, $format)
     $voice.Speak($q.text)
   }
