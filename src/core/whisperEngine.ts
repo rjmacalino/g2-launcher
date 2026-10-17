@@ -13,7 +13,7 @@
 // when it can, or on the main thread when it cannot. Both copies are
 // separate module instances - the worker has its own pipeline, its own
 // queue - since a worker shares no memory with the page that started it.
-const WHISPER_MODEL = 'Xenova/whisper-tiny.en'
+export const WHISPER_MODEL = 'Xenova/whisper-tiny.en'
 
 function createPipeline() {
   return import('@huggingface/transformers').then(({ pipeline }) =>

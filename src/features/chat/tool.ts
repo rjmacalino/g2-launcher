@@ -7,7 +7,7 @@ import {
   runAssistantActions,
 } from '../../core/assistantActions'
 import { converse, type GeminiTurn } from '../../core/gemini'
-import { getApiKey as getGeminiApiKey } from '../../core/geminiSettings'
+import { getAboutMe, getApiKey as getGeminiApiKey } from '../../core/geminiSettings'
 import { chatSessions, type ChatMessage, type ChatSession } from './store'
 import { setContent } from '../../platform/page'
 import { status } from '../../platform/bridge'
@@ -562,6 +562,7 @@ async function askGemini(question: string) {
   // holds the question up for long (see core/assistantActions.ts).
   const actions = assistantActions()
   const actionContext = actions.length > 0 ? await assistantActionContext() : ''
+  const aboutMe = await getAboutMe()
   const reply = await converse(apiKey, toGeminiTurns(messagesAtAsk), {
     onRetry: (attempt, max) => {
       attemptsMade = attempt
@@ -573,6 +574,7 @@ async function askGemini(question: string) {
     background: buildDigest(chatSessions.peek() ?? [], targetSessionId),
     functions: actions.map(a => a.declaration),
     actionContext,
+    aboutMe,
   })
   // Only if this is still the latest request - see currentAskId.
   if (myAsk === currentAskId) {

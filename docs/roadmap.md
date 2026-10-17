@@ -347,7 +347,16 @@ then on hardware by RJ. Results go back into platform.md with a [HW] tag.
       is roughly fixed: longer chunks are cheaper per second but add lag.
       Needs a hardware run (Lab is dev-only: npm run dev plus the QR) of
       several minutes; the result decides whether on-device Whisper can
-      carry live transcription or the design has to change
+      carry live transcription or the design has to change.
+      G2-61, the benchmark (bench/, see its README): speaks a fixed
+      question set (general, small talk, personal, interview, LeetCode)
+      with the Windows voice, runs it through the app's own Whisper engine
+      and Gemini client and prompt, and scores speed and correctness.
+      core/gemini.ts now takes About You from its caller instead of reading
+      storage, so it runs outside the WebView. First run, hearing only (no
+      key on the PC yet): Whisper 1.2 to 2.7 s per question on RJ's PC,
+      12 of 14 heard perfectly ("steakhouse" heard as "stake house"). The
+      Windows voice is studio-clean, so real speech will score worse
 - [ ] Photo viewer: album image on the glasses
 
 ## Decisions

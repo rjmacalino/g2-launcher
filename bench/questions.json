@@ -1,0 +1,86 @@
+[
+  {
+    "id": "general-capital",
+    "category": "general",
+    "text": "What is the capital of Australia?",
+    "expect": [["canberra"]]
+  },
+  {
+    "id": "general-minutes",
+    "category": "general",
+    "text": "How many minutes are there in a day?",
+    "expect": [["1440", "1,440"]]
+  },
+  {
+    "id": "general-author",
+    "category": "general",
+    "text": "Who wrote Pride and Prejudice?",
+    "expect": [["austen"]]
+  },
+  {
+    "id": "smalltalk-japan",
+    "category": "smalltalk",
+    "text": "My friend just got back from a trip to Japan. Give me one good follow up question to ask her.",
+    "expect": [["?"]]
+  },
+  {
+    "id": "smalltalk-icebreaker",
+    "category": "smalltalk",
+    "text": "What is a good way to start a conversation with a stranger at a networking event?",
+    "expect": []
+  },
+  {
+    "id": "personal-steakhouse",
+    "category": "personal",
+    "text": "We are going to a steakhouse tonight. What should I order?",
+    "expect": [["vegetarian", "vegetable", "mushroom", "salad", "plant", "meat-free", "meatless"]]
+  },
+  {
+    "id": "personal-race",
+    "category": "personal",
+    "text": "When is my race again?",
+    "expect": [["march"]]
+  },
+  {
+    "id": "personal-laptop",
+    "category": "personal",
+    "text": "What was my budget for the new laptop?",
+    "expect": [["2000", "2,000", "two thousand"]]
+  },
+  {
+    "id": "interview-thread",
+    "category": "interview",
+    "text": "What is the difference between a process and a thread?",
+    "expect": [["memory", "address space"]]
+  },
+  {
+    "id": "interview-conflict",
+    "category": "interview",
+    "text": "How should I answer: tell me about a time you had a conflict with a coworker?",
+    "expect": []
+  },
+  {
+    "id": "leetcode-two-sum",
+    "category": "leetcode",
+    "text": "Given an array of integers and a target, return the indices of the two numbers that add up to the target. What is the best approach?",
+    "expect": [["hash", "map", "dictionary"]]
+  },
+  {
+    "id": "leetcode-parentheses",
+    "category": "leetcode",
+    "text": "How do I check if a string of brackets is valid, where every opening bracket is closed in the right order?",
+    "expect": [["stack"]]
+  },
+  {
+    "id": "leetcode-substring",
+    "category": "leetcode",
+    "text": "How do I find the longest substring without repeating characters?",
+    "expect": [["sliding window", "window", "two pointer"]]
+  },
+  {
+    "id": "leetcode-linked-list",
+    "category": "leetcode",
+    "text": "How do I reverse a singly linked list in place?",
+    "expect": [["previous", "prev", "pointer"]]
+  }
+]

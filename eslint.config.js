@@ -26,11 +26,12 @@ export default tseslint.config(
     },
   },
   {
-    // The CLI helper script: runs under Node directly (npm run qr), not in
-    // the WebView, so it gets Node globals and none of the browser ones.
-    // console.log is its actual output, not a stray debug statement, so the
-    // no-console rule that guards status() elsewhere does not apply here.
-    files: ['scripts/**/*.mjs'],
+    // The CLI helper script (npm run qr) and the benchmark (npm run bench):
+    // both run under Node directly, not in the WebView, so they get Node
+    // globals and none of the browser ones. console.log is their actual
+    // output, not a stray debug statement, so the no-console rule that
+    // guards status() elsewhere does not apply here.
+    files: ['scripts/**/*.mjs', 'bench/**/*.ts'],
     languageOptions: { globals: globals.node },
     rules: { 'no-console': 'off' },
   },

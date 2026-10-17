@@ -11,9 +11,10 @@
     "simulate": "evenhub-simulator http://localhost:5173",
     "qr": "node scripts/qr.mjs",
     "lint": "eslint .",
-    "format": "prettier --write \"src/**/*.ts\" \"tests/**/*.ts\" \"scripts/**/*.mjs\" \"*.{ts,js,html}\"",
-    "format:check": "prettier --check \"src/**/*.ts\" \"tests/**/*.ts\" \"scripts/**/*.mjs\" \"*.{ts,js,html}\"",
+    "format": "prettier --write \"src/**/*.ts\" \"tests/**/*.ts\" \"scripts/**/*.mjs\" \"bench/**/*.ts\" \"*.{ts,js,html}\"",
+    "format:check": "prettier --check \"src/**/*.ts\" \"tests/**/*.ts\" \"scripts/**/*.mjs\" \"bench/**/*.ts\" \"*.{ts,js,html}\"",
     "test": "vitest run",
+    "bench": "vite-node bench/run.ts --",
     "typecheck": "tsc --noEmit",
     "ci": "npm run typecheck && npm run lint && npm run format:check && npm run test && npx vite build"
   },

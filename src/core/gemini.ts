@@ -1,5 +1,3 @@
-import { getAboutMe } from './geminiSettings'
-
 // The model behind Jarvis's answers: anything Jarvis hears that is not a
 // local command (see core/voiceDispatch.ts) comes here, as part of the
 // conversation it was asked in. Deliberately not the path for commands:
@@ -27,8 +25,8 @@ import { getAboutMe } from './geminiSettings'
 // its replacement, and a request against it gets past model validation
 // (hit a transient 503 "high demand" on the two tries made here, a Google
 // capacity issue, not a request problem).
-const MODEL = 'gemini-3.8-flash'
-const ENDPOINT = `https://generativelanguage.googleapis.com/v1beta/models/${MODEL}:generateContent`
+export const GEMINI_MODEL = 'gemini-3.8-flash'
+const ENDPOINT = `https://generativelanguage.googleapis.com/v1beta/models/${GEMINI_MODEL}:generateContent`
 
 // Answers are read by paging on the glasses (features/chat/paging.ts), so
 // they are full answers, not glance-length ones - per direct request. The
@@ -171,6 +169,11 @@ export type ConverseOptions = {
   // they act on.
   functions?: readonly FunctionDeclaration[]
   actionContext?: string
+  // The wearer's "About You" text from the companion page. Passed in by
+  // the caller rather than read from storage here, so this module touches
+  // nothing but the network: the PC benchmark (bench/) runs this exact
+  // client and prompt outside the WebView, with a test persona instead.
+  aboutMe?: string | null
 }
 
 // Only added when there are functions to call. Function descriptions alone
@@ -191,12 +194,11 @@ const ACTIONS_INSTRUCTION =
 export async function converse(
   apiKey: string,
   turns: readonly GeminiTurn[],
-  { onRetry, background, functions = [], actionContext }: ConverseOptions = {},
+  { onRetry, background, functions = [], actionContext, aboutMe }: ConverseOptions = {},
 ): Promise<GeminiResult> {
   // Per direct request: "I want my chatbot to know me... to tailor its
   // answer for me." Empty when nothing has been entered on the companion
   // page, which is the same as not having this feature at all.
-  const aboutMe = await getAboutMe()
   const parts = [SYSTEM_INSTRUCTION]
   if (aboutMe) {
     parts.push(
