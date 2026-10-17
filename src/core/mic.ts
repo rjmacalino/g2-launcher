@@ -22,7 +22,7 @@ let on = false
 let starting: Promise<boolean> | null = null
 
 function deliver(pcm: Uint8Array, speaker: string) {
-  for (const listener of listeners) listener(pcm, speaker)
+  for (const listener of [...listeners]) listener(pcm, speaker)
 }
 
 function subscribe() {

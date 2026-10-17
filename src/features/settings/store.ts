@@ -32,7 +32,7 @@ export function onUpdate(fn: () => void): () => void {
 }
 
 function notify() {
-  for (const fn of listeners) fn()
+  for (const fn of [...listeners]) fn()
 }
 
 // Any failure falls back to defaults rather than an empty bar: a wearer who

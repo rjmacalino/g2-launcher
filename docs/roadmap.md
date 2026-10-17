@@ -483,6 +483,24 @@ then on hardware by RJ. Results go back into platform.md with a [HW] tag.
   Gemini as the model underneath. The old features/jarvis tool is deleted;
   the merged tool's code still lives in features/chat. References above
   and below to "Chat" or "Gemini" as a tool predate the merge.
+- D7 Phone is the full app (2026-10-17, G2-69 to G2-71): per direct
+  request, the companion is the full app - usable with no glasses at all -
+  and the glasses its basic, hands-free extension. Rebuilt as a four-tab
+  app (Jarvis, Live, Notes, Settings) on the Even phone design tokens:
+  typed Jarvis with streamed answers, a live Jarvis Live view with
+  transcript and cues, inline-editable checklists, and every setting plus
+  a Diagnostics log of status lines. Two-way sync: moving on the phone
+  moves the glasses (core/currentScreen.ts requestScreen, tools'
+  screenDetail/showDetail) and moving on the glasses moves the phone,
+  except while someone is typing, when a banner offers to follow. Data
+  changes on either side redraw the other. Jarvis Live still needs the
+  glasses (their mic; the phone's is blocked, D1). Verified in the
+  simulator with a dev-only remote control for the phone page
+  (vite.config.ts, src/companion/devControl.ts): a list made on the phone
+  opened on the glasses, an item ticked on the glasses ticked on the phone,
+  Live started and ended from the phone. Found and fixed on the way: every
+  change-event source looped a Set while listeners resubscribed during the
+  loop, which froze the phone page; they now loop over a copy.
 - D6 Choice of AI (2026-10-17, G2-68): per direct request, the wearer picks
   which AI answers on the companion page - Gemini (free tier, still the
   default), DeepSeek or Claude (both paid, billed by the provider) - each

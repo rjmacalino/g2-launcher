@@ -33,7 +33,9 @@ export function getCurrentScreen(): CurrentScreen {
 
 export function setCurrentScreen(screen: CurrentScreen): void {
   current = screen
-  listeners.forEach(listener => listener(screen))
+  // A copy: a listener that unsubscribes and resubscribes while being
+  // called (a page redrawing itself) would otherwise be called again, forever.
+  for (const listener of [...listeners]) listener(screen)
 }
 
 // Returns an unsubscribe function, same shape as bridge.onEvenHubEvent's

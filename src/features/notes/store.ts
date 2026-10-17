@@ -68,7 +68,10 @@ export function onNotesChange(fn: () => void): () => void {
 function writeAllNotes(all: NoteDoc[]): Promise<boolean> {
   return bridge.setLocalStorage(NOTES_STORAGE_KEY, JSON.stringify(all)).then(ok => {
     if (!ok) status('Failed to save notes')
-    if (ok) for (const fn of changeListeners) fn()
+    // A copy: a Set loop also visits listeners added during it, so a page
+    // that resubscribes while redrawing would be called again, forever
+    // (found in the simulator: the phone's Notes list redrawing nonstop).
+    if (ok) for (const fn of [...changeListeners]) fn()
     return ok
   })
 }

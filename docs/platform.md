@@ -181,6 +181,17 @@ Keys must never ship in the package, it is extractable [DOCS].
   a possible way to tell the wearer from the person they are talking to,
   for Conversate-style features. [UNVERIFIED] what it reports on hardware.
 
+### Gemini free tier, measured (2026-10-17)
+
+`gemini-3.8-flash` on the free tier allows **20 requests per day per
+project** (Google's 429 body: `GenerateRequestsPerDayPerProjectPerModel-
+FreeTier 20`), resetting about a day later. Enough for occasional Jarvis
+questions; not for Jarvis Live, whose cue checks (at most every 15 s) would
+use it up in minutes. Measured with a real key: Jarvis answers about 5 s
+from end of speech to first words on the PC, cues about 3.5 s, and
+bench/cues.ts scored 6/6 once the cue token cap was raised from 60 (which
+cut replies off mid-word) to 200.
+
 ## 4. Lifecycle and background
 
 | Fact | Source |

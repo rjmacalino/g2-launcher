@@ -29,7 +29,26 @@ console.log = (...args: unknown[]) => {
 // no real UI to display them in yet.
 const statusEl = document.getElementById('status')
 
+// The last few status lines, for the companion's Diagnostics section
+// (G2-71) - what the bottom strip used to be the only place to read.
+export type StatusEntry = { at: number; line: string }
+const STATUS_KEEP = 50
+const statusLog: StatusEntry[] = []
+const statusListeners = new Set<() => void>()
+
+export function recentStatus(): readonly StatusEntry[] {
+  return statusLog
+}
+
+export function onStatus(fn: () => void): () => void {
+  statusListeners.add(fn)
+  return () => statusListeners.delete(fn)
+}
+
 export function status(line: string) {
+  statusLog.push({ at: Date.now(), line })
+  if (statusLog.length > STATUS_KEEP) statusLog.shift()
+  for (const fn of [...statusListeners]) fn()
   // The one sanctioned console.log in this codebase: every other diagnostic
   // funnels through this function, so an eslint no-console rule elsewhere
   // catches code that bypassed it instead of allowing console.log everywhere.

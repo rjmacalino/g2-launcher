@@ -122,7 +122,7 @@ export function onLiveChange(fn: () => void): () => void {
 }
 
 function notifyState() {
-  for (const fn of stateListeners) fn()
+  for (const fn of [...stateListeners]) fn()
 }
 
 export function getLiveState(): LiveState {

@@ -248,7 +248,8 @@ async function remove(id: string): Promise<void> {
 const listeners = new Set<() => void>()
 
 function notify(): void {
-  for (const fn of listeners) fn()
+  // A copy - see core/currentScreen.ts's setCurrentScreen.
+  for (const fn of [...listeners]) fn()
 }
 
 function onChange(fn: () => void): () => void {

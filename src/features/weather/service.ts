@@ -40,7 +40,7 @@ export function onUpdate(fn: () => void): () => void {
 }
 
 function notify() {
-  for (const fn of listeners) fn()
+  for (const fn of [...listeners]) fn()
 }
 
 export function refresh(): Promise<void> {

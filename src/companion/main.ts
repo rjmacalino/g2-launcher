@@ -1,859 +1,265 @@
+import './styles.css'
+import { bridge } from '../platform/bridge'
 import {
-  notes,
-  onNotesChange,
-  NOTE_MAX_ITEMS,
-  NOTE_ITEM_MAX_CHARS,
-  type NoteDoc,
-} from '../features/notes/store'
+  getCurrentScreen,
+  onCurrentScreenChange,
+  requestScreen,
+  type CurrentScreen,
+} from '../core/currentScreen'
 import {
-  scripts,
-  getActiveScriptId,
-  setActiveScriptId,
-  type Script,
-} from '../features/teleprompter/store'
-import { setActiveScriptContent, clearActiveScriptIfCurrent } from '../features/teleprompter/tool'
-import { getAboutMe, setAboutMe, ABOUT_ME_MAX_CHARS } from '../core/geminiSettings'
-import { chatSessions, type ChatSession } from '../features/chat/store'
-import { isWakeWordEnabled, setWakeWordEnabled } from '../core/wakeSettings'
-import {
-  PROVIDERS,
-  getProvider,
-  getProviderKey,
-  getProviderModel,
-  providerInfo,
-  setProvider,
-  setProviderKey,
-  setProviderModel,
-  type Provider,
-} from '../core/llmSettings'
-import { getPrepNotes, setPrepNotes, PREP_NOTES_MAX_CHARS } from '../features/live/settings'
-import { isWakeListening, wakeDescription } from '../core/wakeListener'
-import { type ChatScreenDetail } from '../features/chat/tool'
-import { onCurrentScreenChange, getCurrentScreen } from '../core/currentScreen'
-import { TOOL_NAMES } from '../app/registry'
+  routeToScreen,
+  sameRoute,
+  screenToRoute,
+  type AppContext,
+  type Page,
+  type Route,
+} from './app'
+import { h, icon, isTyping } from './dom'
+import { jarvisView } from './views/jarvis'
+import { liveView } from './views/live'
+import { notesView } from './views/notes'
+import { settingsView } from './views/settings'
 
-// The phone companion page: browse the same tools the glasses menu shows, and
-// manage the data behind Notes and Teleprompter scripts.
+// The phone app (G2-71): the full version of everything, usable with no
+// glasses at all, with the glasses as its hands-free extension. It runs in
+// the same page as the code driving the glasses (see platform/bridge.ts),
+// so the two share state directly - no server, no network between them.
 //
-// This runs in the SAME JS instance as everything driving the glasses (see
-// platform/bridge.ts), not a separate app talking over a network. That is why this
-// needs no server: bridge.setLocalStorage is already a persistent per-device
-// store, and editing the active script here can update the teleprompter's
-// in-memory content directly via setActiveScriptContent, without a round trip
-// through storage and a restart to notice.
-//
-// Rendering is rebuild-the-whole-view-on-every-change. No framework, no
-// diffing: the lists here are short (a wearer's own notes and scripts, not a
-// feed), so the cost of throwing away and rebuilding the DOM on every action
-// is not worth a dependency to avoid.
-
-type Collection = 'scripts' | 'notes'
-
-// Mirrors the shell's own Screen type in app/main.ts: a small closed set of places
-// the wearer can be, driving what render() draws. The top level, 'menu', is a
-// deliberate copy of the glasses' own launcher list (same TOOL_NAMES, same
-// order), so opening the phone looks like opening the glasses.
-type View =
-  | { kind: 'menu' }
-  | { kind: 'list'; collection: Collection }
-  | { kind: 'editor'; collection: 'scripts'; item: Script | null }
-  | { kind: 'editor'; collection: 'notes'; item: NoteDoc | null }
-  | { kind: 'jarvis-settings' }
-  | { kind: 'chat-list' }
-  | { kind: 'chat-view'; session: ChatSession }
-  | { kind: 'stub'; label: string }
-
-let view: View = { kind: 'menu' }
-
-// Which script is "active": the one most recently chosen, from either the
-// phone's Use button or the glasses' own picker (see features/teleprompter/tool.ts). Purely
-// informational here, the badge shown next to a script in the list. It does
-// NOT mean "will load automatically next time the teleprompter opens" - the
-// glasses always show their picker first, per direct request, so nothing
-// auto-loads any more. This can go stale if the wearer changes it on the
-// glasses without ever reopening the phone page in between; accepted, since
-// fixing that needs a live channel from the glasses side back to this page,
-// and the badge is a convenience, not something anything else depends on.
-let activeScriptId: string | null = null
+// Two-way: moving here asks the glasses to show the same thing
+// (core/currentScreen.ts's requestScreen, when they are connected and the
+// place has a glasses equivalent), and moving on the glasses brings this
+// app along - unless someone is typing here, when a banner offers to
+// follow instead of throwing the typing away.
 
 const root = document.getElementById('companion')
 if (!root) throw new Error('companion root element missing from index.html')
 
-function escapeHtml(s: string): string {
-  return s
-    .replace(/&/g, '&amp;')
-    .replace(/</g, '&lt;')
-    .replace(/>/g, '&gt;')
-    .replace(/"/g, '&quot;')
+const TABS: { tab: Route['tab']; label: string; icon: string }[] = [
+  { tab: 'jarvis', label: 'Jarvis', icon: 'jarvis' },
+  { tab: 'live', label: 'Live', icon: 'live' },
+  { tab: 'notes', label: 'Notes', icon: 'notes' },
+  { tab: 'settings', label: 'Settings', icon: 'settings' },
+]
+
+let route: Route = { tab: 'jarvis' }
+let page: Page | null = null
+let content: HTMLElement | null = null
+let connected = true
+// The banner's offer: where the glasses went while someone was typing.
+let follow: Route | null = null
+// The last place the glasses announced, so a re-announcement of the same
+// place (Jarvis republishes on every answer) is not taken as a move.
+let glassesKey = ''
+// A place this app just asked the glasses for, so the glasses announcing it
+// back is not taken as the glasses moving on their own.
+let expectedKey: string | null = null
+
+function screenKey(screen: CurrentScreen): string {
+  return JSON.stringify(screen)
 }
 
-function backButton(): string {
-  return '<button class="back">&lt; Back</button>'
+function viewFor(next: Route): Page {
+  switch (next.tab) {
+    case 'live':
+      return liveView(ctx)
+    case 'notes':
+      return notesView(ctx, next)
+    case 'settings':
+      return settingsView(ctx)
+    default:
+      return jarvisView(ctx, next)
+  }
 }
 
-function attachBack(target: View) {
-  root?.querySelector('.back')?.addEventListener('click', () => {
-    view = target
-    render()
-  })
-}
-
-// --- Menu (mirrors the glasses launcher) -----------------------------------
-
-function renderMenu() {
-  if (!root) return
-  root.innerHTML = `
-    <ul class="list menu-list">
-      ${TOOL_NAMES.map(name => `<li class="item menu-item" data-name="${escapeHtml(name)}">${escapeHtml(name)}</li>`).join('')}
-    </ul>
-  `
-  root.querySelectorAll<HTMLElement>('.menu-item').forEach(el => {
-    el.addEventListener('click', () => {
-      view = baselineViewForTool(el.dataset.name)
-      render()
-    })
-  })
-}
-
-// The plain, detail-free mapping from a tool's name to its companion page -
-// what clicking a row in the companion's OWN menu uses (no glasses detail
-// to go on, just "open this tool's page"), and the fallback the
-// glasses-follow sync below uses for every tool except Jarvis, which has
-// its own richer, async-aware version (see syncToGlassesScreen). Jarvis's
-// page is its conversation list, which links to the Gemini key and About
-// You settings.
-function baselineViewForTool(name: string | undefined): View {
-  if (name === 'Teleprompter') return { kind: 'list', collection: 'scripts' }
-  if (name === 'Notes') return { kind: 'list', collection: 'notes' }
-  if (name === 'Jarvis') return { kind: 'chat-list' }
-  return { kind: 'stub', label: name ?? '' }
-}
-
-// Keeps the companion following wherever the glasses actually are - per
-// direct instruction, the glasses are the hands-free extension of the
-// companion, not a separate app with its own independent place to be, so
-// whichever app is open on the glasses, the companion should show that
-// same app's (richer) page. One-directional for now: the companion follows
-// the glasses, not the other way around - see docs/roadmap.md for the
-// companion-steers-glasses direction, not built yet.
-//
-// Jarvis is the one tool with a richer sync today: its own detail (see
-// features/chat/tool.ts's ChatScreenDetail) says not just "Jarvis is open"
-// but which depth and which conversation, so the companion can jump
-// straight to reading the live conversation instead of always landing on
-// the list. Every other tool only gets the baseline "this tool's page is
-// open" sync, since none of them publish anything richer yet.
-async function syncToGlassesScreen(): Promise<void> {
+function pill(): HTMLElement {
   const screen = getCurrentScreen()
-  if (screen.kind === 'menu') {
-    view = { kind: 'menu' }
-    render()
-    return
-  }
-
-  if (screen.name === 'Jarvis') {
-    const detail = screen.detail as ChatScreenDetail | undefined
-    if (detail?.depth === 'conversation' && detail.sessionId) {
-      const found = (await chatSessions.readAll()).find(s => s.id === detail.sessionId)
-      view = found ? { kind: 'chat-view', session: found } : { kind: 'chat-list' }
-    } else {
-      view = { kind: 'chat-list' }
-    }
-    render()
-    return
-  }
-
-  view = baselineViewForTool(screen.name)
-  render()
+  const where = !connected
+    ? 'Glasses off'
+    : screen.kind === 'tool'
+      ? `Glasses: ${screen.name}`
+      : 'Glasses: menu'
+  return h(
+    'button',
+    {
+      class: `glasses-pill${connected ? ' on' : ''}`,
+      'aria-label': where,
+      onclick: () => {
+        const target = screenToRoute(getCurrentScreen())
+        if (connected && target) navigate(target)
+        else navigate({ tab: 'settings' })
+      },
+    },
+    h('span', { class: 'dot' }),
+    where,
+  )
 }
 
-// --- Gemini settings (shared by Jarvis and Chat) ---------------------------
+function render(refresh = false): void {
+  const previous = content
+  const nearEnd =
+    previous !== null && previous.scrollHeight - previous.scrollTop - previous.clientHeight < 80
+  const scrollTop = previous?.scrollTop ?? 0
+  page?.cleanup?.(!refresh)
+  page = viewFor(route)
+  const current = page
 
-// A key entered here is never bundled in the build - it is read at runtime
-// off this device's own local storage (see core/geminiSettings.ts), the
-// same way an API key ships in any app that calls a paid or rate-limited
-// third-party service: brought by the wearer, not shipped in the package
-// for anyone who downloads it to find. Both Jarvis (its open-ended-question
-// fallback) and Chat (every question) use the same key, so both menu items
-// route here rather than each growing its own copy of this screen.
-// Confirms the save actually round-tripped rather than trusting that
-// setLocalStorage's own `ok` result means the value is really readable back
-// - per direct report, a key entered here was not being found by Jarvis
-// later, with no error visible anywhere to explain why. Re-reading
-// immediately after writing turns "did this actually work" into something
-// visible on the phone screen instead of something only debuggable with
-// devtools, which real hardware does not have an easy way to reach.
-async function renderJarvisSettings(statusMessage?: string) {
-  if (!root) return
-  const provider = await getProvider()
-  const info = providerInfo(provider)
-  const existingKey = await getProviderKey(provider)
-  const model = await getProviderModel(provider)
-  const existingAboutMe = await getAboutMe()
-  const wakeOn = await isWakeWordEnabled()
-  const prepNotes = await getPrepNotes()
-  const wakeState = isWakeListening()
-    ? `Listening now: ${wakeDescription()}.`
-    : 'Not listening now.'
+  const header = h(
+    'header',
+    { class: 'app-header' },
+    current.back
+      ? h(
+          'button',
+          {
+            class: 'icon-button',
+            'aria-label': 'Back',
+            onclick: () => current.back && navigate(current.back),
+          },
+          icon('back'),
+        )
+      : null,
+    h('h1', {}, current.title),
+    ...(current.actions ?? []),
+    pill(),
+  )
 
-  root.innerHTML = `
-    ${backButton()}
-    <div class="editor jarvis-settings">
-      <p class="stub-body">
-        Which AI answers Jarvis - questions, commands it does not know
-        offline, and Jarvis Live's cues and summaries. Gemini has a free
-        tier; DeepSeek and Claude are paid, billed by them for what you
-        use. Each keeps its own key and model, so you can switch back and
-        forth. Keys stay on this phone only.
-      </p>
-      ${statusMessage ? `<p class="jarvis-settings-status">${escapeHtml(statusMessage)}</p>` : ''}
-      <select class="title llm-provider">
-        ${PROVIDERS.map(
-          p =>
-            `<option value="${p.id}"${p.id === provider ? ' selected' : ''}>${p.label}${p.free ? ' (free tier)' : ' (paid)'}</option>`,
-        ).join('')}
-      </select>
-      <select class="title llm-model">
-        ${info.models
-          .map(m => `<option value="${m}"${m === model ? ' selected' : ''}>${m}</option>`)
-          .join('')}
-      </select>
-      <input
-        class="title llm-key"
-        type="password"
-        placeholder="${info.label} API key"
-        value="${escapeHtml(existingKey ?? '')}"
-      />
-      <p class="stub-body">
-        Get a ${info.label} key at
-        <a href="${info.keyUrl}" target="_blank" rel="noopener">${escapeHtml(info.keyUrl.replace('https://', ''))}</a>.
-        Without a key, Jarvis still runs commands like timers; it just
-        cannot answer open-ended questions.
-      </p>
-      <div class="editor-actions">
-        <button class="save">Save</button>
-        <button class="cancel clear">Clear</button>
-      </div>
-      <p class="stub-body">
-        A sentence or two about you, sent along with every question to
-        Jarvis so answers can actually be tailored to you -
-        who you are, what you're working on, how you like answers given.
-        Not required; leave it blank and nothing changes about how either
-        one answers.
-      </p>
-      <textarea
-        class="body about-me"
-        placeholder="e.g. I'm a backend engineer learning web dev from scratch - keep explanations simple, skip the basics I already know."
-        maxlength="${ABOUT_ME_MAX_CHARS}"
-      >${escapeHtml(existingAboutMe ?? '')}</textarea>
-      <div class="editor-actions">
-        <button class="save-about-me">Save</button>
-        <button class="cancel clear-about-me">Clear</button>
-      </div>
-      <p class="stub-body">
-        Jarvis Live prep notes: background for your next conversation -
-        who it is with, what it is about, what you want out of it. Jarvis
-        Live uses it for its cues, along with About You above.
-      </p>
-      <textarea
-        class="body prep-notes"
-        placeholder="e.g. Coffee with Sam, a recruiter at a fintech startup. I want to ask about the team and remote work."
-        maxlength="${PREP_NOTES_MAX_CHARS}"
-      >${escapeHtml(prepNotes)}</textarea>
-      <div class="editor-actions">
-        <button class="save-prep-notes">Save</button>
-        <button class="cancel clear-prep-notes">Clear</button>
-      </div>
-      <p class="stub-body">
-        "Hey Jarvis": while this app is open on the glasses, Jarvis listens
-        for its name on the glasses microphone, the same as long-pressing.
-        The listening happens on this phone; nothing is recorded, stored or
-        sent anywhere until you say it. Turn it off to save battery.
-      </p>
-      <p class="jarvis-settings-status">${escapeHtml(wakeState)}</p>
-      <div class="editor-actions">
-        <button class="${wakeOn ? 'cancel ' : ''}toggle-wake">${wakeOn ? 'Turn off "Hey Jarvis"' : 'Turn on "Hey Jarvis"'}</button>
-      </div>
-    </div>
-  `
-
-  // Reached from Jarvis's conversation list (its settings link), so Back
-  // returns there.
-  attachBack({ kind: 'chat-list' })
-
-  root.querySelector('.llm-provider')?.addEventListener('change', async event => {
-    const chosen = (event.target as HTMLSelectElement).value as Provider
-    const ok = await setProvider(chosen)
-    await renderJarvisSettings(
-      ok ? `Jarvis now uses ${providerInfo(chosen).label}.` : 'Save failed - try again.',
-    )
-  })
-
-  root.querySelector('.llm-model')?.addEventListener('change', async event => {
-    const chosen = (event.target as HTMLSelectElement).value
-    const ok = await setProviderModel(provider, chosen)
-    await renderJarvisSettings(ok ? `Model set to ${chosen}.` : 'Save failed - try again.')
-  })
-
-  root.querySelector('.save')?.addEventListener('click', async () => {
-    const input = root.querySelector<HTMLInputElement>('.llm-key')
-    if (!input) return
-    const typed = input.value.trim()
-    const wroteOk = await setProviderKey(provider, typed)
-    const readBack = await getProviderKey(provider)
-    if (!wroteOk) {
-      await renderJarvisSettings('Save failed - the device rejected the write. Try again.')
-    } else if (typed.length > 0 && readBack !== typed) {
-      await renderJarvisSettings(
-        "Saved, but reading it back did not match what you typed - Jarvis likely won't find it. Try again, or report this.",
+  const banner = follow
+    ? h(
+        'div',
+        { class: 'banner' },
+        h('span', {}, 'The glasses moved to another screen.'),
+        h(
+          'button',
+          {
+            class: 'button',
+            onclick: () => {
+              const target = follow
+              follow = null
+              if (target) navigate(target)
+            },
+          },
+          'Follow',
+        ),
       )
-    } else if (typed.length > 0) {
-      await renderJarvisSettings(`Saved and confirmed (${readBack?.length ?? 0} characters).`)
-    } else {
-      await renderJarvisSettings('Cleared.')
-    }
-  })
+    : null
 
-  root.querySelector('.clear')?.addEventListener('click', async () => {
-    await setProviderKey(provider, '')
-    await renderJarvisSettings('Cleared.')
-  })
+  content = h(
+    'main',
+    { class: `app-content${current.footer ? ' with-composer' : ''}` },
+    current.body,
+  )
 
-  root.querySelector('.save-about-me')?.addEventListener('click', async () => {
-    const textarea = root.querySelector<HTMLTextAreaElement>('.about-me')
-    if (!textarea) return
-    const typed = textarea.value.trim()
-    const ok = await setAboutMe(typed)
-    await renderJarvisSettings(
-      ok
-        ? typed.length > 0
-          ? 'About You saved.'
-          : 'About You cleared.'
-        : 'Save failed - try again.',
-    )
-  })
+  const tabbar = h(
+    'nav',
+    { class: 'tabbar', 'aria-label': 'Sections' },
+    TABS.map(t =>
+      h(
+        'button',
+        {
+          class: `tab${t.tab === route.tab ? ' active' : ''}`,
+          'aria-current': t.tab === route.tab ? 'page' : undefined,
+          onclick: () => navigate({ tab: t.tab } as Route),
+        },
+        h('span', { class: 'tab-icon' }, icon(t.icon)),
+        t.label,
+      ),
+    ),
+  )
 
-  root.querySelector('.clear-about-me')?.addEventListener('click', async () => {
-    await setAboutMe('')
-    await renderJarvisSettings('About You cleared.')
-  })
+  root?.replaceChildren(
+    header,
+    ...(banner ? [banner] : []),
+    content,
+    ...(current.footer ? [current.footer] : []),
+    tabbar,
+  )
 
-  root.querySelector('.save-prep-notes')?.addEventListener('click', async () => {
-    const textarea = root.querySelector<HTMLTextAreaElement>('.prep-notes')
-    if (!textarea) return
-    const typed = textarea.value.trim()
-    const ok = await setPrepNotes(typed)
-    await renderJarvisSettings(
-      ok ? (typed ? 'Prep notes saved.' : 'Prep notes cleared.') : 'Save failed - try again.',
-    )
-  })
-
-  root.querySelector('.clear-prep-notes')?.addEventListener('click', async () => {
-    await setPrepNotes('')
-    await renderJarvisSettings('Prep notes cleared.')
-  })
-
-  root.querySelector('.toggle-wake')?.addEventListener('click', async () => {
-    const ok = await setWakeWordEnabled(!wakeOn)
-    await renderJarvisSettings(
-      ok
-        ? wakeOn
-          ? '"Hey Jarvis" turned off.'
-          : '"Hey Jarvis" turned on.'
-        : 'Save failed - try again.',
-    )
-  })
+  const el = content
+  if (refresh && !(current.scrollToEnd && nearEnd)) el.scrollTop = scrollTop
+  else if (current.scrollToEnd) requestAnimationFrame(() => (el.scrollTop = el.scrollHeight))
+  else el.scrollTop = 0
 }
 
-// --- Chat (companion is the full-capability side of this tool) ------------
-//
-// The glasses' own Chat screen can only ever show one "page" of a
-// conversation at a time, newest message first, because that display has no
-// programmatic scroll (see features/chat/tool.ts). The companion has no
-// such limit - a real browser view with normal scrolling - so this is where
-// a conversation is actually read end to end, in the order it was spoken,
-// and where old sessions get cleaned up. The glasses stay the quick way to
-// ask a new question hands-free; the phone is the better way to read what
-// came back.
-
-function formatWhen(ms: number): string {
-  const d = new Date(ms)
-  return d.toLocaleString(undefined, {
-    month: 'short',
-    day: 'numeric',
-    hour: 'numeric',
-    minute: '2-digit',
-  })
+// The glasses follow this app's moves when they are connected and the
+// place has a glasses version (see app.ts's routeToScreen).
+function steerGlasses(next: Route): void {
+  if (!connected) return
+  const screen = routeToScreen(next)
+  if (!screen) return
+  const key = screenKey(screen)
+  if (key === screenKey(getCurrentScreen())) return
+  expectedKey = key
+  requestScreen(screen)
 }
 
-// Matches the glasses' own currently-open conversation, if any (see
-// core/currentScreen.ts and features/chat/tool.ts's ChatScreenDetail) -
-// this is what lets the picker point out which session is live right now,
-// a direct payoff of the glasses-to-companion sync built earlier.
-function isLiveOnGlasses(sessionId: string): boolean {
-  const screen = getCurrentScreen()
-  if (screen.kind !== 'tool' || screen.name !== 'Jarvis') return false
-  const detail = screen.detail as ChatScreenDetail | undefined
-  return detail?.depth === 'conversation' && detail.sessionId === sessionId
+function navigate(next: Route): void {
+  route = next
+  follow = null
+  render()
+  steerGlasses(next)
 }
 
-function chatRow(session: ChatSession): string {
-  const title = escapeHtml(session.title || '(untitled)')
-  const count = session.messages.length
-  const live = isLiveOnGlasses(session.id)
-  return `
-    <li class="item" data-id="${escapeHtml(session.id)}" data-title="${title}">
-      <div class="item-title">${title}${live ? ' <span class="badge">Live on glasses</span>' : ''}</div>
-      <div class="item-sub">${count} message${count === 1 ? '' : 's'} - ${formatWhen(session.updatedAt)}</div>
-      <div class="item-actions">
-        <button class="open">Open</button>
-        <button class="delete">Delete</button>
-      </div>
-    </li>
-  `
+const ctx: AppContext = {
+  navigate,
+  glassesConnected: () => connected,
+  requestGlasses: screen => {
+    if (!connected) return
+    expectedKey = screenKey(screen)
+    requestScreen(screen)
+  },
+  refresh: () => render(true),
 }
 
-async function renderChatList() {
-  if (!root) return
-  const items = (await chatSessions.readAll()).sort((a, b) => b.updatedAt - a.updatedAt)
-
-  root.innerHTML = `
-    ${backButton()}
-    <p class="stub-body">
-      Full conversations, easier to read here than on the glasses.
-      <a class="gemini-settings-link" href="#">Gemini API key settings</a>
-    </p>
-    <ul class="list">
-      ${items.length === 0 ? '<li class="empty">No conversations yet. Long-press on the glasses, from any screen, to ask Jarvis something.</li>' : ''}
-      ${items.map(chatRow).join('')}
-    </ul>
-  `
-
-  attachBack({ kind: 'menu' })
-
-  root.querySelector('.gemini-settings-link')?.addEventListener('click', e => {
-    e.preventDefault()
-    view = { kind: 'jarvis-settings' }
-    render()
-  })
-
-  root.querySelectorAll<HTMLElement>('.item').forEach(el => {
-    const id = el.dataset.id
-    if (!id) return
-
-    el.querySelector('.open')?.addEventListener('click', async () => {
-      const found = (await chatSessions.readAll()).find(s => s.id === id)
-      if (!found) return
-      view = { kind: 'chat-view', session: found }
-      render()
-    })
-
-    // Deleting a conversation is permanent and, unlike Notes or Scripts,
-    // this is the ONLY place it can happen at all - the glasses never get
-    // a delete gesture for Chat (see docs/roadmap.md principle 5, it would
-    // collide with the long-press-to-ask gesture there). One accidental
-    // tap here loses history nowhere else can recover, which is worth a
-    // native confirm() for - no custom dialog needed, the companion is
-    // already a real browser.
-    el.querySelector('.delete')?.addEventListener('click', async () => {
-      const title = el.dataset.title || 'this conversation'
-      if (!window.confirm(`Delete "${title}"? This cannot be undone.`)) return
-      await chatSessions.remove(id)
-      render()
-    })
-  })
-}
-
-function chatBubble(message: ChatSession['messages'][number]): string {
-  const who = message.role === 'user' ? 'You' : 'Jarvis'
-  return `
-    <div class="chat-bubble chat-bubble-${message.role}">
-      <div class="chat-bubble-who">${who} - ${formatWhen(message.timestamp)}</div>
-      <div class="chat-bubble-text">${escapeHtml(message.text)}</div>
-    </div>
-  `
-}
-
-function renderChatView(session: ChatSession) {
-  if (!root) return
-
-  root.innerHTML = `
-    ${backButton()}
-    <div class="chat-transcript">
-      <div class="chat-transcript-title">${escapeHtml(session.title || '(untitled)')}</div>
-      ${session.messages.map(chatBubble).join('')}
-    </div>
-    <div class="editor-actions">
-      <button class="delete">Delete this conversation</button>
-    </div>
-  `
-
-  // Opens on the newest message, not the oldest - the glasses screen
-  // already shows the latest exchange by default (see
-  // features/chat/tool.ts's own newest-first reasoning); the companion's
-  // full, oldest-first transcript should land the reader in the same
-  // place, not make them scroll down through everything first. #companion
-  // (this element) is the actual scroll container - see index.html's
-  // overflow-y: auto on it, not body.
-  root.scrollTop = root.scrollHeight
-
-  attachBack({ kind: 'chat-list' })
-
-  // Same reasoning as the picker's own delete (see chatRow above) - this
-  // is permanent, and the glasses have no equivalent action to fall back
-  // on, so a confirm is worth the one extra tap.
-  root.querySelector('.delete')?.addEventListener('click', async () => {
-    if (!window.confirm(`Delete "${session.title || 'this conversation'}"? This cannot be undone.`))
-      return
-    await chatSessions.remove(session.id)
-    view = { kind: 'chat-list' }
-    render()
-  })
-}
-
-// --- Stub (any tool with nothing to configure on the phone) ----------------
-
-function renderStub(label: string) {
-  if (!root) return
-  root.innerHTML = `
-    ${backButton()}
-    <div class="stub">
-      <div class="stub-title">${escapeHtml(label)}</div>
-      <div class="stub-body">Nothing to set up here yet.</div>
-    </div>
-  `
-  attachBack({ kind: 'menu' })
-}
-
-// --- List: Scripts ------------------------------------------------------
-
-function scriptRow(item: Script): string {
-  const isActive = item.id === activeScriptId
-  const title = escapeHtml(item.title || '(untitled)')
-  return `
-    <li class="item" data-id="${escapeHtml(item.id)}">
-      <div class="item-title">${title}${isActive ? ' <span class="badge">Active</span>' : ''}</div>
-      <div class="item-actions">
-        ${!isActive ? '<button class="activate">Use</button>' : ''}
-        <button class="edit">Edit</button>
-        <button class="delete">Delete</button>
-      </div>
-    </li>
-  `
-}
-
-async function renderScriptsList() {
-  if (!root) return
-  const items = (await scripts.readAll()).sort((a, b) => b.updatedAt - a.updatedAt)
-
-  root.innerHTML = `
-    ${backButton()}
-    <button class="add">+ New script</button>
-    <ul class="list">
-      ${items.length === 0 ? '<li class="empty">Nothing here yet.</li>' : ''}
-      ${items.map(scriptRow).join('')}
-    </ul>
-  `
-
-  attachBack({ kind: 'menu' })
-
-  root.querySelector('.add')?.addEventListener('click', () => {
-    view = { kind: 'editor', collection: 'scripts', item: null }
-    render()
-  })
-
-  root.querySelectorAll<HTMLElement>('.item').forEach(el => {
-    const id = el.dataset.id
-    if (!id) return
-
-    el.querySelector('.edit')?.addEventListener('click', async () => {
-      const found = (await scripts.readAll()).find(i => i.id === id) ?? null
-      view = { kind: 'editor', collection: 'scripts', item: found }
-      render()
-    })
-
-    el.querySelector('.delete')?.addEventListener('click', async () => {
-      await scripts.remove(id)
-      clearActiveScriptIfCurrent(id)
-      if (id === activeScriptId) activeScriptId = null
-      render()
-    })
-
-    el.querySelector('.activate')?.addEventListener('click', async () => {
-      const ok = await setActiveScriptId(id)
-      if (!ok) return
-      activeScriptId = id
-      const found = (await scripts.readAll()).find(i => i.id === id)
-      setActiveScriptContent(id, found ? found.body : '')
-      render()
-    })
-  })
-}
-
-// --- Editor: Scripts ------------------------------------------------------
-
-// Approximate only. The glasses use a single fixed firmware font (576x288 px,
-// monochrome green) whose exact metrics are undocumented; there is no way to
-// reproduce it pixel-for-pixel in CSS. This gives a same-shape, same-aspect
-// preview so the wearer can sanity-check line breaks and length before
-// reading it live, not a guarantee of the exact on-glasses look.
-function glassesPreview(body: string): string {
-  return `
-    <div class="glasses-preview">
-      <div class="glasses-screen">${escapeHtml(body)}</div>
-      <div class="glasses-caption">Preview - approximate, actual glasses font may differ</div>
-    </div>
-  `
-}
-
-function renderScriptsEditor(item: Script | null) {
-  if (!root) return
-
-  root.innerHTML = `
-    ${backButton()}
-    <div class="editor">
-      <input class="title" type="text" placeholder="Title" value="${escapeHtml(item?.title ?? '')}" />
-      <textarea class="body" placeholder="Write here...">${escapeHtml(item?.body ?? '')}</textarea>
-      ${glassesPreview(item?.body ?? '')}
-      <div class="editor-actions">
-        <button class="save">Save</button>
-        <button class="cancel">Cancel</button>
-      </div>
-    </div>
-  `
-
-  attachBack({ kind: 'list', collection: 'scripts' })
-
-  const bodyEl = root.querySelector<HTMLTextAreaElement>('.body')
-  const screenEl = root.querySelector<HTMLElement>('.glasses-screen')
-  bodyEl?.addEventListener('input', () => {
-    if (screenEl) screenEl.textContent = bodyEl.value
-  })
-
-  root.querySelector('.cancel')?.addEventListener('click', () => {
-    view = { kind: 'list', collection: 'scripts' }
-    render()
-  })
-
-  root.querySelector('.save')?.addEventListener('click', async () => {
-    const title = (root.querySelector('.title') as HTMLInputElement).value.trim()
-    const body = (root.querySelector('.body') as HTMLTextAreaElement).value
-
-    if (item) {
-      await scripts.update(item.id, title, body)
-      setActiveScriptContent(item.id, body)
-    } else {
-      await scripts.create(title, body)
-    }
-
-    view = { kind: 'list', collection: 'scripts' }
-    render()
-  })
-}
-
-// --- List: Notes ------------------------------------------------------
-
-// A note's checklist state is meant to be worked through on the glasses (see
-// features/notes/tool.ts): that is the point of a hands-free device. The phone's job
-// is authoring the list and, occasionally, clearing it back to a fresh start
-// before the wearer heads out again - not ticking items off one at a time,
-// which a touchscreen does no better than the glasses do.
-function noteRow(note: NoteDoc): string {
-  const done = note.items.filter(i => i.done).length
-  const total = note.items.length
-  const title = escapeHtml(note.title || '(untitled)')
-  const progress = total > 0 ? ` <span class="badge">${done}/${total}</span>` : ''
-  return `
-    <li class="item" data-id="${escapeHtml(note.id)}">
-      <div class="item-title">${title}${progress}</div>
-      <div class="item-actions">
-        ${done > 0 ? '<button class="reset">Reset</button>' : ''}
-        <button class="edit">Edit</button>
-        <button class="delete">Delete</button>
-      </div>
-    </li>
-  `
-}
-
-async function renderNotesList() {
-  if (!root) return
-  const items = (await notes.readAll()).sort((a, b) => b.updatedAt - a.updatedAt)
-
-  root.innerHTML = `
-    ${backButton()}
-    <button class="add">+ New note</button>
-    <ul class="list">
-      ${items.length === 0 ? '<li class="empty">Nothing here yet.</li>' : ''}
-      ${items.map(noteRow).join('')}
-    </ul>
-  `
-
-  attachBack({ kind: 'menu' })
-
-  root.querySelector('.add')?.addEventListener('click', () => {
-    view = { kind: 'editor', collection: 'notes', item: null }
-    render()
-  })
-
-  root.querySelectorAll<HTMLElement>('.item').forEach(el => {
-    const id = el.dataset.id
-    if (!id) return
-
-    el.querySelector('.edit')?.addEventListener('click', async () => {
-      const found = (await notes.readAll()).find(n => n.id === id) ?? null
-      view = { kind: 'editor', collection: 'notes', item: found }
-      render()
-    })
-
-    el.querySelector('.delete')?.addEventListener('click', async () => {
-      await notes.remove(id)
-      render()
-    })
-
-    el.querySelector('.reset')?.addEventListener('click', async () => {
-      await notes.resetItems(id)
-      render()
-    })
-  })
-}
-
-// --- Editor: Notes ------------------------------------------------------
-
-function renderNotesEditor(item: NoteDoc | null) {
-  if (!root) return
-
-  // Draft state for this editing session. Held here rather than read back out
-  // of the DOM on save, because a row can be added or removed, which redraws
-  // the whole item list; the title and every row's current text have to
-  // survive that redraw, so they live in this closure instead of only in the
-  // inputs themselves.
-  let draftTitle = item?.title ?? ''
-  const draftTexts: string[] = item && item.items.length > 0 ? item.items.map(i => i.text) : ['']
-
-  function itemRowHtml(text: string, index: number): string {
-    return `
-      <li class="note-item-row" data-index="${index}">
-        <input
-          type="text"
-          class="item-text"
-          placeholder="Script"
-          maxlength="${NOTE_ITEM_MAX_CHARS}"
-          value="${escapeHtml(text)}"
-        />
-        <button class="item-remove" type="button">Remove</button>
-      </li>
-    `
+onCurrentScreenChange(screen => {
+  const key = screenKey(screen)
+  if (key === glassesKey) return
+  glassesKey = key
+  if (key === expectedKey) {
+    expectedKey = null
+    render(true)
+    return
   }
-
-  function draw() {
-    if (!root) return
-    root.innerHTML = `
-      ${backButton()}
-      <div class="editor notes-editor">
-        <input class="title" type="text" placeholder="Title" value="${escapeHtml(draftTitle)}" />
-        <ul class="note-items">
-          ${draftTexts.map((text, i) => itemRowHtml(text, i)).join('')}
-        </ul>
-        <button class="add-item" type="button" ${draftTexts.length >= NOTE_MAX_ITEMS ? 'disabled' : ''}>
-          + Add item
-        </button>
-        <div class="editor-actions">
-          <button class="save">Save</button>
-          <button class="cancel">Cancel</button>
-        </div>
-      </div>
-    `
-
-    attachBack({ kind: 'list', collection: 'notes' })
-
-    const titleEl = root.querySelector<HTMLInputElement>('.title')
-    titleEl?.addEventListener('input', () => {
-      draftTitle = titleEl.value
-    })
-
-    root.querySelectorAll<HTMLElement>('.note-item-row').forEach(rowEl => {
-      const index = Number(rowEl.dataset.index)
-      const textEl = rowEl.querySelector<HTMLInputElement>('.item-text')
-      textEl?.addEventListener('input', () => {
-        draftTexts[index] = textEl.value
-      })
-      rowEl.querySelector('.item-remove')?.addEventListener('click', () => {
-        draftTexts.splice(index, 1)
-        draw()
-      })
-    })
-
-    root.querySelector('.add-item')?.addEventListener('click', () => {
-      if (draftTexts.length >= NOTE_MAX_ITEMS) return
-      draftTexts.push('')
-      draw()
-    })
-
-    root.querySelector('.cancel')?.addEventListener('click', () => {
-      view = { kind: 'list', collection: 'notes' }
-      render()
-    })
-
-    root.querySelector('.save')?.addEventListener('click', async () => {
-      const title = draftTitle.trim()
-      if (item) {
-        await notes.update(item.id, title, draftTexts)
-      } else {
-        await notes.create(title, draftTexts)
-      }
-      view = { kind: 'list', collection: 'notes' }
-      render()
-    })
+  const target = screenToRoute(screen)
+  if (!target || sameRoute(target, route)) {
+    render(true)
+    return
   }
-
-  draw()
-}
-
-// --- Dispatch ----------------------------------------------------------
-
-function render() {
-  switch (view.kind) {
-    case 'menu':
-      renderMenu()
-      return
-    case 'stub':
-      renderStub(view.label)
-      return
-    case 'list':
-      if (view.collection === 'scripts') renderScriptsList()
-      else renderNotesList()
-      return
-    case 'editor':
-      if (view.collection === 'scripts') renderScriptsEditor(view.item)
-      else renderNotesEditor(view.item)
-      return
-    case 'jarvis-settings':
-      renderJarvisSettings()
-      return
-    case 'chat-list':
-      renderChatList()
-      return
-    case 'chat-view':
-      renderChatView(view.session)
-      return
+  if (isTyping()) {
+    follow = target
+    render(true)
+    return
   }
+  route = target
+  follow = null
+  render()
+})
+
+// Connection: only "disconnected" and "failed" count as off - before the
+// first status arrives, or in the simulator, the glasses are assumed there.
+function applyConnection(status: { connectType?: string } | null | undefined): void {
+  const type = status?.connectType
+  const now = !(type === 'disconnected' || type === 'connectionFailed')
+  if (now === connected) return
+  connected = now
+  render(true)
 }
 
-async function init() {
-  activeScriptId = await getActiveScriptId()
-  // Subscribes for every future glasses navigation, then syncs once to
-  // whatever the glasses are showing right now - covers both "the glasses
-  // already moved before this page loaded" and "they move after".
-  onCurrentScreenChange(() => {
-    syncToGlassesScreen()
-  })
-  // A list changed somewhere else - most often Jarvis adding to it by
-  // voice. Redrawn only on the notes list itself: an open editor holds the
-  // wearer's unsaved typing, which a redraw would throw away.
-  onNotesChange(() => {
-    if (view.kind === 'list' && view.collection === 'notes') void renderNotesList()
-  })
-  await syncToGlassesScreen()
-}
+void bridge
+  .getDeviceInfo()
+  .then(info => applyConnection(info?.status))
+  .catch(() => {})
+bridge.onDeviceStatusChanged(status => applyConnection(status))
 
-init()
+// Opens wherever the glasses already are, if that has a page here.
+const start = getCurrentScreen()
+glassesKey = screenKey(start)
+route = screenToRoute(start) ?? { tab: 'jarvis' }
+render()
+
+// Dev server only: the remote control in vite.config.ts and devControl.ts.
+// import.meta.hot does not exist in a build, so neither does this.
+if (import.meta.hot) {
+  const hot = import.meta.hot
+  void import('./devControl').then(({ runDevCommand }) => {
+    hot.on('companion:dev', command => runDevCommand(command, navigate))
+  })
+}

@@ -25,8 +25,11 @@ export const CUE_INSTRUCTION =
   'never generic advice like "listen actively". Plain text only, no ' +
   'quotes, no "Cue:" label.'
 
-// Cues are a dozen words; this leaves room for the model to finish one.
-export const CUE_MAX_TOKENS = 60
+// Cues are a dozen words, but a 60-token cap cut real replies off
+// mid-word ("Around 2", "Windows ultr" from Gemini 3.8 Flash in
+// bench/cues.ts). Length is held by the instruction and by parseCue's
+// clip, not by this ceiling.
+export const CUE_MAX_TOKENS = 200
 
 // About two minutes of conversation - enough for context, small enough to
 // keep each request fast and cheap.
