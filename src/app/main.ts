@@ -1201,28 +1201,21 @@ const unsubscribe = bridge.onEvenHubEvent(event => {
     }
   }
 
-  // Long press, reserved globally for Jarvis: from any screen it starts a
-  // new Jarvis conversation, recording. Per direct decision, this takes
-  // plain long press away from every tool that used to be free to claim it
-  // (only Notes did, moved to its own contextual menu item - see
-  // features/notes/tool.ts). Inside Jarvis itself: in a conversation it
-  // asks the next question (Jarvis's own onLongPress); on Jarvis's list it
-  // opens a new conversation, staying in Jarvis rather than treating the
-  // list as a screen to come back to. Lab, dev-only and never shipped,
-  // keeps it for its own hardware probes. LONG_PRESS_EVENT is 9, non-zero,
-  // so the zero-elision trap does not apply here.
+  // Long press belongs to whichever tool is open (D3, revised 2026-10-17 per
+  // direct request: "Hey Jarvis" reaches Jarvis from anywhere, so long
+  // press no longer has to). Each tool decides what it means, or ignores
+  // it. Inside Jarvis it is still Jarvis's own: in a conversation it asks
+  // the next question (Jarvis's onLongPress); on Jarvis's list it opens a
+  // new conversation. LONG_PRESS_EVENT is 9, non-zero, so the zero-elision
+  // trap does not apply here.
   //
   // Recording ends on a tap (see the isSingleTap branch above), not on the
   // matching LONG_PRESS_RELEASE_EVENT - tried release first, and per direct
   // report holding the whole time a question was spoken ended the
   // recording too early. LONG_PRESS_RELEASE_EVENT is deliberately unhandled.
   if (sysType === OsEventTypeList.LONG_PRESS_EVENT) {
-    const tool = activeTool()
-    if (tool?.name === 'Lab') {
-      tool.onLongPress?.()
-    } else {
-      askJarvis()
-    }
+    if (screen.kind === 'tool' && screen.index === JARVIS_INDEX) askJarvis()
+    else activeTool()?.onLongPress?.()
     return
   }
 

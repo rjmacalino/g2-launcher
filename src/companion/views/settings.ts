@@ -74,7 +74,7 @@ function glassesCard(ctx: AppContext): HTMLElement {
       ? isWakeListening()
         ? `Listening now (${wakeDescription()}).`
         : 'On - starts when the glasses are connected.'
-      : 'Off. Long-press on the glasses still reaches Jarvis.'
+      : 'Off. Open Jarvis from the glasses launcher to ask it something.'
   }
   void isWakeWordEnabled().then(paint)
   wakeSwitch.addEventListener('click', async () => {

@@ -161,8 +161,9 @@ export type Tool = {
   // like Jarvis's code view - and no leave prompt should appear.
   onBack?(): boolean
 
-  // Long press while this tool is showing. The shell (app/main.ts) now
-  // reserves plain long press globally to reach Jarvis from any screen -
+  // Long press while this tool is showing - each tool's own to use (D3,
+  // revised: it is no longer reserved for Jarvis). Older note follows:
+  // the shell (app/main.ts) used to reserve plain long press globally -
   // see LONG_PRESS_EVENT there - so this only ever reaches a tool that the
   // shell explicitly carves out (currently just the dev-only Lab tool, for
   // its own probes). Notes used to use this for resetting a checklist;

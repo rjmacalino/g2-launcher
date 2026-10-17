@@ -448,6 +448,11 @@ then on hardware by RJ. Results go back into platform.md with a [HW] tag.
   since it is dev-only and never ships. Any future tool needing a "neither
   forward nor back" action has to use its own contextual menu instead (see
   Timer and Notes for the shape) - plain long press is Jarvis's now.
+  Revised 2026-10-17 per direct request: "Hey Jarvis" (G2-64) is the way
+  to reach Jarvis from anywhere, so long press is given back to each tool
+  to use as it needs. Inside Jarvis it still starts or continues a
+  conversation; elsewhere it does whatever the open tool defines, or
+  nothing.
 - D4 Cloud LLM fallback (2026-09-28): D1's "no paid services" is revisited
   here, deliberately, not silently overridden - per direct request, Jarvis
   now falls back to a cloud LLM (Google's Gemini API, `gemini-2.5-flash`)

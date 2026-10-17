@@ -92,11 +92,7 @@ function listPage(ctx: AppContext): Page {
           { class: 'empty' },
           icon('jarvis'),
           h('h2', {}, 'No conversations yet'),
-          h(
-            'div',
-            {},
-            'Type a question here, or long-press on the glasses (or say "Hey Jarvis") from any screen.',
-          ),
+          h('div', {}, 'Type a question here, or say "Hey Jarvis" to the glasses from any screen.'),
         )
       : [
           h('div', { class: 'section-label' }, 'Conversations'),
