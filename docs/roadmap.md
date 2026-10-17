@@ -384,7 +384,7 @@ then on hardware by RJ. Results go back into platform.md with a [HW] tag.
       voice, battery with the mic always on, the loudness thresholds
       (status line reports "room" and "loudest" levels and near-miss
       scores for tuning).
-      G2-65, Jarvis Live (the Conversate mode, its own launcher entry
+      G2-65, Wingman (the Conversate mode, its own launcher entry
       between Jarvis and Notes, never restored into on a cold start since
       it listens on open): cuts the mic stream into utterances at pauses
       (features/live/segmenter.ts, 700 ms pause, 12 s max) so silence is
@@ -404,7 +404,7 @@ then on hardware by RJ. Results go back into platform.md with a [HW] tag.
       when the talk stalls. Asked at once when a line ends in a question
       mark or on a tap, otherwise at most every 15 s and only after new
       conversation; one request at a time, never closer than 6 s (free
-      tier). Context: About You, Jarvis Live prep notes (new, companion
+      tier). Context: About You, Wingman prep notes (new, companion
       page), and the digest of past Jarvis chats (core/assistantContext.ts).
       Shown under the transcript with its age, gone after a minute. Tools
       can now take a plain tap (Tool.onTap). bench/cues.ts scores time to
@@ -412,7 +412,7 @@ then on hardware by RJ. Results go back into platform.md with a [HW] tag.
       trap and a goodbye that should get NONE. Verified: unit tests, and
       the screen and tap in the simulator. Not verified: any real cue -
       no Gemini key on the PC yet.
-      G2-67, memory: ending Jarvis Live saves the conversation into
+      G2-67, memory: ending Wingman saves the conversation into
       Jarvis's history (core/assistantContext.ts's saver, registered by
       app/main.ts): Gemini writes a record of at most 120 words (who, what,
       key points, promises, things to remember), stored as a Jarvis chat
@@ -452,7 +452,16 @@ then on hardware by RJ. Results go back into platform.md with a [HW] tag.
   to reach Jarvis from anywhere, so long press is given back to each tool
   to use as it needs. Inside Jarvis it still starts or continues a
   conversation; elsewhere it does whatever the open tool defines, or
-  nothing.
+  nothing. Rule chosen for what a tool gives it: a secondary action that
+  is safe and reversible, never destructive and never what a tap already
+  does. Jarvis's code view: cycle the code size. Wingman: pause and resume
+  listening (the mic is released; transcript and session kept). Notes:
+  nothing - reset stays behind the contextual menu, too costly for an
+  accidental hold.
+- D8 "Jarvis Live" renamed Wingman (2026-10-17, per direct request): the
+  name for what it does - beside you in a conversation, feeding you the
+  right line, otherwise quiet. Summaries saved before the rename (titled
+  "Live: ...") are still recognised.
 - D4 Cloud LLM fallback (2026-09-28): D1's "no paid services" is revisited
   here, deliberately, not silently overridden - per direct request, Jarvis
   now falls back to a cloud LLM (Google's Gemini API, `gemini-2.5-flash`)
@@ -492,13 +501,13 @@ then on hardware by RJ. Results go back into platform.md with a [HW] tag.
   request, the companion is the full app - usable with no glasses at all -
   and the glasses its basic, hands-free extension. Rebuilt as a four-tab
   app (Jarvis, Live, Notes, Settings) on the Even phone design tokens:
-  typed Jarvis with streamed answers, a live Jarvis Live view with
+  typed Jarvis with streamed answers, a live Wingman view with
   transcript and cues, inline-editable checklists, and every setting plus
   a Diagnostics log of status lines. Two-way sync: moving on the phone
   moves the glasses (core/currentScreen.ts requestScreen, tools'
   screenDetail/showDetail) and moving on the glasses moves the phone,
   except while someone is typing, when a banner offers to follow. Data
-  changes on either side redraw the other. Jarvis Live still needs the
+  changes on either side redraw the other. Wingman still needs the
   glasses (their mic; the phone's is blocked, D1). Verified in the
   simulator with a dev-only remote control for the phone page
   (vite.config.ts, src/companion/devControl.ts): a list made on the phone
@@ -517,7 +526,7 @@ then on hardware by RJ. Results go back into platform.md with a [HW] tag.
   Claude goes through Anthropic's official TypeScript SDK, loaded only when
   chosen, with dangerouslyAllowBrowser (the wearer's own key on their own
   phone, same as the Gemini key), Claude Opus 5.5 by default, server-side
-  refusal fallback on Opus and Sonnet, and low effort for Jarvis Live's
+  refusal fallback on Opus and Sonnet, and low effort for Wingman's
   cues. Both APIs answered real CORS preflights. Verified with unit tests,
   including the real Claude SDK against a faked stream; not yet with a
   real key for either. The PC benchmarks take any of the three keys from

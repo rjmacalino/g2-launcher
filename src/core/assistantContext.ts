@@ -1,5 +1,5 @@
 // What Jarvis remembers about the wearer's other conversations, for any
-// feature that talks to Gemini on their behalf - today Jarvis Live's cues
+// feature that talks to Gemini on their behalf - today Wingman's cues
 // (features/live). The digest itself is built from Jarvis's saved chats
 // (features/chat/digest.ts), and features never import each other, so
 // app/main.ts registers the builder here at startup: the same indirection
@@ -20,7 +20,7 @@ export function conversationDigest(): string {
 }
 
 // Saving a conversation into Jarvis's history from another feature -
-// Jarvis Live's end-of-conversation record (features/live/summary.ts).
+// Wingman's end-of-conversation record (features/live/summary.ts).
 // Registered by app/main.ts, which knows Jarvis's store; same reason as
 // the digest above.
 export type SavedConversation = {

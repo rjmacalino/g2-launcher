@@ -31,7 +31,7 @@ export type AppContext = {
   navigate(route: Route, options?: { replace?: boolean }): void
   glassesConnected(): boolean
   // Ask the glasses to show something without changing the phone's page -
-  // starting Jarvis Live, ending it.
+  // starting Wingman, ending it.
   requestGlasses(screen: CurrentScreen): void
   // Redraw the current page in place, keeping its scroll position.
   refresh(): void
@@ -79,7 +79,7 @@ export function screenToRoute(screen: CurrentScreen): Route | null {
       return typeof detail.noteId === 'string'
         ? { tab: 'notes', noteId: detail.noteId }
         : { tab: 'notes' }
-    case 'Jarvis Live':
+    case 'Wingman':
       return { tab: 'live' }
     default:
       return null

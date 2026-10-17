@@ -38,7 +38,7 @@ const MIN_SPEECH_RMS = 0.001
 // A single loud frame (a tap on the frame, a cough) is not speech.
 const MIN_SPEECH_FRAMES = 3
 
-// The loudness rules, shared with Jarvis Live's segmenter
+// The loudness rules, shared with Wingman's segmenter
 // (features/live/segmenter.ts) so both judge speech the same way.
 export function isSpeech(rms: number, floor: number, ratio: number = SPEECH_RATIO): boolean {
   return rms >= Math.max(floor * ratio, MIN_SPEECH_RMS)

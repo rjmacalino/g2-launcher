@@ -22,7 +22,7 @@ import { liveTool } from '../features/live/tool'
 // from features/settings/store.ts, none of which this list controls.
 //
 // Jarvis (chatTool) is the one assistant - see features/chat/tool.ts.
-// Jarvis Live (G2-65) is its conversation-listening mode, a launcher entry
+// Wingman (G2-65) is its conversation-listening mode, a launcher entry
 // of its own because it is a different thing to open: it listens to the
 // conversation around the wearer instead of waiting to be asked. Added
 // before Notes rather than after so the two Jarvis entries sit together;

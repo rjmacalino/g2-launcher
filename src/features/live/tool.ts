@@ -27,7 +27,7 @@ import {
   summaryTitle,
 } from './summary'
 
-// Jarvis Live (G2-65): the third Jarvis mode from docs/roadmap.md's Vision
+// Wingman (G2-65): the third Jarvis mode from docs/roadmap.md's Vision
 // - a better Conversate. While open, it listens to the conversation the
 // wearer is having and keeps a live transcript on the glasses. This first
 // step is transcription only; Gemini cues (G2-66) and a saved summary
@@ -70,6 +70,12 @@ const DIVIDER = '\u2500'.repeat(12)
 type Cue = { text: string; at: number }
 
 let releaseMic: (() => void) | null = null
+// Paused by a long press (G2-75): the mic is released - nothing is heard,
+// nothing is sent - but the session, its transcript and its cues stay, and
+// a second long press carries on. For the private moment mid-conversation.
+let paused = false
+let pausedAt = 0
+let pausedMs = 0
 let segmenter: ReturnType<typeof createSegmenter> | null = null
 let waiting: Segment[] = []
 let transcribing = false
@@ -100,11 +106,12 @@ export function liveLines(): readonly LiveLine[] {
   return lines
 }
 
-// Jarvis Live as the phone sees it (G2-70): the companion's Live page
+// Wingman as the phone sees it (G2-70): the companion's Live page
 // shows the full transcript and cue history live, and can ask for a cue,
 // while the glasses show the newest few lines.
 export type LiveState = {
   running: boolean
+  paused: boolean
   startedAt: number
   lines: readonly LiveLine[]
   cue: { text: string; at: number } | null
@@ -128,7 +135,8 @@ function notifyState() {
 export function getLiveState(): LiveState {
   const level = segmenter?.level()
   return {
-    running: releaseMic !== null,
+    running: segmenter !== null,
+    paused,
     startedAt,
     lines,
     cue,
@@ -140,7 +148,7 @@ export function getLiveState(): LiveState {
 
 // "What do I say?" - the same as a tap on the glasses.
 export function askCueNow(): void {
-  if (!releaseMic) return
+  if (!releaseMic || paused) return
   cueNote = llm && !cue ? 'Thinking...' : cueNote
   if (policy.onTap(Date.now())) void askForCue(session)
   redraw()
@@ -165,7 +173,10 @@ function render(): string {
       ? 'writing'
       : 'quiet'
   const ratio = level && level.floor > 0 ? shownLoudest / level.floor : 0
-  const header = `Live ${clock(Date.now() - startedAt)} - ${state} (${ratio.toFixed(1)}x room)`
+  const elapsed = (paused ? pausedAt : Date.now()) - startedAt - pausedMs
+  const header = paused
+    ? `Wingman ${clock(elapsed)} - PAUSED, not listening (hold to resume)`
+    : `Wingman ${clock(elapsed)} - ${state} (${ratio.toFixed(1)}x room)`
   const now = Date.now()
   if (cue && now - cue.at > CUE_EXPIRES_MS) cue = null
   const cueText = cue ? `> ${cue.text} (${Math.round((now - cue.at) / 1000)}s)` : cueNote
@@ -179,7 +190,7 @@ function render(): string {
   }
   let body = shown.join('\n')
   if (body.length > budget) body = `...${body.slice(body.length - budget)}`
-  if (!body) body = 'Listening to the conversation...\n\n(tap for a cue, double-tap to end)'
+  if (!body) body = 'Listening to the conversation...\n\n(tap for a cue, hold to pause, double-tap to end)'
   return cueText ? `${header}\n\n${body}\n${DIVIDER}\n${cueText}` : `${header}\n\n${body}`
 }
 
@@ -211,7 +222,7 @@ function transcribeNext(mySession: number) {
       if (policy.onLine(text, Date.now())) void askForCue(mySession)
       redraw()
     })
-    .catch(e => status(`Live: transcription failed (${e instanceof Error ? e.message : e})`))
+    .catch(e => status(`Wingman: transcription failed (${e instanceof Error ? e.message : e})`))
     .finally(() => {
       transcribing = false
       transcribeNext(mySession)
@@ -246,10 +257,10 @@ async function askForCue(mySession: number) {
       const text = parseCue(reply.text)
       if (text) cue = { text, at: Date.now() }
       const took = ((Date.now() - askedAt) / 1000).toFixed(1)
-      status(`Live: cue in ${took}s${text ? '' : ' (nothing to say)'}`)
+      status(`Wingman: cue in ${took}s${text ? '' : ' (nothing to say)'}`)
       cueNote = ''
     } else if (reply.kind === 'error') {
-      status(`Live: cue failed (${reply.message})`)
+      status(`Wingman: cue failed (${reply.message})`)
       cueNote = cue ? '' : `(cue failed: ${reply.message})`
     }
   } finally {
@@ -267,6 +278,48 @@ function onSegment(segment: Segment, mySession: number) {
   transcribeNext(mySession)
 }
 
+function listen(mySession: number): Promise<(() => void) | null> {
+  return openMic((pcm, speaker) => {
+    if (mySession !== session || !segmenter || paused) return
+    const rms = rmsLevel(toFloat32(pcm))
+    recentLoudest = Math.max(recentLoudest, rms)
+    const segment = segmenter.push(pcm, rms, speaker, Date.now())
+    if (segment) onSegment(segment, mySession)
+  })
+}
+
+export async function togglePause(): Promise<void> {
+  if (!segmenter) return
+  const mySession = session
+  if (!paused) {
+    paused = true
+    pausedAt = Date.now()
+    // Whatever was mid-sentence goes to Whisper; nothing after it is heard.
+    const rest = segmenter.flush(Date.now())
+    if (rest) onSegment(rest, mySession)
+    segmenter = createSegmenter()
+    releaseMic?.()
+    releaseMic = null
+    status('Wingman: paused')
+    redraw()
+    return
+  }
+  const release = await listen(mySession)
+  if (mySession !== session) {
+    release?.()
+    return
+  }
+  if (!release) {
+    status('Wingman: could not resume the microphone')
+    return
+  }
+  releaseMic = release
+  pausedMs += Date.now() - pausedAt
+  paused = false
+  status('Wingman: listening again')
+  redraw()
+}
+
 async function startLive() {
   stopLive()
   const mySession = ++session
@@ -281,13 +334,9 @@ async function startLive() {
   ;[llm, aboutMe, prepNotes] = await Promise.all([getLlmConfig(), getAboutMe(), getPrepNotes()])
   if (mySession !== session) return
   segmenter = createSegmenter()
-  const release = await openMic((pcm, speaker) => {
-    if (mySession !== session || !segmenter) return
-    const rms = rmsLevel(toFloat32(pcm))
-    recentLoudest = Math.max(recentLoudest, rms)
-    const segment = segmenter.push(pcm, rms, speaker, Date.now())
-    if (segment) onSegment(segment, mySession)
-  })
+  paused = false
+  pausedMs = 0
+  const release = await listen(mySession)
   if (mySession !== session) {
     release?.()
     return
@@ -297,13 +346,13 @@ async function startLive() {
     return
   }
   releaseMic = release
-  status(`Live: listening (Whisper via ${engineDescription()})`)
+  status(`Wingman: listening (Whisper via ${engineDescription()})`)
   redraw()
   startRedraw()
 }
 
 function tick() {
-  if (releaseMic && policy.onTick(Date.now())) void askForCue(session)
+  if (releaseMic && !paused && policy.onTick(Date.now())) void askForCue(session)
   redraw()
 }
 
@@ -330,7 +379,7 @@ async function saveSession(
 ) {
   let summary: string | null = null
   if (key) {
-    status('Live: writing the conversation summary')
+    status('Wingman: writing the conversation summary')
     const reply = await askModel(key, [{ role: 'user', text: summaryRequest(snapshot) }], {
       effort: 'low',
       instruction: SUMMARY_INSTRUCTION,
@@ -339,14 +388,14 @@ async function saveSession(
       background: prepNotesBackground(notes),
     })
     if (reply.kind === 'answer') summary = reply.text.trim()
-    else if (reply.kind === 'error') status(`Live: summary failed (${reply.message})`)
+    else if (reply.kind === 'error') status(`Wingman: summary failed (${reply.message})`)
   }
   const saved = await saveConversation({
     title: summaryTitle(summary, began),
     messages: [
       {
         role: 'user',
-        text: `Transcript of a conversation from Jarvis Live:\n${storedTranscript(snapshot)}`,
+        text: `Transcript of a conversation from Wingman:\n${storedTranscript(snapshot)}`,
         timestamp: began,
       },
       {
@@ -377,6 +426,7 @@ function endSession() {
 }
 
 function stopLive() {
+  paused = false
   queueMicrotask(notifyState)
   session++
   stopRedraw()
@@ -388,11 +438,11 @@ function stopLive() {
 }
 
 export const liveTool: Tool = {
-  name: 'Jarvis Live',
+  name: 'Wingman',
   // A whole conversation's transcript is on the line; an accidental
   // double-tap should not end it.
   confirmOnExit: () => true,
-  confirmPrompt: () => 'End Jarvis Live?',
+  confirmPrompt: () => 'End Wingman?',
   initialContent: () => {
     lastScreen = 'Starting the microphone...'
     return lastScreen
@@ -404,6 +454,9 @@ export const liveTool: Tool = {
   // Ask for a cue now - "what do I say?" - instead of waiting for the next
   // question or timed check.
   onTap: askCueNow,
+  // Pause and resume (G2-75): safe, reversible, and the one thing worth a
+  // gesture mid-conversation that a tap (a cue) does not already do.
+  onLongPress: () => void togglePause(),
   // The mic stops in the background anyway (core/mic.ts re-arms it); the
   // clock just does not need to tick for a page nobody is looking at.
   onSuspend: stopRedraw,

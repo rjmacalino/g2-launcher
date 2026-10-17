@@ -1,4 +1,4 @@
-// Jarvis Live cue benchmark (G2-66): scripted conversations, each ending at
+// Wingman cue benchmark (G2-66): scripted conversations, each ending at
 // a moment where a cue should (or should not) appear, sent through the
 // app's own cue prompt and parser (src/features/live/cues.ts) and Gemini
 // client. Measures time to cue and whether the cue helps - the two things

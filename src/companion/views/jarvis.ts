@@ -1,3 +1,4 @@
+import { isWingmanTitle as isLiveTitle } from '../../features/live/summary'
 import { chatSessions, type ChatMessage, type ChatSession } from '../../features/chat/store'
 import { askFromPhone } from '../../features/chat/assistant'
 import { getCurrentScreen, onCurrentScreenChange } from '../../core/currentScreen'
@@ -31,10 +32,6 @@ type Pending = {
 }
 let pending: Pending | null = null
 
-function isLiveTitle(title: string): boolean {
-  return title.startsWith('Live')
-}
-
 function onGlasses(sessionId: string): boolean {
   const screen = getCurrentScreen()
   if (screen.kind !== 'tool' || screen.name !== 'Jarvis') return false
@@ -56,7 +53,7 @@ function sessionRow(ctx: AppContext, session: ChatSession): HTMLElement {
         h(
           'div',
           { class: 'row-title' },
-          isLiveTitle(session.title) ? h('span', { class: 'chip' }, 'Live') : null,
+          isLiveTitle(session.title) ? h('span', { class: 'chip' }, 'Wingman') : null,
           h('span', { class: 'text' }, session.title || '(untitled)'),
           onGlasses(session.id) ? h('span', { class: 'chip accent' }, 'On glasses') : null,
         ),

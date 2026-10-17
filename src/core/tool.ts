@@ -140,7 +140,7 @@ export type Tool = {
   onScroll?(delta: 1 | -1): void
 
   // A single tap on this tool's text page (a list page gets onListSelect
-  // instead). Jarvis Live uses it to ask for a cue now.
+  // instead). Wingman uses it to ask for a cue now.
   onTap?(): void
 
   // Where inside this tool the wearer is, for the companion page to follow

@@ -87,7 +87,7 @@ export type ConverseOptions = {
   // nothing but the network: the PC benchmark (bench/) runs them outside
   // the WebView, with a test persona instead.
   aboutMe?: string | null
-  // Replaces the chat instruction for a different job - Jarvis Live's cues
+  // Replaces the chat instruction for a different job - Wingman's cues
   // (features/live/cues.ts) are one short line or nothing, not an answer.
   // About You and the background are still added after it.
   instruction?: string

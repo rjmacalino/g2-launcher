@@ -1,10 +1,17 @@
-import { askCueNow, getLiveState, onLiveChange, type LiveLine } from '../../features/live/tool'
+import {
+  askCueNow,
+  getLiveState,
+  onLiveChange,
+  togglePause,
+  type LiveLine,
+} from '../../features/live/tool'
 import { getPrepNotes } from '../../features/live/settings'
 import { chatSessions } from '../../features/chat/store'
 import type { AppContext, Page } from '../app'
 import { clock, formatWhen, h, icon } from '../dom'
+import { isWingmanTitle } from '../../features/live/summary'
 
-// The Jarvis Live tab (G2-71). Live listens through the glasses' own
+// The Wingman tab (G2-71). Live listens through the glasses' own
 // microphone - the Even app does not let a plugin use the phone's (see
 // docs/roadmap.md, D1) - so it is started and ended here but runs on the
 // glasses. While it runs, this page is the full view: every line, every
@@ -33,7 +40,7 @@ function idlePage(ctx: AppContext): Page {
     notes.textContent = text || 'None yet - add some in Settings before a conversation.'
   })
   const past = [...(chatSessions.peek() ?? [])]
-    .filter(s => s.title.startsWith('Live'))
+    .filter(s => isWingmanTitle(s.title))
     .sort((a, b) => b.updatedAt - a.updatedAt)
     .slice(0, 10)
 
@@ -43,7 +50,7 @@ function idlePage(ctx: AppContext): Page {
     h(
       'div',
       { class: 'hero' },
-      h('h2', {}, 'Jarvis Live'),
+      h('h2', {}, 'Wingman'),
       h(
         'p',
         {},
@@ -54,7 +61,7 @@ function idlePage(ctx: AppContext): Page {
         {
           class: 'button primary block',
           disabled: !connected,
-          onclick: () => ctx.requestGlasses({ kind: 'tool', name: 'Jarvis Live' }),
+          onclick: () => ctx.requestGlasses({ kind: 'tool', name: 'Wingman' }),
         },
         icon('live'),
         'Start listening',
@@ -104,7 +111,7 @@ function idlePage(ctx: AppContext): Page {
   const stop = onLiveChange(() => {
     if (getLiveState().running) ctx.refresh()
   })
-  return { title: 'Live', body, cleanup: () => stop() }
+  return { title: 'Wingman', body, cleanup: () => stop() }
 }
 
 function runningPage(ctx: AppContext): Page {
@@ -114,6 +121,7 @@ function runningPage(ctx: AppContext): Page {
   const meter = h('div', { class: 'meter' }, meterFill)
   const cueCard = h('div', { class: 'cue-card' })
   const transcript = h('div', { class: 'transcript' })
+  const pauseButton = h('button', { class: 'button', onclick: () => void togglePause() }, 'Pause')
   let shownLines = 0
 
   function update() {
@@ -123,8 +131,10 @@ function runningPage(ctx: AppContext): Page {
       return
     }
     clockEl.textContent = clock(Date.now() - state.startedAt)
-    stateEl.textContent =
-      state.hearing === 'speech'
+    pauseButton.textContent = state.paused ? 'Resume' : 'Pause'
+    stateEl.textContent = state.paused
+      ? 'Paused - not listening'
+      : state.hearing === 'speech'
         ? 'Hearing speech'
         : state.hearing === 'writing'
           ? 'Writing it down...'
@@ -164,6 +174,7 @@ function runningPage(ctx: AppContext): Page {
       'div',
       { class: 'live-status' },
       h('div', { style: 'flex: 1' }, clockEl, stateEl, meter),
+      pauseButton,
       h(
         'button',
         {
@@ -184,7 +195,7 @@ function runningPage(ctx: AppContext): Page {
   )
   update()
   const stop = onLiveChange(update)
-  return { title: 'Live', body, scrollToEnd: true, cleanup: () => stop() }
+  return { title: 'Wingman', body, scrollToEnd: true, cleanup: () => stop() }
 }
 
 export function liveView(ctx: AppContext): Page {

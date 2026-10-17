@@ -198,7 +198,7 @@ about half a second [LAB-SIM].
 `gemini-3.8-flash` on the free tier allows **20 requests per day per
 project** (Google's 429 body: `GenerateRequestsPerDayPerProjectPerModel-
 FreeTier 20`), resetting about a day later. Enough for occasional Jarvis
-questions; not for Jarvis Live, whose cue checks (at most every 15 s) would
+questions; not for Wingman, whose cue checks (at most every 15 s) would
 use it up in minutes. Measured with a real key: Jarvis answers about 5 s
 from end of speech to first words on the PC, cues about 3.5 s, and
 bench/cues.ts scored 6/6 once the cue token cap was raised from 60 (which

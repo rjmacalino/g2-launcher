@@ -1,6 +1,6 @@
 import { transcriptForCue, type CueLine } from './cues'
 
-// What Jarvis Live keeps when a conversation ends (G2-67): a short written
+// What Wingman keeps when a conversation ends (G2-67): a short written
 // record from Gemini, saved as a Jarvis conversation with the transcript
 // behind it, so Jarvis can be asked about it later (its digest carries it
 // into every new question - see features/chat/digest.ts). Pure; the save
@@ -43,7 +43,13 @@ export function storedTranscript(lines: readonly CueLine[]): string {
 // when there is no summary.
 export function summaryTitle(summary: string | null, startedAt: number): string {
   const first = summary?.split(/(?<=[.!?])\s/)[0]?.trim()
-  if (first) return `Live: ${first}`
+  if (first) return `Wingman: ${first}`
   const time = new Date(startedAt).toLocaleTimeString([], { hour: 'numeric', minute: '2-digit' })
-  return `Live conversation at ${time}`
+  return `Wingman conversation at ${time}`
+}
+
+// A saved conversation that came from Wingman - including ones saved
+// before it was renamed from Jarvis Live (titled "Live: ...").
+export function isWingmanTitle(title: string): boolean {
+  return /^(Wingman|Live)( conversation at|:)/.test(title)
 }

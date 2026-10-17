@@ -556,8 +556,8 @@ let inForeground = true
 // transcription or answer already under way (saying "Jarvis" inside a
 // question must not start a second one), the leave prompt, the timer
 // alert, Lab, whose probes hold the mic for their own measurements, or
-// Jarvis Live, where "Jarvis" said in conversation is just a word.
-const NO_WAKE_TOOLS = new Set(['Lab', 'Jarvis Live'])
+// Wingman, where "Jarvis" said in conversation is just a word.
+const NO_WAKE_TOOLS = new Set(['Lab', 'Wingman'])
 
 function canWake(): boolean {
   return (
@@ -720,14 +720,14 @@ if (result === 0) {
 await hydrationPromise
 const storedScreen = await storedScreenPromise
 
-// Jarvis Live starts listening the moment it opens, so it is never
+// Wingman starts listening the moment it opens, so it is never
 // restored into: a cold start or a return from the background must not
 // switch on conversation listening without the wearer choosing it, the
 // same lesson as the old one-shot Jarvis [HW, G2-54]. Also covers a stored
 // index from before Live was added at position 1, which would otherwise
 // restore "Notes" into Live.
 const restoredScreen =
-  storedScreen?.kind === 'tool' && TOOLS[storedScreen.index]?.name === 'Jarvis Live'
+  storedScreen?.kind === 'tool' && TOOLS[storedScreen.index]?.name === 'Wingman'
     ? null
     : storedScreen
 
@@ -830,11 +830,11 @@ registerVoiceDispatch(async transcript => {
 // minutes" in words, "a quarter of an hour"). The context is the names of
 // the wearer's lists, so Gemini uses an existing one rather than inventing
 // a near-duplicate.
-// Jarvis Live's cues know the wearer's other conversations the same way
+// Wingman's cues know the wearer's other conversations the same way
 // Jarvis does: through the digest of saved chats, handed over here because
 // features never import each other.
 registerConversationDigest(() => buildDigest(chatSessions.peek() ?? [], null))
-// ...and a finished Jarvis Live conversation is saved into Jarvis's own
+// ...and a finished Wingman conversation is saved into Jarvis's own
 // history, where the wearer can open it and ask about it.
 registerConversationSaver(conversation =>
   chatSessions.save({

@@ -1,6 +1,6 @@
 import { isSpeech, nextFloor } from '../../shared/endpoint'
 
-// Cuts Jarvis Live's continuous mic stream into utterances (G2-65): a
+// Cuts Wingman's continuous mic stream into utterances (G2-65): a
 // segment starts when speech starts and ends at the next real pause, so
 // each one is a sentence or so that Whisper can transcribe on its own.
 // Silence is never sent to Whisper at all - in a quiet room Live costs

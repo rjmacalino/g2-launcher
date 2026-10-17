@@ -244,7 +244,7 @@ function aiCard(ctx: AppContext): HTMLElement {
     h(
       'p',
       { class: 'caption', style: 'margin: 0 0 12px' },
-      'Answers questions, runs actions it is asked for, and writes Jarvis Live cues and summaries. Keys stay on this phone only.',
+      'Answers questions, runs actions it is asked for, and writes Wingman cues and summaries. Keys stay on this phone only.',
     ),
     body,
   )
@@ -329,7 +329,7 @@ export function settingsView(ctx: AppContext): Page {
       setAboutMe,
     ),
     textCard(
-      'Jarvis Live prep notes',
+      'Wingman prep notes',
       'Background for your next conversation - who it is with, what it is about, what you want from it. Used for Live cues.',
       'e.g. Coffee with Sam, a recruiter at a fintech startup. I want to ask about the team and remote work.',
       PREP_NOTES_MAX_CHARS,

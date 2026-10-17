@@ -24,7 +24,7 @@ import {
 //
 // Request choices, from the claude-api skill's guidance for these models:
 // - thinking is left at the default (adaptive; Claude Opus 5.5 cannot turn
-//   it off), and effort is the speed control - Jarvis Live's cues ask for
+//   it off), and effort is the speed control - Wingman's cues ask for
 //   'low', since a late cue is no use.
 // - max_tokens is larger than the other providers' caps because thinking
 //   counts against it: a 60-token cue budget would leave no room to think.

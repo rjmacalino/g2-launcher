@@ -36,7 +36,7 @@ if (!root) throw new Error('companion root element missing from index.html')
 
 const TABS: { tab: Route['tab']; label: string; icon: string }[] = [
   { tab: 'jarvis', label: 'Jarvis', icon: 'jarvis' },
-  { tab: 'live', label: 'Live', icon: 'live' },
+  { tab: 'live', label: 'Wingman', icon: 'live' },
   { tab: 'notes', label: 'Notes', icon: 'notes' },
   { tab: 'settings', label: 'Settings', icon: 'settings' },
 ]

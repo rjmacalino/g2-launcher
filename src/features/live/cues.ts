@@ -1,4 +1,4 @@
-// Jarvis Live's cues (G2-66): what to ask Gemini, how to read its reply,
+// Wingman's cues (G2-66): what to ask Gemini, how to read its reply,
 // and when to ask. Pure, so all three are unit-tested
 // (tests/live-cues.test.ts) and measured by bench/cues.ts.
 //
@@ -77,7 +77,7 @@ export type CuePolicyOptions = {
   minNewChars?: number
 }
 
-// Decides when Jarvis Live asks for a cue. One request at a time; a reason
+// Decides when Wingman asks for a cue. One request at a time; a reason
 // to ask that comes up while one is in flight is remembered and acted on
 // as soon as it finishes, so a question asked mid-request is not lost.
 export function createCuePolicy({
