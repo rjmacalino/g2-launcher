@@ -1,4 +1,5 @@
 import { converse as converseGemini } from './gemini'
+import { status } from '../platform/bridge'
 import type { ConverseOptions, LlmResult, LlmTurn } from './llmTypes'
 import { localEndpoint, providerInfo, type LlmConfig } from './llmProviders'
 
@@ -34,7 +35,41 @@ export async function askModel(
       return converseClaude(config.apiKey, config.model, turns, options)
     }
     default:
-      return converseGemini(config.apiKey, turns, options, config.model)
+      return askGemini(config, turns, options)
+  }
+}
+
+// Gemini's free tier is a daily allowance per model (docs/platform.md), so
+// a 429 on one model says nothing about the others (G2-85: a phone
+// question failed with 429 after the day's requests went on one model).
+// The chosen model goes first; on a 429 the next one is tried, and models
+// that ran out are skipped until Google's day turns over (Pacific time).
+const outOfQuota = new Map<string, string>()
+
+function googleDay(): string {
+  return new Date().toLocaleDateString('en-CA', { timeZone: 'America/Los_Angeles' })
+}
+
+async function askGemini(
+  config: LlmConfig,
+  turns: readonly LlmTurn[],
+  options: ConverseOptions,
+): Promise<LlmResult> {
+  const today = googleDay()
+  const others = providerInfo('gemini')
+    .models.map(m => m.id)
+    .filter(id => id !== config.model)
+  const order = [config.model, ...others].filter(id => outOfQuota.get(id) !== today)
+  for (const model of order) {
+    const result = await converseGemini(config.apiKey, turns, options, model)
+    if (result.kind !== 'error' || !result.message.includes('429')) return result
+    outOfQuota.set(model, today)
+    status(`Gemini ${model}: free daily limit reached, trying another model`)
+  }
+  return {
+    kind: 'error',
+    message:
+      "Gemini's free daily limit is used up on every model - try again tomorrow, or choose another AI in Settings",
   }
 }
 

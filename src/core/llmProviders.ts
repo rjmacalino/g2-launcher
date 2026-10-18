@@ -48,6 +48,7 @@ export const PROVIDERS: readonly ProviderInfo[] = [
     label: 'Gemini',
     free: true,
     models: [
+      { id: 'gemini-3.1-flash-lite', label: '3.1 Flash-Lite', speed: 'fastest' },
       { id: 'gemini-3.5-flash-lite', label: '3.5 Flash-Lite', speed: 'fastest' },
       { id: 'gemini-3.6-flash', label: '3.6 Flash', speed: 'fast' },
       { id: 'gemini-3.8-flash', label: '3.8 Flash', speed: 'smart' },
@@ -94,6 +95,10 @@ export const PROVIDERS: readonly ProviderInfo[] = [
 // "http://192.168.1.20:11434".
 export function localEndpoint(address: string): string {
   let base = address.trim().replace(/\/+$/, '')
+  // "192:168:1:200" typed with colons (seen on the phone): four numbers
+  // with colons between them can only be an IPv4 address.
+  const colons = /^(\d{1,3}):(\d{1,3}):(\d{1,3}):(\d{1,3})$/.exec(base)
+  if (colons) base = colons.slice(1).join('.')
   if (!/^https?:\/\//.test(base)) base = `http://${base}`
   if (!/:\d+$/.test(base)) base = `${base}:11434`
   return `${base}/v1/chat/completions`

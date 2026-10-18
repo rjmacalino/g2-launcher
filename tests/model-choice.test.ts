@@ -8,7 +8,7 @@ afterEach(() => {
 
 describe('model per job (G2-77)', () => {
   it('gives Wingman the fastest model and the phone a smarter one', () => {
-    expect(defaultModel('gemini', 'wingman')).toBe('gemini-3.5-flash-lite')
+    expect(defaultModel('gemini', 'wingman')).toBe('gemini-3.1-flash-lite')
     expect(defaultModel('gemini', 'glasses')).toBe('gemini-3.6-flash')
     expect(defaultModel('gemini', 'phone')).toBe('gemini-3.8-flash')
     expect(defaultModel('claude', 'wingman')).toBe('claude-haiku-5-5')
@@ -51,5 +51,6 @@ describe('local model address (G2-78)', () => {
     const { localEndpoint } = await import('../src/core/llmProviders')
     expect(localEndpoint('192.168.1.20')).toBe('http://192.168.1.20:11434/v1/chat/completions')
     expect(localEndpoint('http://pc.lan:8080/')).toBe('http://pc.lan:8080/v1/chat/completions')
+    expect(localEndpoint('192:168:1:200')).toBe('http://192.168.1.200:11434/v1/chat/completions')
   })
 })
