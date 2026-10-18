@@ -34,6 +34,14 @@ const LOCAL_MODELS: readonly ModelInfo[] = [
   { id: 'qwen2.5:3b', label: 'Qwen 2.5 3B', speed: 'fastest' },
   // 3 to 5 of 6 right, about 0.8 to 1.7 s: the better of the two.
   { id: 'llama3.2:3b', label: 'Llama 3.2 3B', speed: 'fast', preferFor: ['wingman'] },
+  // Llama 3.2 3B fine-tuned on Jarvis-style answers with Soup (G2-90):
+  // bench/chatData.ts, 632 examples, made locally - see docs/roadmap.md.
+  {
+    id: 'jarvis-llama',
+    label: 'Jarvis Llama 3B (trained)',
+    speed: 'fast',
+    preferFor: ['glasses', 'phone'],
+  },
 ]
 
 // Model IDs as each provider documents them. Gemini's are the ones a free
