@@ -23,6 +23,8 @@ export type WorkerRequest =
 // 'failed' is an ordinary error for one recording, same as before workers.
 export type WorkerResponse =
   | { kind: 'ready' }
+  // The model is set up and can transcribe (G2-82).
+  | { kind: 'loaded' }
   | { kind: 'loadFailed'; message: string }
   | { kind: 'done'; id: number; text: string }
   | { kind: 'failed'; id: number; message: string }
@@ -43,9 +45,19 @@ function reportLoadFailure(e: unknown) {
   scope.postMessage({ kind: 'loadFailed', message: errorText(e) })
 }
 
+let loadedSent = false
+
+async function loadModel(): Promise<void> {
+  await getPipeline()
+  if (!loadedSent) {
+    loadedSent = true
+    scope.postMessage({ kind: 'loaded' })
+  }
+}
+
 async function handleTranscribe(id: number, audio: Float32Array) {
   try {
-    await getPipeline()
+    await loadModel()
   } catch (e) {
     reportLoadFailure(e)
     return
@@ -60,7 +72,7 @@ async function handleTranscribe(id: number, audio: Float32Array) {
 scope.addEventListener('message', event => {
   const request = event.data
   if (request.kind === 'preload') {
-    getPipeline().catch(reportLoadFailure)
+    loadModel().catch(reportLoadFailure)
     return
   }
   void handleTranscribe(request.id, request.audio)

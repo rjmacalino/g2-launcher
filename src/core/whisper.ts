@@ -14,6 +14,7 @@
 // lands back on the main thread, and the one recording that hit it is
 // retried there rather than lost.
 import type { WorkerRequest, WorkerResponse } from './whisperWorker'
+import { status } from '../platform/bridge'
 import * as mainThread from './whisperEngine'
 
 // The worker script itself is small (the model is loaded later, on first
@@ -22,7 +23,19 @@ import * as mainThread from './whisperEngine'
 // would leave every recording stuck on "Transcribing" for good.
 const READY_TIMEOUT_MS = 10_000
 
+// A worker that started but never answers would leave a recording stuck
+// on "transcribing" for good - seen on the glasses (G2-82), where the
+// worker path had never been confirmed. Each request gets a deadline;
+// missing it means the worker is not working here, so it is stopped and
+// the recording is redone on the main thread. Longer while the model is
+// still loading, since the first use downloads it.
+const ANSWER_MS_LOADING = 90_000
+const ANSWER_MS_BASE = 15_000
+const ANSWER_MS_PER_AUDIO_SECOND = 2_000
+let modelLoaded = false
+
 type Pending = {
+  timer: ReturnType<typeof setTimeout>
   audio: Float32Array
   resolve: (text: string) => void
   reject: (error: Error) => void
@@ -46,12 +59,14 @@ function fallBackToMainThread(reason: string) {
   if (fallbackReason !== null) return
   fallbackReason = reason
   console.warn(`Whisper worker unavailable, using the main thread: ${reason}`)
+  status(`Whisper: switched to the main thread (${reason})`)
   if (readyTimer !== null) clearTimeout(readyTimer)
   readyTimer = null
   worker?.terminate()
   worker = null
   for (const [id, request] of pending) {
     pending.delete(id)
+    clearTimeout(request.timer)
     mainThread.transcribe(request.audio).then(request.resolve, request.reject)
   }
 }
@@ -62,6 +77,11 @@ function handleMessage(message: WorkerResponse) {
     readyTimer = null
     return
   }
+  if (message.kind === 'loaded') {
+    modelLoaded = true
+    status('Whisper model ready (worker)')
+    return
+  }
   if (message.kind === 'loadFailed') {
     fallBackToMainThread(`model load failed in worker: ${message.message}`)
     return
@@ -69,6 +89,7 @@ function handleMessage(message: WorkerResponse) {
   const request = pending.get(message.id)
   if (!request) return
   pending.delete(message.id)
+  clearTimeout(request.timer)
   if (message.kind === 'done') request.resolve(message.text)
   else request.reject(new Error(message.message))
 }
@@ -123,7 +144,18 @@ export function transcribe(audio: Float32Array): Promise<string> {
   if (!target) return mainThread.transcribe(audio)
   return new Promise((resolve, reject) => {
     const id = nextId++
-    pending.set(id, { audio, resolve, reject })
+    const seconds = audio.length / 16_000
+    const deadline = modelLoaded
+      ? ANSWER_MS_BASE + seconds * ANSWER_MS_PER_AUDIO_SECOND
+      : ANSWER_MS_LOADING
+    const timer = setTimeout(
+      () =>
+        fallBackToMainThread(
+          `no answer in ${Math.round(deadline / 1000)}s (${modelLoaded ? 'model loaded' : 'model still loading'})`,
+        ),
+      deadline,
+    )
+    pending.set(id, { timer, audio, resolve, reject })
     // Copied to the worker, not transferred: transferring would empty this
     // side's copy of the samples, and the fallback above needs them to
     // retry the recording on the main thread if the worker fails mid-way.
