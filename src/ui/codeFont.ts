@@ -24,10 +24,14 @@ export function isCodeFontLoaded(): boolean {
   return loaded
 }
 
+// Code must never wait long for its font (G2-91: opening code took 30 s
+// on the glasses, cause unknown): past this, it draws with the fallbacks.
+const LOAD_TIMEOUT_MS = 2000
+
 // Loads the font once; resolves even if it fails, leaving the fallbacks.
 export function loadCodeFont(name: CodeFontName = 'fira'): Promise<void> {
   if (ready) return ready
-  ready = (async () => {
+  const loading = (async () => {
     try {
       // A name per font, so a second font is never hidden behind the first.
       const face = new FontFace(`JarvisCode-${name}`, `url(${CODE_FONTS[name]})`, {
@@ -40,5 +44,6 @@ export function loadCodeFont(name: CodeFontName = 'fira'): Promise<void> {
       // The system monospace fonts still line up; only the look differs.
     }
   })()
+  ready = Promise.race([loading, new Promise<void>(done => setTimeout(done, LOAD_TIMEOUT_MS))])
   return ready
 }

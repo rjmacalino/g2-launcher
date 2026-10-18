@@ -435,7 +435,9 @@ async function drawCode(): Promise<void> {
     return
   }
   // Measured before the bundled font arrived: measure again with it.
+  const fontStarted = performance.now()
   await loadCodeFont()
+  const fontMs = performance.now() - fontStarted
   if (codeView && !codeView.metrics.withFont && isCodeFontLoaded()) {
     viewBlock(codeView.block, codeView.screen)
   }
@@ -451,7 +453,12 @@ async function drawCode(): Promise<void> {
       const where = codeBlocks.length > 1 ? `Code ${view.block + 1}/${codeBlocks.length} - ` : ''
       const more = view.screen < view.screens.length - 1 ? 'swipe for more, ' : ''
       const footer = `${where}lines ${first}-${first + lines.length - 1} of ${total} - ${more}hold: size, double-tap: text`
-      await setTiles(await renderCodeTiles(lines, view.metrics, footer))
+      const renderStarted = performance.now()
+      const tiles = await renderCodeTiles(lines, view.metrics, footer)
+      status(
+        `Jarvis: code font ${(fontMs / 1000).toFixed(1)}s (${isCodeFontLoaded() ? 'bundled' : 'fallback'}), drawn in ${((performance.now() - renderStarted) / 1000).toFixed(1)}s`,
+      )
+      await setTiles(tiles)
     } while (drawAgain && codeView)
   } finally {
     drawing = false

@@ -1,3 +1,4 @@
+import { loadCodeFont } from '../ui/codeFont'
 import {
   CreateStartUpPageContainer,
   ImageContainerProperty,
@@ -971,6 +972,8 @@ onTimerExpired(showTimerAlert)
 // slow or failed load must not block startup, which is exactly what
 // preload() itself already guarantees (see core/whisper.ts).
 preloadWhisper()
+// The code font too (G2-91), so opening code never waits for it.
+void loadCodeFont()
 
 // "Hey Jarvis" listening, unless turned off on the companion page, which
 // can also switch it on and off while the app runs.

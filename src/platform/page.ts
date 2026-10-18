@@ -287,8 +287,13 @@ export function tileContainers(): ImageContainerProperty[] {
 // One at a time, in order: the platform rejects two image sends at once
 // (docs/platform.md). Each costs about 0.1 s, so a full screen is about
 // half a second. Resolves false at the first failure.
+// Each send is timed onto the status line (G2-91): opening code took 30 s
+// on the glasses, against about 0.1 s per image measured elsewhere
+// (docs/platform.md), and this is where to see which.
 export async function setTiles(images: Uint8Array[]): Promise<boolean> {
+  const times: string[] = []
   for (const [i, data] of images.entries()) {
+    const started = performance.now()
     const result = await bridge.updateImageRawData(
       new ImageRawDataUpdate({
         containerID: TILE_FIRST_ID + i,
@@ -296,10 +301,14 @@ export async function setTiles(images: Uint8Array[]): Promise<boolean> {
         imageData: data,
       }),
     )
+    times.push(
+      `${((performance.now() - started) / 1000).toFixed(1)}s/${Math.round(data.length / 1024)}KB`,
+    )
     if (!ImageRawDataUpdateResult.isSuccess(result)) {
       status(`Tile ${i} update failed: ${result}`)
       return false
     }
   }
+  status(`Tiles sent: ${times.join(', ')}`)
   return true
 }
