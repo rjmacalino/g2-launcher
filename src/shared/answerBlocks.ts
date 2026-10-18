@@ -20,12 +20,37 @@ function looksLikeCode(lines: string[]): boolean {
   return codeLike / meaningful.length >= 0.6 && sentences === 0
 }
 
+// A plain sentence: not indented, no code punctuation, and either ends
+// like a sentence or runs to several words.
+function isProseLine(line: string): boolean {
+  if (/^\s/.test(line) || CODE_LINE.test(line)) return false
+  const words = line.trim().split(/\s+/).length
+  return /[.!?]$/.test(line.trim()) || words >= 6
+}
+
+// A paragraph with code in the middle and sentences only before or after
+// it (G2-94: the PC model writes "def ...", "  return a", "This approach
+// uses ..." with no blank line between) is split there, so the code is
+// still found.
+function separateProse(lines: string[]): string[][] {
+  const isCode = (l: string) => CODE_LINE.test(l)
+  const first = lines.findIndex(isCode)
+  const last = lines.length - 1 - [...lines].reverse().findIndex(isCode)
+  if (first < 0 || last - first < 1) return [lines]
+  const before = lines.slice(0, first)
+  const after = lines.slice(last + 1)
+  if (!before.every(isProseLine) || !after.every(isProseLine)) return [lines]
+  return [before, lines.slice(first, last + 1), after].filter(part => part.length > 0)
+}
+
 export function splitAnswer(text: string): AnswerBlock[] {
   // Fenced blocks, if a model uses them anyway, are code by definition.
   const unfenced = text.replace(/^```[\w+-]*\s*$/gm, '')
   const blocks: AnswerBlock[] = []
-  for (const chunk of unfenced.split(/\n\s*\n/)) {
-    const lines = chunk.replace(/\s+$/, '').split('\n')
+  const chunks = unfenced
+    .split(/\n\s*\n/)
+    .flatMap(chunk => separateProse(chunk.replace(/\s+$/, '').split('\n')))
+  for (const lines of chunks) {
     if (lines.every(l => l.trim() === '')) continue
     const kind = looksLikeCode(lines) ? 'code' : 'text'
     const last = blocks[blocks.length - 1]

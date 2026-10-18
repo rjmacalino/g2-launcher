@@ -34,6 +34,23 @@ describe('splitAnswer', () => {
     expect(splitAnswer(answer)).toEqual([{ kind: 'code', text: answer }])
   })
 
+  it('finds code with its explanation in the same paragraph (G2-94)', () => {
+    const code = 'def fib(n):\n  a, b = 0, 1\n  for _ in range(n):\n    a, b = b, a + b\n  return a'
+    expect(splitAnswer(`${code}\nThis approach uses constant memory space.`)).toEqual([
+      { kind: 'code', text: code },
+      { kind: 'text', text: 'This approach uses constant memory space.' },
+    ])
+    expect(splitAnswer(`Here is one way to do it in Python:\n${code}`)).toEqual([
+      { kind: 'text', text: 'Here is one way to do it in Python:' },
+      { kind: 'code', text: code },
+    ])
+  })
+
+  it('leaves a paragraph that only mentions code as text', () => {
+    const answer = 'Use a dictionary. For each number, check if target - n was seen.'
+    expect(splitAnswer(answer)).toEqual([{ kind: 'text', text: answer }])
+  })
+
   it('treats fenced blocks as code and drops the fences', () => {
     const blocks = splitAnswer('Here you go:\n\n```js\nconst x = 1;\n```')
     expect(blocks).toEqual([
