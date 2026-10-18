@@ -32,7 +32,24 @@ export function toTurns(messages: readonly ChatMessage[]): LlmTurn[] {
   return turns
 }
 
+// Nothing in a request may wait forever (G2-84): on the glasses a stalled
+// read or connection left Jarvis stuck with no answer. About You is extra
+// context, so after a short wait the question goes without it; the whole
+// answer gets a generous limit, after which the wearer sees an error and
+// can retry. A reply arriving after that is ignored.
+const ABOUT_ME_TIMEOUT_MS = 3000
+const ANSWER_TIMEOUT_MS = 60_000
+
+function within<T>(promise: Promise<T>, ms: number, fallback: T): Promise<T> {
+  return Promise.race([
+    promise.catch(() => fallback),
+    new Promise<T>(resolve => setTimeout(() => resolve(fallback), ms)),
+  ])
+}
+
 export type AskHooks = {
+  // How long to wait for the answer; tests use a short one.
+  timeoutMs?: number
   onText?: (textSoFar: string) => void
   onRetry?: (attempt: number, maxAttempts: number) => void
 }
@@ -43,7 +60,7 @@ export async function askAssistant(
   llm: LlmConfig,
   history: readonly ChatMessage[],
   sessionId: string | null,
-  { onText, onRetry }: AskHooks = {},
+  { onText, onRetry, timeoutMs = ANSWER_TIMEOUT_MS }: AskHooks = {},
 ): Promise<LlmResult> {
   // What Jarvis can do, not just answer (notes, timer - registered by
   // app/main.ts). The context is best effort and time-limited, so it never
@@ -51,10 +68,11 @@ export async function askAssistant(
   const actions = assistantActions()
   const [actionContext, aboutMe] = await Promise.all([
     actions.length > 0 ? assistantActionContext() : Promise.resolve(''),
-    getAboutMe(),
+    within(getAboutMe(), ABOUT_ME_TIMEOUT_MS, null),
   ])
-  return askModel(llm, toTurns(history), {
-    onText,
+  let timedOut = false
+  const answer = askModel(llm, toTurns(history), {
+    onText: onText && (text => !timedOut && onText(text)),
     onRetry,
     // The wearer's other recent conversations, from the in-memory copy
     // (peek, never a storage read - see store.ts). Empty if the startup
@@ -67,6 +85,10 @@ export async function askAssistant(
     // web; the model decides when (G2-76).
     webSearch: true,
   })
+  const result = await within<LlmResult | null>(answer, timeoutMs, null)
+  if (result) return result
+  timedOut = true
+  return { kind: 'error', message: `no answer in ${Math.round(timeoutMs / 1000)}s` }
 }
 
 export type PhoneAskResult =
