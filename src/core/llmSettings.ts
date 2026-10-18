@@ -30,32 +30,81 @@ const PROVIDER_KEY = 'llm.provider'
 const keySlot = (p: Provider) => `llm.key.${p}`
 const choiceSlot = (purpose: Purpose) => `llm.use.${purpose}`
 
+// A storage read that never answers left Jarvis stuck between "heard"
+// and "asking" on the glasses (G2-84) - one question can need half a dozen
+// of these, some for slots never written. So each read gives up after
+// READ_TIMEOUT_MS (counted as unset, and not remembered, so a later read
+// tries again), and what was read is kept in memory: the phone page and
+// the glasses code run in the same WebView, so a save on the phone
+// updates this same copy.
+const READ_TIMEOUT_MS = 3000
+const remembered = new Map<string, string>()
+
+function withTimeout<T>(promise: Promise<T>, fallback: T, what: string): Promise<T> {
+  return new Promise(resolve => {
+    const timer = setTimeout(() => {
+      status(`AI settings: ${what} did not load in time`)
+      resolve(fallback)
+    }, READ_TIMEOUT_MS)
+    promise.then(
+      value => {
+        clearTimeout(timer)
+        resolve(value)
+      },
+      () => {
+        clearTimeout(timer)
+        resolve(fallback)
+      },
+    )
+  })
+}
+
 async function read(slot: string): Promise<string> {
-  try {
-    return (await bridge.getLocalStorage(slot)).trim()
-  } catch {
-    return ''
-  }
+  const known = remembered.get(slot)
+  if (known !== undefined) return known
+  const value = await withTimeout(
+    bridge.getLocalStorage(slot).then(v => (v ?? '').trim()),
+    null,
+    slot,
+  )
+  if (value === null) return ''
+  remembered.set(slot, value)
+  return value
 }
 
 async function write(slot: string, value: string, what: string): Promise<boolean> {
   const ok = await bridge.setLocalStorage(slot, value)
   if (!ok) status(`Failed to save ${what}`)
+  else remembered.set(slot, value)
   return ok
 }
+
+const GEMINI_SLOT = 'gemini'
 
 function isProvider(x: string): x is Provider {
   return PROVIDERS.some(p => p.id === x)
 }
 
 export async function getProviderKey(provider: Provider): Promise<string | null> {
-  if (provider === 'gemini') return getGeminiKey()
+  if (provider === 'gemini') {
+    const known = remembered.get(GEMINI_SLOT)
+    if (known !== undefined) return known || null
+    const key = await withTimeout(getGeminiKey(), undefined, 'the Gemini key')
+    if (key === undefined) return null
+    remembered.set(GEMINI_SLOT, key ?? '')
+    return key
+  }
   const key = await read(keySlot(provider))
   return key || null
 }
 
 export function setProviderKey(provider: Provider, key: string): Promise<boolean> {
-  if (provider === 'gemini') return setGeminiKey(key)
+  if (provider === 'gemini') {
+    return setGeminiKey(key).then(ok => {
+      if (ok) remembered.set(GEMINI_SLOT, key.trim())
+      return ok
+    })
+  }
   return write(keySlot(provider), key.trim(), `the ${providerInfo(provider).label} key`)
 }
 

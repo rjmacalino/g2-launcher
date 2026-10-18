@@ -721,11 +721,13 @@ async function askGemini(question: string) {
   const stillRelevant = () => depth === 'conversation' && currentSessionId === targetSessionId
 
   // Whichever AI the wearer chose on the companion page (G2-68).
+  status('Jarvis: loading AI settings')
   const llm = await getLlmConfig('glasses')
   // Not the voice-capture session token - see finishListening for how that
   // silently dropped questions on a brief trip to the background.
   if (!stillRelevant()) return
   if (!llm) {
+    status('Jarvis: no AI key for questions on the glasses')
     setContent(
       'No AI key set up yet - Jarvis needs one to answer questions.\n\n' +
         'Add one in Jarvis on the companion page, then try again.',
@@ -919,6 +921,7 @@ export async function finishListening() {
   // Commands first, locally - a timer needs no network, no API key, and no
   // Gemini round trip (see the voice dispatch registered in app/main.ts).
   // Anything that is not a command falls through to Gemini below.
+  status('Jarvis: checking for a command')
   const command = await dispatchVoiceCommand(result.transcript)
   if (command.handled) {
     if (depth !== 'conversation' || currentSessionId !== sessionIdBeforeAsking || listening) return
@@ -936,7 +939,10 @@ export async function finishListening() {
     setContent(renderConversation())
     return
   }
-  if (depth !== 'conversation' || currentSessionId !== sessionIdBeforeAsking || listening) return
+  if (depth !== 'conversation' || currentSessionId !== sessionIdBeforeAsking || listening) {
+    status('Jarvis: question dropped - the screen changed before asking')
+    return
+  }
 
   // Added in memory right away, no await - the old version awaited a
   // storage write here before asking Gemini, which is exactly the kind of
