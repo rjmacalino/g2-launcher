@@ -45,6 +45,10 @@ const TICK_MS = 15_000
 type Slot = {
   readonly id: number
   readonly name: string
+  // Where the text sits in the slot (G2-81). Text containers only
+  // left-align and cannot move without a page rebuild, so centre and right
+  // are made with leading spaces, counted from measured widths.
+  readonly align: 'left' | 'centre' | 'right'
   readonly x: number
   readonly width: number
   readonly field: keyof StatusBarConfig
@@ -131,27 +135,30 @@ const SLOTS: readonly Slot[] = [
   {
     id: CONTAINER_ID_STATUS_LEFT,
     name: 'status.left',
-    x: 0,
-    width: 180,
+    align: 'left',
+    // The bar has no padding (G2-81): inset to line up with the content's.
+    x: PADDING,
+    width: 180 - PADDING,
     field: 'date',
     render: formatDate,
   },
   {
     id: CONTAINER_ID_STATUS_CENTRE,
     name: 'status.centre',
-    x: 210,
-    width: 180,
+    align: 'centre',
+    // Centred on the canvas, so centring within it centres on screen.
+    x: 180,
+    width: 216,
     field: 'temperature',
     render: renderWeather,
   },
   {
     id: CONTAINER_ID_STATUS_RIGHT,
     name: 'status.right',
-    // Positioned so a typical time ends near the right edge. Text is left-aligned
-    // inside the container, so this is right-ish rather than truly right-aligned,
-    // which is the closest the platform allows.
-    x: 460,
-    width: 116,
+    align: 'right',
+    // Runs to the right edge; the time is pushed against it (alignText).
+    x: 396,
+    width: 180,
     field: 'time',
     render: formatClock,
   },
@@ -186,9 +193,20 @@ let timerId: ReturnType<typeof setInterval> | null = null
 // moves, so this is one host round trip rather than three.
 const lastText = new Map<number, string>()
 
+const SPACE_PX = getTextWidth(' ')
+
+// Leading spaces that place text centred or right-aligned in a slot,
+// keeping PADDING clear at the right edge to match the left.
+export function alignText(text: string, slotWidth: number, align: Slot['align']): string {
+  if (align === 'left' || !text) return text
+  const spare = slotWidth - PADDING - getTextWidth(text)
+  const px = align === 'right' ? spare : (slotWidth - getTextWidth(text)) / 2
+  return ' '.repeat(Math.max(0, Math.floor(px / SPACE_PX))) + text
+}
+
 function renderSlot(slot: Slot, now: Date): string {
   if (!getConfig()[slot.field]) return ''
-  return slot.render(now)
+  return alignText(slot.render(now), slot.width, slot.align)
 }
 
 // Load the persisted config (see features/settings/store.ts) and repaint
@@ -234,7 +252,8 @@ export function statusBarContainers(): TextContainerProperty[] {
       width: slot.width,
       height: STATUS_BAR_HEIGHT,
       borderWidth: 0,
-      paddingLength: PADDING,
+      // No padding: the bar is exactly one row tall (page.ts).
+      paddingLength: 0,
       containerID: slot.id,
       containerName: slot.name,
       content: text,

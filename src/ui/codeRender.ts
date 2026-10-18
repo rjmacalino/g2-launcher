@@ -1,3 +1,4 @@
+import { codeFontStack, isCodeFontLoaded } from './codeFont'
 import { CANVAS_WIDTH, CONTENT_HEIGHT, TILE_COUNT, TILE_HEIGHT, TILE_WIDTH } from '../platform/page'
 
 // Code drawn as pictures for the glasses (G2-73). The glasses' own text has
@@ -14,7 +15,6 @@ export type CodeSize = 'small' | 'medium' | 'large'
 // the text, and more of it fits per screen this way.
 export const CODE_FONT_PX: Record<CodeSize, number> = { small: 12, medium: 14, large: 17 }
 
-const FONT_FAMILY = 'Consolas, "SF Mono", Menlo, "DejaVu Sans Mono", "Courier New", monospace'
 const MARGIN_X = 8
 const MARGIN_Y = 6
 // The bottom row: where in the code this is and what the gestures do.
@@ -22,10 +22,17 @@ const FOOTER_PX = 14
 const FOOTER_GAP = 6
 
 function font(px: number): string {
-  return `${px}px ${FONT_FAMILY}`
+  return `500 ${px}px ${codeFontStack()}`
 }
 
-export type CodeMetrics = { cols: number; rows: number; lineHeight: number; fontPx: number }
+export type CodeMetrics = {
+  cols: number
+  rows: number
+  lineHeight: number
+  fontPx: number
+  // Measured with the bundled font, not a fallback (codeFont.ts).
+  withFont: boolean
+}
 
 // How many characters and lines fit at this size, measured with the real
 // font on this phone - monospace, so one character's width is everyone's.
@@ -42,6 +49,7 @@ export function codeMetrics(fontPx: number): CodeMetrics {
     rows: Math.max(3, Math.floor(usable / lineHeight)),
     lineHeight,
     fontPx,
+    withFont: isCodeFontLoaded(),
   }
 }
 

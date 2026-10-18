@@ -61,7 +61,7 @@ function newRowsOf(pages: { text: string }[]): string[] {
 
 describe('paginate', () => {
   it('uses the real screen, and sections as long as an in-place update allows', () => {
-    expect(SCREEN_ROWS).toBe(8)
+    expect(SCREEN_ROWS).toBe(9)
     expect(PAGE_MAX_CHARS).toBeLessThan(2000)
   })
 

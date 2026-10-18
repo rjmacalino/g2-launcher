@@ -1,3 +1,4 @@
+import { isCodeFontLoaded, loadCodeFont } from '../../ui/codeFont'
 import { cancel, start, stop } from '../../core/voiceCapture'
 import { engineDescription } from '../../core/whisper'
 import { takePreroll } from '../../core/wakeListener'
@@ -432,6 +433,11 @@ async function drawCode(): Promise<void> {
   if (drawing) {
     drawAgain = true
     return
+  }
+  // Measured before the bundled font arrived: measure again with it.
+  await loadCodeFont()
+  if (codeView && !codeView.metrics.withFont && isCodeFontLoaded()) {
+    viewBlock(codeView.block, codeView.screen)
   }
   drawing = true
   try {

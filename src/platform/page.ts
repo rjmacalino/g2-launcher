@@ -23,13 +23,15 @@ export const CANVAS_WIDTH = 576
 export const CANVAS_HEIGHT = 288
 export const PADDING = 4
 
-export const STATUS_BAR_HEIGHT = 32
+// One firmware text row (27 px, docs/platform.md) plus a pixel; was 32
+// with 4 px padding, trimmed for room (G2-81).
+export const STATUS_BAR_HEIGHT = 28
 
 // Breathing room between the bar and the content below it. Without this the first
 // line of a tool sits directly under the clock and the two read as one block,
 // which makes the bar harder to ignore when you are trying to read the tool and
 // harder to find when you are not.
-export const CONTENT_GAP = 8
+export const CONTENT_GAP = 4
 
 export const CONTENT_Y = STATUS_BAR_HEIGHT + CONTENT_GAP
 export const CONTENT_HEIGHT = CANVAS_HEIGHT - CONTENT_Y
