@@ -131,6 +131,12 @@ export function transcribe(audio: Float32Array): Promise<string> {
   })
 }
 
+// True only when transcription runs in the worker: work done while the
+// mic is open (G2-82) is only safe off the main thread (voiceCapture.ts).
+export function isOnWorker(): boolean {
+  return fallbackReason === null && worker !== null
+}
+
 // Which path transcription is taking, for the status line: on real
 // hardware this is the only way to find out whether workers work there.
 export function engineDescription(): string {
