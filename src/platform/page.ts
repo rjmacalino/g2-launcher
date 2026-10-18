@@ -267,7 +267,16 @@ export function setImage(
 export const TILE_WIDTH = IMAGE_MAX_WIDTH
 export const TILE_HEIGHT = Math.floor(CONTENT_HEIGHT / 2)
 export const TILE_COUNT = 4
-const TILE_FIRST_ID = CONTAINER_ID_CONTENT_IMAGE
+// Two sets of IDs, switched on each new view (G2-93): the glasses appear
+// to keep an image container's last picture, so reopening code briefly
+// showed the previous code until the new images landed - on hardware,
+// where that can take seconds. A fresh set has nothing old to show.
+let tileBank = 0
+const tileFirstId = () => CONTAINER_ID_CONTENT_IMAGE + tileBank * TILE_COUNT
+
+export function nextTileBank(): void {
+  tileBank = 1 - tileBank
+}
 
 export function tileContainers(): ImageContainerProperty[] {
   return Array.from(
@@ -278,8 +287,8 @@ export function tileContainers(): ImageContainerProperty[] {
         yPosition: CONTENT_Y + Math.floor(i / 2) * TILE_HEIGHT,
         width: TILE_WIDTH,
         height: TILE_HEIGHT,
-        containerID: TILE_FIRST_ID + i,
-        containerName: `tile.${i}`,
+        containerID: tileFirstId() + i,
+        containerName: `tile.${tileBank}.${i}`,
       }),
   )
 }
@@ -296,8 +305,8 @@ export async function setTiles(images: Uint8Array[]): Promise<boolean> {
     const started = performance.now()
     const result = await bridge.updateImageRawData(
       new ImageRawDataUpdate({
-        containerID: TILE_FIRST_ID + i,
-        containerName: `tile.${i}`,
+        containerID: tileFirstId() + i,
+        containerName: `tile.${tileBank}.${i}`,
         imageData: data,
       }),
     )

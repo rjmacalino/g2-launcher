@@ -9,11 +9,11 @@ import { CANVAS_WIDTH, CONTENT_HEIGHT, TILE_COUNT, TILE_HEIGHT, TILE_WIDTH } fro
 // White on black: the glasses show white as their brightest green and
 // black as off.
 
-export type CodeSize = 'small' | 'medium' | 'large'
-
 // 75% of the first sizes (16/19/23), at RJ's request: code read as large as
 // the text, and more of it fits per screen this way.
-export const CODE_FONT_PX: Record<CodeSize, number> = { small: 12, medium: 14, large: 17 }
+// One size (G2-93): the smallest was very readable on the glasses, so the
+// size choice went and long press was freed.
+export const CODE_FONT_PX = 12
 
 const MARGIN_X = 8
 const MARGIN_Y = 6

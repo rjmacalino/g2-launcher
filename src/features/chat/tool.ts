@@ -12,15 +12,8 @@ import { status } from '../../platform/bridge'
 import { PAGE_INNER_WIDTH, paginate, rebuildSafe, type Page } from './paging'
 import { splitAnswer } from '../../shared/answerBlocks'
 import { codeScreens, layoutCode } from '../../shared/codeLayout'
-import {
-  CODE_FONT_PX,
-  codeMetrics,
-  renderCodeTiles,
-  type CodeMetrics,
-  type CodeSize,
-} from '../../ui/codeRender'
-import { setTiles } from '../../platform/page'
-import { getCodeSize, setCodeSize } from '../../core/codeSize'
+import { CODE_FONT_PX, codeMetrics, renderCodeTiles, type CodeMetrics } from '../../ui/codeRender'
+import { nextTileBank, setTiles } from '../../platform/page'
 import { askAssistant } from './assistant'
 import { setCurrentScreen } from '../../core/currentScreen'
 import { requestRebuild } from '../../core/rebuild'
@@ -425,7 +418,7 @@ function withCodePlaceholders(text: string): string {
 }
 
 function layoutBlock(block: number): Omit<CodeView, 'screen'> {
-  const metrics = codeMetrics(CODE_FONT_PX[getCodeSize()])
+  const metrics = codeMetrics(CODE_FONT_PX)
   const screens = codeScreens(layoutCode(codeBlocks[block], metrics.cols), metrics.rows)
   return { block, screens, metrics }
 }
@@ -449,7 +442,7 @@ function footerFor(view: Omit<CodeView, 'screen'>, screen: number): string {
   const total = view.screens.reduce((n, s) => n + s.length, 0) - (view.screens.length - 1)
   const where = codeBlocks.length > 1 ? `Code ${view.block + 1}/${codeBlocks.length} - ` : ''
   const more = screen < view.screens.length - 1 ? 'swipe for more, ' : ''
-  return `${where}lines ${first}-${first + lines.length - 1} of ${total} - ${more}hold: size, double-tap: text`
+  return `${where}lines ${first}-${first + lines.length - 1} of ${total} - ${more}hold: ask, double-tap: text`
 }
 
 function tilesFor(view: Omit<CodeView, 'screen'>, screen: number): Promise<Uint8Array[]> {
@@ -527,10 +520,9 @@ let openStartedAt: number | null = null
 function openCodeView(): void {
   if (codeBlocks.length === 0) return
   openStartedAt = performance.now()
+  nextTileBank()
   viewBlock(0, 0)
-  status(
-    `Jarvis: code view, ${getCodeSize()} (${codeView?.metrics.cols} x ${codeView?.metrics.rows})`,
-  )
+  status(`Jarvis: code view (${codeView?.metrics.cols} x ${codeView?.metrics.rows})`)
   requestRebuild(chatTool, () => void drawCode())
 }
 
@@ -553,28 +545,6 @@ function moveCode(delta: 1 | -1): void {
 
 // Long press in the code view (G2-75): the next size, staying near the same
 // place in the code. Saved, so the phone's setting follows.
-function cycleCodeSize(): void {
-  const view = codeView
-  if (!view) return
-  const order: CodeSize[] = ['small', 'medium', 'large']
-  const next = order[(order.indexOf(getCodeSize()) + 1) % order.length]
-  const firstLine = view.screens.slice(0, view.screen).reduce((n, s) => n + s.length - 1, 0)
-  void setCodeSize(next)
-  viewBlock(view.block, 0)
-  const resized = codeView as CodeView | null
-  if (!resized) return
-  let line = 0
-  while (
-    resized.screen < resized.screens.length - 1 &&
-    line + resized.screens[resized.screen].length - 1 <= firstLine
-  ) {
-    line += resized.screens[resized.screen].length - 1
-    resized.screen++
-  }
-  status(`Jarvis: code size ${next}`)
-  void drawCode()
-}
-
 function closeCodeView(): void {
   if (!codeView) return
   codeView = null
@@ -1226,12 +1196,9 @@ export const chatTool: Tool = {
   // app/main.ts.)
   onLongPress: () => {
     if (codeView) {
-      // A real long press changes the size; "Hey Jarvis" arrives the same
-      // way and means "listen" - back to the text page first, then record.
-      if (!nextListenViaWake) {
-        cycleCodeSize()
-        return
-      }
+      // Ask the next question, same as from the text (G2-93: one code
+      // size, so long press no longer resizes) - back to the text page
+      // first, then record.
       codeView = null
       requestRebuild(chatTool, () => {
         if (depth === 'conversation' && !busy()) void beginListening()
