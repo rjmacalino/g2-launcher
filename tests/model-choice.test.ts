@@ -15,7 +15,7 @@ describe('model per job (G2-77)', () => {
     expect(defaultModel('claude', 'phone')).toBe('claude-sonnet-5-5')
     expect(defaultModel('deepseek', 'wingman')).toBe('deepseek-flash')
     expect(defaultModel('local', 'wingman')).toBe('llama3.2:3b')
-    expect(defaultModel('local', 'glasses')).toBe('qwen2.5:3b')
+    expect(defaultModel('local', 'glasses')).toBe('llama3.2:3b')
   })
 
   it('always picks a model the provider lists', () => {
