@@ -127,7 +127,7 @@ async function main() {
       b -= 1
       continue
     }
-    let items: unknown[] = []
+    let items: unknown[]
     try {
       items = JSON.parse(reply.text.replace(/^```(json)?|```$/gm, '').trim())
     } catch {
