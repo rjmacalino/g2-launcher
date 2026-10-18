@@ -393,6 +393,7 @@ function renderExchange(messages: readonly ChatMessage[]): string {
       : [formatMessage(shown(last))]
   pages = paginate(parts.join(DIVIDER), PAGE_INNER_WIDTH)
   pageIndex = 0
+  warmCode()
   return pages[0].text
 }
 
@@ -423,10 +424,61 @@ function withCodePlaceholders(text: string): string {
     .join('\n\n')
 }
 
-function viewBlock(block: number, screen: number): void {
+function layoutBlock(block: number): Omit<CodeView, 'screen'> {
   const metrics = codeMetrics(CODE_FONT_PX[getCodeSize()])
   const screens = codeScreens(layoutCode(codeBlocks[block], metrics.cols), metrics.rows)
-  codeView = { block, screen: Math.min(screen, screens.length - 1), screens, metrics }
+  return { block, screens, metrics }
+}
+
+function viewBlock(block: number, screen: number): void {
+  const layout = layoutBlock(block)
+  codeView = { ...layout, screen: Math.min(screen, layout.screens.length - 1) }
+}
+
+// Drawing a screen of code took about 4 s on the phone (G2-91), and every
+// open drew it again. Screens are kept once drawn - keyed by everything
+// that changes the picture, so a new answer or size never shows a stale
+// one - and drawn ahead: the first screen when an answer with code
+// arrives, the next one while the wearer reads.
+const TILE_CACHE_MAX = 24
+const tileCache = new Map<string, Promise<Uint8Array[]>>()
+
+function footerFor(view: Omit<CodeView, 'screen'>, screen: number): string {
+  const lines = view.screens[screen]
+  const first = view.screens.slice(0, screen).reduce((n, s) => n + s.length - 1, 0) + 1
+  const total = view.screens.reduce((n, s) => n + s.length, 0) - (view.screens.length - 1)
+  const where = codeBlocks.length > 1 ? `Code ${view.block + 1}/${codeBlocks.length} - ` : ''
+  const more = screen < view.screens.length - 1 ? 'swipe for more, ' : ''
+  return `${where}lines ${first}-${first + lines.length - 1} of ${total} - ${more}hold: size, double-tap: text`
+}
+
+function tilesFor(view: Omit<CodeView, 'screen'>, screen: number): Promise<Uint8Array[]> {
+  const footer = footerFor(view, screen)
+  const key = [view.metrics.fontPx, view.metrics.withFont, footer, codeBlocks[view.block]].join('|')
+  const known = tileCache.get(key)
+  if (known) return known
+  const drawn = renderCodeTiles(view.screens[screen], view.metrics, footer)
+  drawn.catch(() => tileCache.delete(key))
+  tileCache.set(key, drawn)
+  if (tileCache.size > TILE_CACHE_MAX) {
+    const oldest = tileCache.keys().next().value
+    if (oldest !== undefined) tileCache.delete(oldest)
+  }
+  return drawn
+}
+
+// Draws the first screen of the first code block in the background, so a
+// tap on "[code ...]" only has to send it.
+let warmTimer: ReturnType<typeof setTimeout> | null = null
+function warmCode(): void {
+  if (warmTimer !== null) clearTimeout(warmTimer)
+  warmTimer = setTimeout(() => {
+    warmTimer = null
+    if (codeBlocks.length === 0 || codeView) return
+    void loadCodeFont().then(() => {
+      if (codeBlocks.length > 0 && !codeView) void tilesFor(layoutBlock(0), 0).catch(() => {})
+    })
+  }, 300)
 }
 
 async function drawCode(): Promise<void> {
@@ -447,26 +499,34 @@ async function drawCode(): Promise<void> {
       drawAgain = false
       const view = codeView
       if (!view) return
-      const lines = view.screens[view.screen]
-      const first = view.screens.slice(0, view.screen).reduce((n, s) => n + s.length - 1, 0) + 1
-      const total = view.screens.reduce((n, s) => n + s.length, 0) - (view.screens.length - 1)
-      const where = codeBlocks.length > 1 ? `Code ${view.block + 1}/${codeBlocks.length} - ` : ''
-      const more = view.screen < view.screens.length - 1 ? 'swipe for more, ' : ''
-      const footer = `${where}lines ${first}-${first + lines.length - 1} of ${total} - ${more}hold: size, double-tap: text`
       const renderStarted = performance.now()
-      const tiles = await renderCodeTiles(lines, view.metrics, footer)
+      const tiles = await tilesFor(view, view.screen)
       status(
-        `Jarvis: code font ${(fontMs / 1000).toFixed(1)}s (${isCodeFontLoaded() ? 'bundled' : 'fallback'}), drawn in ${((performance.now() - renderStarted) / 1000).toFixed(1)}s`,
+        `Jarvis: code font ${(fontMs / 1000).toFixed(1)}s (${isCodeFontLoaded() ? 'bundled' : 'fallback'}), ready in ${((performance.now() - renderStarted) / 1000).toFixed(1)}s`,
       )
+      const sendStarted = performance.now()
       await setTiles(tiles)
+      if (openStartedAt !== null) {
+        status(
+          `Jarvis: code shown ${((performance.now() - openStartedAt) / 1000).toFixed(1)}s after the tap (sending ${((performance.now() - sendStarted) / 1000).toFixed(1)}s)`,
+        )
+        openStartedAt = null
+      }
+      // The next screen, while this one is read.
+      if (view.screen + 1 < view.screens.length) {
+        void tilesFor(view, view.screen + 1).catch(() => {})
+      }
     } while (drawAgain && codeView)
   } finally {
     drawing = false
   }
 }
 
+let openStartedAt: number | null = null
+
 function openCodeView(): void {
   if (codeBlocks.length === 0) return
+  openStartedAt = performance.now()
   viewBlock(0, 0)
   status(
     `Jarvis: code view, ${getCodeSize()} (${codeView?.metrics.cols} x ${codeView?.metrics.rows})`,
