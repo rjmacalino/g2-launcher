@@ -1,5 +1,4 @@
 import { converse as converseGemini } from './gemini'
-import { status } from '../platform/bridge'
 import type { ConverseOptions, LlmResult, LlmTurn } from './llmTypes'
 import { localEndpoint, providerInfo, type LlmConfig } from './llmProviders'
 
@@ -46,6 +45,13 @@ export async function askModel(
 // that ran out are skipped until Google's day turns over (Pacific time).
 const outOfQuota = new Map<string, string>()
 
+// The status line lives on the phone page; loaded only when there is a
+// page, so the PC benchmarks (bench/) can use this file too.
+function notice(line: string): void {
+  if (typeof document === 'undefined') return
+  void import('../platform/bridge').then(b => b.status(line))
+}
+
 function googleDay(): string {
   return new Date().toLocaleDateString('en-CA', { timeZone: 'America/Los_Angeles' })
 }
@@ -64,7 +70,7 @@ async function askGemini(
     const result = await converseGemini(config.apiKey, turns, options, model)
     if (result.kind !== 'error' || !result.message.includes('429')) return result
     outOfQuota.set(model, today)
-    status(`Gemini ${model}: free daily limit reached, trying another model`)
+    notice(`Gemini ${model}: free daily limit reached, trying another model`)
   }
   return {
     kind: 'error',

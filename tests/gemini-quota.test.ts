@@ -1,7 +1,7 @@
 import { describe, expect, it, vi } from 'vitest'
 
 // G2-85: a 429 on one Gemini model moves on to the next.
-vi.mock('../src/platform/bridge', () => ({ status: vi.fn() }))
+// The status line is skipped outside a page (llm.ts notice()).
 
 const asked: string[] = []
 vi.mock('../src/core/gemini', () => ({
