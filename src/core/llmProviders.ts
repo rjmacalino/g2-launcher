@@ -22,9 +22,10 @@ export type ProviderInfo = {
 
 // Small models that fit a 4 GB graphics card, as Ollama names them.
 const LOCAL_MODELS: readonly ModelInfo[] = [
-  // Cue benchmark: 2/6 right, about 3.4 s a cue.
+  // Cue benchmark on the graphics card (driver 617.42): 0 to 3 of 6
+  // right across runs, about 0.6 s a cue. LeetCode answers in under 7 s.
   { id: 'qwen2.5:3b', label: 'Qwen 2.5 3B', speed: 'fastest' },
-  // 3/6 right, about 4.1 s. Gemma 2 2B scored 4/6 but took about 10 s.
+  // 3 to 5 of 6 right, about 0.8 to 1.7 s: the better of the two.
   { id: 'llama3.2:3b', label: 'Llama 3.2 3B', speed: 'fast' },
 ]
 
@@ -70,7 +71,8 @@ export const PROVIDERS: readonly ProviderInfo[] = [
   {
     // A model running on the wearer's own PC with Ollama (G2-78): free and
     // unlimited, but only while the phone can reach the PC. Timings are a
-    // GTX 1650 Ti (4 GB) laptop, bench/ cue run, 2026-10-18.
+    // GTX 1650 Ti (4 GB) laptop, bench/ cue run, 2026-10-18;
+    // an old driver (451.67) left Ollama on the processor at 3 to 10 s.
     id: 'local',
     label: 'Your PC',
     free: true,
