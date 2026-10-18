@@ -603,8 +603,15 @@ let transcribing = false
 
 // Recording, transcribing, or waiting on Gemini: a long-press asking the
 // next question waits until this one is done.
+// Between the transcript and the request going out (checking for a
+// command, reading the AI settings) Jarvis is busy too (G2-86): a phone
+// navigation in that gap switched the glasses to the chat list, and the
+// question was then dropped as no longer on screen. A count, because
+// finishListening's span contains askGemini's.
+let preparing = 0
+
 function busy(): boolean {
-  return listening || transcribing || waitingHere()
+  return listening || transcribing || preparing > 0 || waitingHere()
 }
 
 // Set by the shell just before "Hey Jarvis" opens or continues a
@@ -705,6 +712,15 @@ function showThinking(question: string): void {
 }
 
 async function askGemini(question: string) {
+  preparing++
+  try {
+    await askGeminiNow(question)
+  } finally {
+    preparing--
+  }
+}
+
+async function askGeminiNow(question: string) {
   // What "this is still relevant" actually means for rendering a network
   // response, as opposed to mySession/sessionToken, which exists to stop
   // overlapping VOICE CAPTURE lifecycles (a double-start), not to gate a
@@ -725,7 +741,10 @@ async function askGemini(question: string) {
   const llm = await getLlmConfig('glasses')
   // Not the voice-capture session token - see finishListening for how that
   // silently dropped questions on a brief trip to the background.
-  if (!stillRelevant()) return
+  if (!stillRelevant()) {
+    status('Jarvis: question not sent - its chat is no longer on screen')
+    return
+  }
   if (!llm) {
     status('Jarvis: no AI key for questions on the glasses')
     setContent(
@@ -921,46 +940,52 @@ export async function finishListening() {
   // Commands first, locally - a timer needs no network, no API key, and no
   // Gemini round trip (see the voice dispatch registered in app/main.ts).
   // Anything that is not a command falls through to Gemini below.
-  status('Jarvis: checking for a command')
-  const command = await dispatchVoiceCommand(result.transcript)
-  if (command.handled) {
-    if (depth !== 'conversation' || currentSessionId !== sessionIdBeforeAsking || listening) return
-    const reply: ChatMessage = { role: 'model', text: command.message, timestamp: Date.now() }
-    status('Jarvis: ran a command')
-    if (currentSessionId === null) {
-      // A command from a blank start is not saved as a conversation -
-      // timers would otherwise fill the history with one-line chats.
-      showCommandResult(question, reply)
+  preparing++
+  try {
+    status('Jarvis: checking for a command')
+    const command = await dispatchVoiceCommand(result.transcript)
+    if (command.handled) {
+      if (depth !== 'conversation' || currentSessionId !== sessionIdBeforeAsking || listening)
+        return
+      const reply: ChatMessage = { role: 'model', text: command.message, timestamp: Date.now() }
+      status('Jarvis: ran a command')
+      if (currentSessionId === null) {
+        // A command from a blank start is not saved as a conversation -
+        // timers would otherwise fill the history with one-line chats.
+        showCommandResult(question, reply)
+        return
+      }
+      // Mid-conversation, the command is part of it like anything else said.
+      currentMessages = [...currentMessages, question, reply]
+      saveCurrent()
+      setContent(renderConversation())
       return
     }
-    // Mid-conversation, the command is part of it like anything else said.
-    currentMessages = [...currentMessages, question, reply]
+    if (depth !== 'conversation' || currentSessionId !== sessionIdBeforeAsking || listening) {
+      status('Jarvis: question dropped - the screen changed before asking')
+      return
+    }
+
+    // Added in memory right away, no await - the old version awaited a
+    // storage write here before asking Gemini, which is exactly the kind of
+    // wait a slow or stuck host read turned into a frozen screen.
+    if (currentSessionId === null) {
+      const created = chatSessions.newSession(question)
+      currentSessionId = created.id
+      currentSessionTitle = created.title
+      currentMessages = created.messages
+    } else {
+      currentMessages = [...currentMessages, question]
+    }
     saveCurrent()
-    setContent(renderConversation())
-    return
-  }
-  if (depth !== 'conversation' || currentSessionId !== sessionIdBeforeAsking || listening) {
-    status('Jarvis: question dropped - the screen changed before asking')
-    return
-  }
+    // "New chat" only gets a real id once this first question exists -
+    // publish now so the companion page can follow to the right session.
+    publishScreen()
 
-  // Added in memory right away, no await - the old version awaited a
-  // storage write here before asking Gemini, which is exactly the kind of
-  // wait a slow or stuck host read turned into a frozen screen.
-  if (currentSessionId === null) {
-    const created = chatSessions.newSession(question)
-    currentSessionId = created.id
-    currentSessionTitle = created.title
-    currentMessages = created.messages
-  } else {
-    currentMessages = [...currentMessages, question]
+    await askGemini(result.transcript)
+  } finally {
+    preparing--
   }
-  saveCurrent()
-  // "New chat" only gets a real id once this first question exists -
-  // publish now so the companion page can follow to the right session.
-  publishScreen()
-
-  await askGemini(result.transcript)
 }
 
 // Tries the SAME question again with no new recording, triggered by a
@@ -1198,8 +1223,12 @@ export const chatTool: Tool = {
       openSessionId = wanted
       return false
     }
-    if (busy()) return false
+    if (busy()) {
+      status('Jarvis: phone asked for another screen - ignored while answering')
+      return false
+    }
     if (wanted === currentSessionId && (wanted !== null || depth === 'picker')) return false
+    status(`Jarvis: phone opened ${wanted === null ? 'the chat list' : 'a chat'}`)
     syncPickerFromCurrent()
     showSession(wanted)
     return true
