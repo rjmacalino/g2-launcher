@@ -7,7 +7,14 @@ export type Provider = 'gemini' | 'deepseek' | 'claude' | 'local'
 // How a model trades speed for depth, as shown when picking one (G2-77).
 export type Speed = 'fastest' | 'fast' | 'smart' | 'smartest'
 
-export type ModelInfo = { id: string; label: string; speed: Speed }
+export type ModelInfo = {
+  id: string
+  label: string
+  speed: Speed
+  // Jobs this model is the default for, ahead of the speed rule below,
+  // when a benchmark showed a better fit (G2-78).
+  preferFor?: readonly Purpose[]
+}
 
 export type ProviderInfo = {
   id: Provider
@@ -26,7 +33,7 @@ const LOCAL_MODELS: readonly ModelInfo[] = [
   // right across runs, about 0.6 s a cue. LeetCode answers in under 7 s.
   { id: 'qwen2.5:3b', label: 'Qwen 2.5 3B', speed: 'fastest' },
   // 3 to 5 of 6 right, about 0.8 to 1.7 s: the better of the two.
-  { id: 'llama3.2:3b', label: 'Llama 3.2 3B', speed: 'fast' },
+  { id: 'llama3.2:3b', label: 'Llama 3.2 3B', speed: 'fast', preferFor: ['wingman'] },
 ]
 
 // Model IDs as each provider documents them. Gemini's are the ones a free
@@ -109,6 +116,8 @@ export type Purpose = 'glasses' | 'phone' | 'wingman'
 // The model a job gets until the wearer picks one.
 export function defaultModel(provider: Provider, purpose: Purpose): string {
   const models = providerInfo(provider).models
+  const preferred = models.find(m => m.preferFor?.includes(purpose))
+  if (preferred) return preferred.id
   const pick = (...speeds: Speed[]) => {
     for (const speed of speeds) {
       const found = models.find(m => m.speed === speed)
