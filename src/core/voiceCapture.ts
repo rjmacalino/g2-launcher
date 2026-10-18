@@ -1,5 +1,4 @@
-import { isOnWorker, transcribe } from './whisper'
-import { pickCut } from '../shared/pieces'
+import { transcribe } from './whisper'
 import { openMic } from './mic'
 import { SAMPLE_RATE, concat, toFloat32 } from '../shared/pcm'
 import { isSilenceHallucination, stripNonSpeech, stripWakePhrase } from '../shared/transcript'
@@ -81,50 +80,6 @@ const MAX_RECORD_MS = 180_000
 // still falls back to the main thread where workers fail - so this module
 // keeps the one-transcription-at-the-end shape until both are known.
 let chunks: Uint8Array[] = []
-
-// Transcribing while the wearer talks (G2-82). The note above still holds
-// for the main thread, so this only runs when Whisper is in the worker -
-// and unlike G2-51, each piece of audio is transcribed exactly once, so
-// the work never grows with the recording. Stopping then leaves only the
-// last piece to wait for. Pieces are about 6 to 10 seconds, cut at the
-// quietest moment so a word is rarely split (shared/pieces.ts).
-const PIECE_RULE = { minSamples: 10 * SAMPLE_RATE, searchFromSamples: 6 * SAMPLE_RATE }
-let levels: number[] = []
-let cutFrom = 0
-let pieces: Promise<string>[] = []
-let pieceBusy = false
-
-function piecePeak(parts: readonly Uint8Array[]): number {
-  return peakLevel(toFloat32(concat(parts)))
-}
-
-// Starts transcribing the next piece if one is ready and none is running.
-function maybeTranscribePiece() {
-  if (pieceBusy || !isOnWorker()) return
-  const cut = pickCut(
-    chunks.map(c => c.length / 2),
-    levels,
-    cutFrom,
-    PIECE_RULE,
-  )
-  if (cut === null) return
-  const parts = chunks.slice(cutFrom, cut + 1)
-  cutFrom = cut + 1
-  // A silent piece would come back as an invented sentence.
-  if (piecePeak(parts) < SILENCE_PEAK) return
-  pieceBusy = true
-  pieces.push(
-    transcribe(toFloat32(concat(parts)))
-      .then(text => {
-        const heard = stripNonSpeech(text)
-        return isSilenceHallucination(heard) ? '' : heard
-      })
-      .catch(() => '')
-      .finally(() => {
-        pieceBusy = false
-      }),
-  )
-}
 let releaseMic: (() => void) | null = null
 let safetyTimer: ReturnType<typeof setTimeout> | null = null
 let options: CaptureOptions = {}
@@ -152,10 +107,6 @@ export async function start(
   const myCapture = ++captureToken
   options = captureOptions
   chunks = [...(captureOptions.preroll ?? [])]
-  levels = levelsOf(chunks)
-  cutFrom = 0
-  pieces = []
-  pieceBusy = false
   const onEndpoint = captureOptions.onEndpoint
   const prerollLevels = levelsOf(captureOptions.preroll ?? [])
   endpointer = onEndpoint
@@ -169,8 +120,6 @@ export async function start(
   const release = await openMic(pcm => {
     if (myCapture !== captureToken) return
     chunks.push(pcm)
-    levels.push(rmsLevel(toFloat32(pcm)))
-    maybeTranscribePiece()
     if (!endpointer || !onEndpoint || endpointReported) return
     const decision = endpointer.push(rmsLevel(toFloat32(pcm)))
     if (decision === 'listening') return
@@ -226,14 +175,8 @@ export async function stop(): Promise<VoiceResult> {
     if (peak < SILENCE_PEAK) {
       return { kind: 'error', message: 'no sound picked up' }
     }
-    // The wait the wearer feels: pieces still running, plus the rest.
     const transcribeStart = performance.now()
-    const tail = toFloat32(concat(chunks.slice(cutFrom)))
-    const texts = await Promise.all([
-      ...pieces,
-      tail.length > 0 ? transcribe(tail).then(stripNonSpeech) : Promise.resolve(''),
-    ])
-    const heard = texts.filter(Boolean).join(' ').trim()
+    const heard = stripNonSpeech(await transcribe(audio))
     const transcribeMs = Math.round(performance.now() - transcribeStart)
     if (!heard || isSilenceHallucination(heard)) {
       return { kind: 'error', message: `heard nothing - audio level ${peak.toFixed(3)}` }
@@ -267,5 +210,4 @@ export async function stop(): Promise<VoiceResult> {
 export function cancel() {
   teardownCapture()
   chunks = []
-  pieces = []
 }
