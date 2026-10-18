@@ -5,6 +5,7 @@ import {
 } from '../../core/assistantActions'
 import { dispatchVoiceCommand } from '../../core/voiceDispatch'
 import { getAboutMe } from '../../core/geminiSettings'
+import { DEFAULT_LOCAL_INSTRUCTIONS, getLocalInstructions } from '../../core/localInstructions'
 import { askModel } from '../../core/llm'
 import type { LlmResult, LlmTurn } from '../../core/llmTypes'
 import { getLlmConfig, providerInfo, type LlmConfig } from '../../core/llmSettings'
@@ -66,9 +67,13 @@ export async function askAssistant(
   // app/main.ts). The context is best effort and time-limited, so it never
   // holds the question up for long (see core/assistantActions.ts).
   const actions = assistantActions()
-  const [actionContext, aboutMe] = await Promise.all([
+  const [actionContext, aboutMe, guide] = await Promise.all([
     actions.length > 0 ? assistantActionContext() : Promise.resolve(''),
     within(getAboutMe(), ABOUT_ME_TIMEOUT_MS, null),
+    // The wearer's brief for a model on their PC (G2-95).
+    llm.provider === 'local'
+      ? within(getLocalInstructions(), ABOUT_ME_TIMEOUT_MS, DEFAULT_LOCAL_INSTRUCTIONS)
+      : Promise.resolve(undefined),
   ])
   let timedOut = false
   const answer = askModel(llm, toTurns(history), {
@@ -81,6 +86,7 @@ export async function askAssistant(
     functions: actions.map(a => a.declaration),
     actionContext,
     aboutMe,
+    guide,
     // Questions about now - news, scores, prices, opening hours - need the
     // web; the model decides when (G2-76).
     webSearch: true,

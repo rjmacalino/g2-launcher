@@ -54,3 +54,13 @@ describe('local model address (G2-78)', () => {
     expect(localEndpoint('192:168:1:200')).toBe('http://192.168.1.200:11434/v1/chat/completions')
   })
 })
+
+describe('the PC brief (G2-95)', () => {
+  it('goes right after the instruction and before About You', async () => {
+    const { buildSystemPrompt } = await import('../src/core/llmTypes')
+    const prompt = buildSystemPrompt({ instruction: 'RULES', guide: 'BRIEF', aboutMe: 'ME' })
+    expect(prompt.indexOf('RULES')).toBeLessThan(prompt.indexOf('BRIEF'))
+    expect(prompt.indexOf('BRIEF')).toBeLessThan(prompt.indexOf('ME'))
+    expect(buildSystemPrompt({ instruction: 'RULES' })).toBe('RULES')
+  })
+})

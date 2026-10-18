@@ -1,6 +1,12 @@
 import { bridge, onStatus, recentStatus } from '../../platform/bridge'
 import { ABOUT_ME_MAX_CHARS, getAboutMe, setAboutMe } from '../../core/geminiSettings'
 import {
+  DEFAULT_LOCAL_INSTRUCTIONS,
+  LOCAL_INSTRUCTIONS_MAX_CHARS,
+  getLocalInstructions,
+  setLocalInstructions,
+} from '../../core/localInstructions'
+import {
   PROVIDERS,
   getChoice,
   getProviderKey,
@@ -330,6 +336,14 @@ export function settingsView(ctx: AppContext): Page {
     glassesCard(ctx),
     label('Jarvis'),
     aiCard(ctx),
+    textCard(
+      'Instructions for Jarvis on your PC',
+      "Like a CLAUDE.md: sent with every question to the model on your PC, which does better with a clear brief. Cloud AIs don't get it. Clear the box to go back to the default.",
+      DEFAULT_LOCAL_INSTRUCTIONS,
+      LOCAL_INSTRUCTIONS_MAX_CHARS,
+      getLocalInstructions,
+      setLocalInstructions,
+    ),
     textCard(
       'About you',
       'A sentence or two Jarvis knows about you, so answers fit you.',

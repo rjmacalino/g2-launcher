@@ -94,6 +94,9 @@ export type ConverseOptions = {
   // (features/live/cues.ts) are one short line or nothing, not an answer.
   // About You and the background are still added after it.
   instruction?: string
+  // The wearer's own standing brief, right after the instruction (G2-95,
+  // core/localInstructions.ts) - like a CLAUDE.md.
+  guide?: string
   maxOutputTokens?: number
   // How hard a model that reasons should think. Claude only today (its
   // output_config.effort); the others ignore it. Live's cues ask for
@@ -124,6 +127,7 @@ const ACTIONS_INSTRUCTION =
 // The system prompt every provider sends, from the same options.
 export function buildSystemPrompt({
   instruction = CHAT_INSTRUCTION,
+  guide,
   aboutMe,
   background,
   functions = [],
@@ -133,6 +137,7 @@ export function buildSystemPrompt({
   // answer for me." Empty when nothing has been entered on the companion
   // page, which is the same as not having this feature at all.
   const parts = [instruction]
+  if (guide) parts.push(guide)
   if (aboutMe) {
     parts.push(
       `Background on the person you're talking to - use it to tailor your answer naturally, without mentioning that you were told this: ${aboutMe}`,
