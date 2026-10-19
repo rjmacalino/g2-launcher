@@ -54,7 +54,9 @@ export type FunctionCall = { name: string; args: Record<string, unknown> }
 export type Source = { title: string; url: string }
 
 export type LlmResult =
-  | { kind: 'answer'; text: string; sources?: Source[] }
+  // model: set only when a different model than the one asked answered
+  // (Gemini's free-limit fallback, core/llm.ts).
+  | { kind: 'answer'; text: string; sources?: Source[]; model?: string }
   | { kind: 'actions'; calls: FunctionCall[] }
   | { kind: 'error'; message: string }
 

@@ -1,3 +1,4 @@
+import { modelLabel } from '../../core/llmProviders'
 import { isCodeFontLoaded, loadCodeFont } from '../../ui/codeFont'
 import { cancel, start, stop } from '../../core/voiceCapture'
 import { engineDescription } from '../../core/whisper'
@@ -349,14 +350,10 @@ let lastScrollAt = 0
 // measure exactly (see docs/platform.md, proportional font).
 const DIVIDER = '\n\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\n'
 
-function formatMessage(m: ChatMessage): string {
-  return `${m.role === 'user' ? 'You' : 'Jarvis'}: ${m.text}`
-}
-
-// The latest exchange only - the last message, plus the one before it if
-// that is the question which produced it (always true in normal use -
-// messages strictly alternate user/model). Earlier exchanges in the same
-// conversation are on the companion page. Returns the FIRST page and
+// The latest answer only (G2-97: the question took the whole first screen
+// and the wearer already knows what they asked - it is on the phone). An
+// unanswered question is shown, short, since there is no answer yet.
+// Earlier exchanges in the same conversation are on the companion page. Returns the FIRST page and
 // resets paging to it, so a new answer always opens at its start.
 function renderConversation(): string {
   return renderExchange(currentMessages)
@@ -376,14 +373,11 @@ function renderExchange(messages: readonly ChatMessage[]): string {
       : 'No messages yet.\n\nLong-press to ask something.'
   }
   const last = messages[messages.length - 1]
-  const secondLast = messages[messages.length - 2]
   codeBlocks = []
-  const shown = (m: ChatMessage) =>
-    m.role === 'model' ? { ...m, text: withCodePlaceholders(m.text) } : m
   const parts =
-    secondLast && secondLast.role !== last.role
-      ? [formatMessage(shown(secondLast)), formatMessage(shown(last))]
-      : [formatMessage(shown(last))]
+    last.role === 'model'
+      ? [`${last.model ? `${last.model}: ` : ''}${withCodePlaceholders(last.text)}`]
+      : [`You: ${shortQuestion(last.text)}`]
   pages = paginate(parts.join(DIVIDER), PAGE_INNER_WIDTH)
   pageIndex = 0
   warmCode()
@@ -736,13 +730,11 @@ let thinkingRetryNote = ''
 // Bluetooth update; a few per second reads as live without flooding it.
 const STREAM_DRAW_MS = 300
 
-function showThinking(question: string): void {
+function showThinking(): void {
   stopThinking = startLiveStatus(
     sessionToken,
     (dots, elapsedSeconds) => {
-      setContent(
-        `You: ${shortQuestion(question)}${DIVIDER}Thinking${dots} (${elapsedSeconds}s)${thinkingRetryNote}`,
-      )
+      setContent(`Thinking${dots} (${elapsedSeconds}s)${thinkingRetryNote}`)
     },
     thinkingStartedAt,
   )
@@ -804,7 +796,7 @@ async function askGeminiNow(question: string) {
   inFlightQuestion = question
   inFlightSessionId = targetSessionId
   status('Jarvis: asking')
-  showThinking(question)
+  showThinking()
 
   let attemptsMade = 1
   // Streamed answer text fills the first page as it arrives (G2-62), so
@@ -821,10 +813,7 @@ async function askGeminiNow(question: string) {
     if (lastScrollAt > streamStartedAt) return
     const now = Date.now()
     if (now - lastStreamDrawAt < STREAM_DRAW_MS) return
-    const firstPage = paginate(
-      `You: ${question}${DIVIDER}Jarvis: ${textSoFar}`,
-      PAGE_INNER_WIDTH,
-    )[0]?.text
+    const firstPage = paginate(textSoFar, PAGE_INNER_WIDTH)[0]?.text
     if (!firstPage || firstPage === streamedPage) return
     stopThinking?.()
     stopThinking = null
@@ -879,6 +868,9 @@ async function askGeminiNow(question: string) {
     text: replyText,
     timestamp: Date.now(),
     ...(reply.kind === 'answer' && reply.sources ? { sources: reply.sources } : {}),
+    ...(reply.kind === 'answer'
+      ? { model: modelLabel(llm.provider, reply.model ?? llm.model) }
+      : {}),
   }
 
   // An action as the very first thing said is a command from a blank
@@ -1077,7 +1069,7 @@ function resume(): void {
     return
   }
   if (inFlightQuestion !== null && waitingHere() && stopActiveStatus === null) {
-    showThinking(inFlightQuestion)
+    showThinking()
   }
 }
 

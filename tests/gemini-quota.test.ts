@@ -18,7 +18,11 @@ describe('Gemini daily limits (G2-85)', () => {
     const { askModel } = await import('../src/core/llm')
     const config = { provider: 'gemini' as const, apiKey: 'k', model: 'gemini-3.8-flash' }
     const turns = [{ role: 'user' as const, text: 'q' }]
-    expect(await askModel(config, turns)).toEqual({ kind: 'answer', text: 'Hi.' })
+    expect(await askModel(config, turns)).toEqual({
+      kind: 'answer',
+      text: 'Hi.',
+      model: 'gemini-3.6-flash',
+    })
     expect(asked[0]).toBe('gemini-3.8-flash')
     expect(asked).toContain('gemini-3.6-flash')
     asked.length = 0

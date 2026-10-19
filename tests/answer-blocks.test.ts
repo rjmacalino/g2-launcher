@@ -46,6 +46,14 @@ describe('splitAnswer', () => {
     ])
   })
 
+  it('keeps a line with a trailing comment in the code (G2-97)', () => {
+    const code = 'nums = [1, 2, 3]\nnums = nums[::-1]\nprint(nums)  # Outputs: [3, 2, 1]'
+    expect(splitAnswer(`${code}\nA step of -1 walks the list backwards.`)).toEqual([
+      { kind: 'code', text: code },
+      { kind: 'text', text: 'A step of -1 walks the list backwards.' },
+    ])
+  })
+
   it('leaves a paragraph that only mentions code as text', () => {
     const answer = 'Use a dictionary. For each number, check if target - n was seen.'
     expect(splitAnswer(answer)).toEqual([{ kind: 'text', text: answer }])

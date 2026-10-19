@@ -167,7 +167,13 @@ function bubble(message: ChatMessage): HTMLElement[] {
       ...(message.role === 'model' ? answerBody(message.text) : [message.text]),
       sources(message),
     ),
-    h('div', { class: `bubble-meta ${message.role}` }, formatWhen(message.timestamp)),
+    h(
+      'div',
+      { class: `bubble-meta ${message.role}` },
+      message.model
+        ? `${message.model} - ${formatWhen(message.timestamp)}`
+        : formatWhen(message.timestamp),
+    ),
   ]
 }
 

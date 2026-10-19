@@ -15,6 +15,9 @@ export type ChatMessage = {
   // Web pages an answer drew on, when the AI searched (G2-76). Shown on
   // the phone; the glasses show only the answer.
   sources?: { title: string; url: string }[]
+  // Which AI wrote an answer, as shown to the wearer (G2-97), e.g.
+  // "Gemini 3.6 Flash". Absent on answers saved before then.
+  model?: string
 }
 
 export type ChatSession = {

@@ -9,10 +9,16 @@ export type AnswerBlock = { kind: 'text' | 'code'; text: string }
 const CODE_LINE =
   /^\s{2,}\S|[{};]\s*$|^\s*(def|class|function|const|let|var|return|if|for|while|else|elif|import|from|public|private|static|int|void|func|fn)\b|\w+\(.*\)\s*:?$|^\s*[}\])]+;?$| = |=>|==|!=/
 
+// A code line, judged without a trailing comment (G2-97: "print(x)  #
+// Outputs: [3, 2, 1]" read as prose because the comment hid the call).
+function isCodeLine(line: string): boolean {
+  return CODE_LINE.test(line.replace(/\s+(#|\/\/).*$/, ''))
+}
+
 function looksLikeCode(lines: string[]): boolean {
   const meaningful = lines.filter(l => l.trim() !== '')
   if (meaningful.length === 0) return false
-  const codeLike = meaningful.filter(l => CODE_LINE.test(l)).length
+  const codeLike = meaningful.filter(isCodeLine).length
   // Prose sentences end in full stops and run long; code lines rarely do.
   const sentences = meaningful.filter(
     l => /[a-z]{3,}[.!?]$/i.test(l.trim()) && l.length > 50,
@@ -23,7 +29,7 @@ function looksLikeCode(lines: string[]): boolean {
 // A plain sentence: not indented, no code punctuation, and either ends
 // like a sentence or runs to several words.
 function isProseLine(line: string): boolean {
-  if (/^\s/.test(line) || CODE_LINE.test(line)) return false
+  if (/^\s/.test(line) || isCodeLine(line)) return false
   const words = line.trim().split(/\s+/).length
   return /[.!?]$/.test(line.trim()) || words >= 6
 }
@@ -33,9 +39,8 @@ function isProseLine(line: string): boolean {
 // uses ..." with no blank line between) is split there, so the code is
 // still found.
 function separateProse(lines: string[]): string[][] {
-  const isCode = (l: string) => CODE_LINE.test(l)
-  const first = lines.findIndex(isCode)
-  const last = lines.length - 1 - [...lines].reverse().findIndex(isCode)
+  const first = lines.findIndex(isCodeLine)
+  const last = lines.length - 1 - [...lines].reverse().findIndex(isCodeLine)
   if (first < 0 || last - first < 1) return [lines]
   const before = lines.slice(0, first)
   const after = lines.slice(last + 1)

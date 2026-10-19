@@ -15,7 +15,7 @@ describe('model per job (G2-77)', () => {
     expect(defaultModel('claude', 'phone')).toBe('claude-sonnet-5-5')
     expect(defaultModel('deepseek', 'wingman')).toBe('deepseek-flash')
     expect(defaultModel('local', 'wingman')).toBe('llama3.2:3b')
-    expect(defaultModel('local', 'glasses')).toBe('jarvis-llama')
+    expect(defaultModel('local', 'glasses')).toBe('qwen2.5:3b')
   })
 
   it('always picks a model the provider lists', () => {
@@ -62,5 +62,14 @@ describe('the PC brief (G2-95)', () => {
     expect(prompt.indexOf('RULES')).toBeLessThan(prompt.indexOf('BRIEF'))
     expect(prompt.indexOf('BRIEF')).toBeLessThan(prompt.indexOf('ME'))
     expect(buildSystemPrompt({ instruction: 'RULES' })).toBe('RULES')
+  })
+})
+
+describe('answer labels (G2-97)', () => {
+  it('names the AI that answered', async () => {
+    const { modelLabel } = await import('../src/core/llmProviders')
+    expect(modelLabel('gemini', 'gemini-3.6-flash')).toBe('Gemini 3.6 Flash')
+    expect(modelLabel('claude', 'claude-haiku-5-5')).toBe('Claude Haiku 5.5')
+    expect(modelLabel('local', 'jarvis-llama')).toBe('Jarvis Llama 3B')
   })
 })

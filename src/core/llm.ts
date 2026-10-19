@@ -68,6 +68,7 @@ async function askGemini(
   const order = [config.model, ...others].filter(id => outOfQuota.get(id) !== today)
   for (const model of order) {
     const result = await converseGemini(config.apiKey, turns, options, model)
+    if (result.kind === 'answer' && model !== config.model) return { ...result, model }
     if (result.kind !== 'error' || !result.message.includes('429')) return result
     outOfQuota.set(model, today)
     notice(`Gemini ${model}: free daily limit reached, trying another model`)

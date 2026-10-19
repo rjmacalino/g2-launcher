@@ -31,17 +31,14 @@ export type ProviderInfo = {
 const LOCAL_MODELS: readonly ModelInfo[] = [
   // Cue benchmark on the graphics card (driver 617.42): 0 to 3 of 6
   // right across runs, about 0.6 s a cue. LeetCode answers in under 7 s.
-  { id: 'qwen2.5:3b', label: 'Qwen 2.5 3B', speed: 'fastest' },
+  // The default for Jarvis on the PC (G2-97): RJ found it better in real
+  // use than the trained model below.
+  { id: 'qwen2.5:3b', label: 'Qwen 2.5 3B', speed: 'fastest', preferFor: ['glasses', 'phone'] },
   // 3 to 5 of 6 right, about 0.8 to 1.7 s: the better of the two.
   { id: 'llama3.2:3b', label: 'Llama 3.2 3B', speed: 'fast', preferFor: ['wingman'] },
   // Llama 3.2 3B fine-tuned on Jarvis-style answers with Soup (G2-90):
   // bench/chatData.ts, 632 examples, made locally - see docs/roadmap.md.
-  {
-    id: 'jarvis-llama',
-    label: 'Jarvis Llama 3B (trained)',
-    speed: 'fast',
-    preferFor: ['glasses', 'phone'],
-  },
+  { id: 'jarvis-llama', label: 'Jarvis Llama 3B (trained)', speed: 'fast' },
 ]
 
 // Model IDs as each provider documents them. Gemini's are the ones a free
@@ -141,6 +138,15 @@ export function defaultModel(provider: Provider, purpose: Purpose): string {
   if (purpose === 'wingman') return pick('fastest', 'fast')
   if (purpose === 'glasses') return pick('fast', 'fastest')
   return pick('smart', 'smartest', 'fast')
+}
+
+// The name an answer is labelled with (G2-97): "Gemini 3.6 Flash",
+// "Claude Haiku 5.5"; a model on the PC by its own name, without the
+// "(trained)" note the picker uses.
+export function modelLabel(provider: Provider, model: string): string {
+  const info = providerInfo(provider)
+  const name = modelInfo(provider, model)?.label ?? model
+  return info.local ? name.replace(/\s*\(.*\)$/, '') : `${info.label} ${name}`
 }
 
 export type LlmConfig = { provider: Provider; apiKey: string; model: string }

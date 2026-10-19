@@ -9,6 +9,7 @@ import { DEFAULT_LOCAL_INSTRUCTIONS, getLocalInstructions } from '../../core/loc
 import { askModel } from '../../core/llm'
 import type { LlmResult, LlmTurn } from '../../core/llmTypes'
 import { getLlmConfig, providerInfo, type LlmConfig } from '../../core/llmSettings'
+import { modelLabel } from '../../core/llmProviders'
 import { buildDigest } from './digest'
 import { chatSessions, type ChatMessage, type ChatSession } from './store'
 
@@ -155,6 +156,9 @@ export async function askFromPhone(
         text: replyText,
         timestamp: Date.now(),
         ...(reply.kind === 'answer' && reply.sources ? { sources: reply.sources } : {}),
+        ...(reply.kind === 'answer'
+          ? { model: modelLabel(llm.provider, reply.model ?? llm.model) }
+          : {}),
       },
     ],
   }
