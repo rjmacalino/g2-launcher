@@ -56,10 +56,11 @@ export type CaptureOptions = {
 // wiring (see app/main.ts for how each tool claims that gesture while it is
 // the active screen). MAX_RECORD_MS only exists as a safety net for a
 // wearer who never ends the recording at all - the normal end is always the
-// deliberate gesture, not this timer. Three minutes per direct request, so
-// a long question is never cut off mid-sentence; transcribing more than 30
-// seconds depends on the chunked transcription in core/whisper.ts.
-const MAX_RECORD_MS = 180_000
+// deliberate gesture, not this timer. Ten minutes (G2-98: RJ asked for
+// at least five, for long questions), so a question is never cut off
+// mid-sentence; transcribing more than 30 seconds depends on the chunked
+// transcription in core/whisperEngine.ts, about one Whisper pass per 30 s.
+const MAX_RECORD_MS = 600_000
 
 // No interim, incrementally-transcribed captions here on purpose - tried in
 // G2-51/G2-52 and reverted [HW]: real-hardware testing found neither the
