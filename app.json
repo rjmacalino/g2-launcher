@@ -2,7 +2,7 @@
   "package_id": "com.rjmacalino.g2launcher",
   "edition": "202601",
   "name": "G2 Launcher",
-  "version": "0.1.2",
+  "version": "0.1.3",
   "min_sdk_version": "0.0.15",
   "entrypoint": "index.html",
   "permissions": [
@@ -12,7 +12,7 @@
     },
     {
       "name": "network",
-      "desc": "Downloads the weather forecast for your location from Open-Meteo, the on-device speech recognition model used for voice commands (downloaded once, then cached on the device), and, only if you add your own API key for the AI you choose (Google Gemini, DeepSeek or Anthropic Claude), sends what you ask Jarvis - and, in Jarvis Live, the transcript of the conversation - to that AI.",
+      "desc": "Gets the weather forecast, downloads the speech recognition model once, and, only if you set one up, sends what you ask Jarvis to the AI you choose: Gemini, DeepSeek or Claude with your own key, or a model on your own computer at home.",
       "whitelist": [
         "https://api.open-meteo.com",
         "https://huggingface.co",
@@ -20,13 +20,16 @@
         "https://cdn-lfs-us-1.huggingface.co",
         "https://generativelanguage.googleapis.com",
         "https://api.deepseek.com",
-        "https://api.anthropic.com"
+        "https://api.anthropic.com",
+        "http://192.168.1.200:11434"
       ]
     },
     {
       "name": "g2-microphone",
-      "desc": "While the app is open, listens on the glasses microphone for \"Hey Jarvis\" (you can turn this off), and records what you say to Jarvis after it or after a long-press so it can be recognised. All listening happens on your phone; audio is never stored, and nothing is sent anywhere until you speak to Jarvis."
+      "desc": "While the app is open, listens on the glasses microphone for \"Hey Jarvis\" (can be turned off) and records what you say to Jarvis. Listening happens on your phone; audio is never stored."
     }
   ],
-  "supported_languages": ["en"]
+  "supported_languages": [
+    "en"
+  ]
 }
