@@ -1,3 +1,4 @@
+import { WINGMAN_ENABLED } from '../../shared/features'
 import { isWingmanTitle as isLiveTitle } from '../../features/live/summary'
 import { chatSessions, type ChatMessage, type ChatSession } from '../../features/chat/store'
 import { askFromPhone } from '../../features/chat/assistant'
@@ -53,7 +54,9 @@ function sessionRow(ctx: AppContext, session: ChatSession): HTMLElement {
         h(
           'div',
           { class: 'row-title' },
-          isLiveTitle(session.title) ? h('span', { class: 'chip' }, 'Wingman') : null,
+          WINGMAN_ENABLED && isLiveTitle(session.title)
+            ? h('span', { class: 'chip' }, 'Wingman')
+            : null,
           h('span', { class: 'text' }, session.title || '(untitled)'),
           onGlasses(session.id) ? h('span', { class: 'chip accent' }, 'On glasses') : null,
         ),

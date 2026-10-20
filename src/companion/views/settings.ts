@@ -1,3 +1,4 @@
+import { WINGMAN_ENABLED } from '../../shared/features'
 import { bridge, onStatus, recentStatus } from '../../platform/bridge'
 import { ABOUT_ME_MAX_CHARS, getAboutMe, setAboutMe } from '../../core/geminiSettings'
 import {
@@ -124,7 +125,16 @@ let editingKey: Provider = 'gemini'
 const JOBS: { purpose: Purpose; title: string; hint: string }[] = [
   { purpose: 'glasses', title: 'Jarvis on the glasses', hint: 'Spoken questions - quick wins' },
   { purpose: 'phone', title: 'Jarvis on the phone', hint: 'Typed questions and code - depth wins' },
-  { purpose: 'wingman', title: 'Wingman', hint: 'Cues mid-conversation - speed wins' },
+  // Wingman is switched off (G2-101, shared/features.ts), so no cue model.
+  ...(WINGMAN_ENABLED
+    ? [
+        {
+          purpose: 'wingman' as const,
+          title: 'Wingman',
+          hint: 'Cues mid-conversation - speed wins',
+        },
+      ]
+    : []),
 ]
 
 // One job's model, from the providers there is a key for (G2-77).
@@ -261,7 +271,7 @@ function aiCard(ctx: AppContext): HTMLElement {
     h(
       'p',
       { class: 'caption', style: 'margin: 0 0 12px' },
-      'Answers questions, runs actions it is asked for, and writes Wingman cues and summaries. Keys stay on this phone only.',
+      'Answers your questions and runs actions it is asked for. Keys stay on this phone only.',
     ),
     body,
   )
@@ -352,14 +362,16 @@ export function settingsView(ctx: AppContext): Page {
       getAboutMe,
       setAboutMe,
     ),
-    textCard(
-      'Wingman prep notes',
-      'Background for your next conversation - who it is with, what it is about, what you want from it. Used for Live cues.',
-      'e.g. Coffee with Sam, a recruiter at a fintech startup. I want to ask about the team and remote work.',
-      PREP_NOTES_MAX_CHARS,
-      getPrepNotes,
-      setPrepNotes,
-    ),
+    WINGMAN_ENABLED
+      ? textCard(
+          'Wingman prep notes',
+          'Background for your next conversation - who it is with, what it is about, what you want from it. Used for Live cues.',
+          'e.g. Coffee with Sam, a recruiter at a fintech startup. I want to ask about the team and remote work.',
+          PREP_NOTES_MAX_CHARS,
+          getPrepNotes,
+          setPrepNotes,
+        )
+      : null,
     label('Help'),
     diagnostics.el,
   )

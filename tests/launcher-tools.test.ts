@@ -15,5 +15,6 @@ describe('launcher tools (G2-100)', () => {
     expect(TOOL_NAMES).toContain('Jarvis')
     expect(TOOL_NAMES).toContain('Notes')
     expect(TOOL_NAMES).not.toContain('Wingman')
+    expect(TOOL_NAMES).not.toContain('Lab')
   })
 })
