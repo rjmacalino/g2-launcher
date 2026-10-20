@@ -1,3 +1,6 @@
+import { setStatusNote } from '../../core/statusNote'
+import { positionLabel } from '../../shared/position'
+import { exchangesOf, historyRows } from './exchanges'
 import { questionLine } from '../../shared/questionKeywords'
 import { modelLabel } from '../../core/llmProviders'
 import { isCodeFontLoaded, loadCodeFont } from '../../ui/codeFont'
@@ -55,8 +58,16 @@ import type { Tool } from '../../core/tool'
 // Inside a conversation, long-press asks the next question, and a single tap
 // ends the recording - per direct request, double-tap felt wrong for that
 // (see the isSingleTap carve-out in app/main.ts).
-type Depth = 'picker' | 'conversation'
+// 'history' (G2-102) is the list of one conversation's exchanges, between
+// the chat list and one exchange: double-tap steps back one level at a time,
+// code > question and answer > exchanges > chats > launcher.
+type Depth = 'picker' | 'history' | 'conversation'
 let depth: Depth = 'picker'
+
+// Which exchange the question-and-answer screen shows; null is the latest.
+// Tied to how many exchanges there were when it was chosen, so a new
+// question or answer always brings the latest back.
+let focus: { index: number; of: number } | null = null
 
 // How the NEXT open should start - set by the shell just before it opens
 // this tool (see the ways in above), consumed by refresh().
@@ -168,6 +179,19 @@ function screenDetail(): ChatScreenDetail {
 
 function publishScreen(): void {
   setCurrentScreen({ kind: 'tool', name: 'Jarvis', detail: screenDetail() })
+  updatePositionNote()
+}
+
+// Where the wearer is in a long answer or in code, in the middle of the
+// status bar in place of the weather (G2-102).
+function updatePositionNote(): void {
+  let note: string | null = null
+  if (depth === 'conversation' && !listening && !transcribing && stopActiveStatus === null) {
+    note = codeView
+      ? positionLabel(codeView.screen, codeView.screens.length)
+      : positionLabel(pageIndex, pages.length)
+  }
+  setStatusNote(note)
 }
 
 // A saved conversation the companion page asked for before Jarvis was open
@@ -181,6 +205,7 @@ function isChatDetail(x: unknown): x is ChatScreenDetail {
 // Shows a saved conversation, or the list when id is null or unknown.
 function showSession(id: string | null): void {
   codeView = null
+  focus = null
   const session = id ? (chatSessions.peek() ?? []).find(s => s.id === id) : undefined
   pages = []
   lastErrorQuestion = null
@@ -238,6 +263,7 @@ function sortForPicker(sessions: ChatSession[]): ChatSession[] {
 // picker opens with just "New chat" and redraws itself the moment the
 // saved chats arrive, rather than holding the open hostage to them.
 async function refresh(): Promise<void> {
+  focus = null
   const mode = nextOpenMode
   nextOpenMode = 'picker'
   quickAsk = mode === 'quickAsk'
@@ -368,16 +394,21 @@ function renderExchange(messages: readonly ChatMessage[]): string {
       ? 'Starting the microphone...'
       : 'No messages yet.\n\nLong-press to ask something.'
   }
-  const last = messages[messages.length - 1]
-  const before = messages[messages.length - 2]
+  const exchanges = exchangesOf(messages)
+  const at =
+    focus && focus.of === exchanges.length && messages === currentMessages
+      ? focus.index
+      : exchanges.length - 1
+  const shown = exchanges[at]
   codeBlocks = []
-  const parts =
-    last.role === 'model'
+  const parts = [
+    ...(shown.question ? [youLine(shown.question.text)] : []),
+    ...(shown.answer
       ? [
-          ...(before && before.role === 'user' ? [youLine(before.text)] : []),
-          `${last.model ? `${last.model}: ` : ''}${withCodePlaceholders(last.text)}`,
+          `${shown.answer.model ? `${shown.answer.model}: ` : ''}${withCodePlaceholders(shown.answer.text)}`,
         ]
-      : [youLine(last.text)]
+      : []),
+  ]
   pages = paginate(parts.join(DIVIDER), PAGE_INNER_WIDTH)
   pageIndex = 0
   warmCode()
@@ -486,6 +517,11 @@ async function drawCode(): Promise<void> {
       drawAgain = false
       const view = codeView
       if (!view) return
+      const loading = showCodeLoading
+      if (loading) {
+        showCodeLoading = false
+        await setContent(CODE_LOADING_TEXT)
+      }
       const renderStarted = performance.now()
       const tiles = await tilesFor(view, view.screen)
       status(
@@ -493,6 +529,8 @@ async function drawCode(): Promise<void> {
       )
       const sendStarted = performance.now()
       await setTiles(tiles)
+      if (loading) await setContent(' ')
+      updatePositionNote()
       if (openStartedAt !== null) {
         status(
           `Jarvis: code shown ${((performance.now() - openStartedAt) / 1000).toFixed(1)}s after the tap (sending ${((performance.now() - sendStarted) / 1000).toFixed(1)}s)`,
@@ -511,11 +549,19 @@ async function drawCode(): Promise<void> {
 
 let openStartedAt: number | null = null
 
+// The glasses switch to the image layout before any picture arrives, which
+// left the screen blank for a couple of seconds (G2-102): say what is
+// happening until the last picture lands.
+const CODE_LOADING_TEXT = '\n\n\n\n        Loading code...'
+let showCodeLoading = false
+
 function openCodeView(): void {
   if (codeBlocks.length === 0) return
   openStartedAt = performance.now()
+  showCodeLoading = true
   nextTileBank()
   viewBlock(0, 0)
+  updatePositionNote()
   status(`Jarvis: code view (${codeView?.metrics.cols} x ${codeView?.metrics.rows})`)
   requestRebuild(chatTool, () => void drawCode())
 }
@@ -542,7 +588,34 @@ function moveCode(delta: 1 | -1): void {
 function closeCodeView(): void {
   if (!codeView) return
   codeView = null
+  updatePositionNote()
   requestRebuild(chatTool, fillSection)
+}
+
+// The conversation as a list of its exchanges, newest first; tapping one
+// opens it (G2-102). Nothing to list: straight back to the chats.
+function openHistory(): void {
+  if (exchangesOf(currentMessages).length === 0) {
+    leaveToPicker()
+    return
+  }
+  depth = 'history'
+  pages = []
+  publishScreen()
+  requestRebuild(chatTool)
+}
+
+function leaveToPicker(): void {
+  syncPickerFromCurrent()
+  depth = 'picker'
+  currentSessionId = null
+  currentMessages = []
+  currentSessionTitle = null
+  lastErrorQuestion = null
+  pages = []
+  focus = null
+  publishScreen()
+  requestRebuild(chatTool)
 }
 
 const STATUS_FRAMES = ['.', '..', '...']
@@ -1149,10 +1222,24 @@ export const chatTool: Tool = {
   confirmPrompt: () =>
     depth === 'conversation' && !quickAsk ? 'Leave this conversation?' : 'Leave Jarvis?',
   beforeOpen: refresh,
-  contentKind: () => (depth === 'picker' ? 'list' : codeView ? 'tiles' : 'text'),
-  listItems: () => ['New chat', ...pickerSessions.map(s => pickerTitle(s.title))],
+  contentKind: () => (depth !== 'conversation' ? 'list' : codeView ? 'tiles' : 'text'),
+  listItems: () =>
+    depth === 'history'
+      ? historyRows(exchangesOf(currentMessages)).map(r => r.label)
+      : ['New chat', ...pickerSessions.map(s => pickerTitle(s.title))],
   onListSelect: index => {
+    if (depth === 'history') {
+      const exchanges = exchangesOf(currentMessages)
+      const row = historyRows(exchanges)[index]
+      if (!row) return
+      focus = { index: row.index, of: exchanges.length }
+      depth = 'conversation'
+      pages = []
+      publishScreen()
+      return
+    }
     if (depth !== 'picker') return
+    focus = null
     listenWhenReady = index === 0
     if (index === 0) {
       currentSessionId = null
@@ -1202,6 +1289,17 @@ export const chatTool: Tool = {
       })
       return
     }
+    // From the list of exchanges: ask the next question of this chat.
+    if (depth === 'history') {
+      if (busy()) return
+      depth = 'conversation'
+      focus = null
+      pages = []
+      requestRebuild(chatTool, () => {
+        if (depth === 'conversation' && !busy()) void beginListening()
+      })
+      return
+    }
     // Not while this conversation is still recording, transcribing or
     // waiting on Gemini - see busy().
     if (depth !== 'conversation' || busy()) return
@@ -1231,6 +1329,7 @@ export const chatTool: Tool = {
   },
   onClose: () => {
     codeView = null
+    setStatusNote(null)
     stopListeningIfAny()
   },
   onTap: () => {
@@ -1238,10 +1337,24 @@ export const chatTool: Tool = {
     if (codeView) moveCode(1)
     else openCodeView()
   },
+  // Double-tap steps back one level, no question asked, until the chat list
+  // (G2-102): code > question and answer > exchanges > chats > launcher.
+  // Mid-recording or answering, and in a conversation started from another
+  // screen, it still goes through the leave prompt.
   onBack: () => {
-    if (!codeView) return false
-    closeCodeView()
-    return true
+    if (codeView) {
+      closeCodeView()
+      return true
+    }
+    if (depth === 'history') {
+      leaveToPicker()
+      return true
+    }
+    if (depth === 'conversation' && !quickAsk && !busy()) {
+      openHistory()
+      return true
+    }
+    return false
   },
   screenDetail,
   // The companion asking for the list or a saved conversation (G2-69).
@@ -1264,8 +1377,14 @@ export const chatTool: Tool = {
     showSession(wanted)
     return true
   },
-  onSuspend: stopListeningIfAny,
-  onResume: resume,
+  onSuspend: () => {
+    stopListeningIfAny()
+    setStatusNote(null)
+  },
+  onResume: () => {
+    resume()
+    updatePositionNote()
+  },
   // Called only for a swipe at a page's top (-1) or bottom (1) edge - the
   // firmware handles scrolling within a page itself. Turns the page per the
   // arm-then-turn rule above. Ignored while anything other than the
@@ -1286,6 +1405,7 @@ export const chatTool: Tool = {
     // The firmware only reports a swipe at a section's very top or bottom,
     // so one swipe there moves on - no second "are you sure" swipe.
     pageIndex = next
+    updatePositionNote()
     // Any content update starts the new page at its top - including when
     // going back, so a previous page is re-read from its start.
     setContent(pages[pageIndex].text)

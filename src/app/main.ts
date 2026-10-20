@@ -35,6 +35,7 @@ import {
 import { readWithTimeout } from '../platform/storage'
 import {
   hydrate as hydrateStatusBar,
+  setNote as setStatusBarNote,
   setTimer as setStatusBarTimer,
   setWeather as setStatusBarWeather,
   startStatusBar,
@@ -42,6 +43,7 @@ import {
   stopStatusBar,
 } from './statusbar'
 import { registerRebuildHandler } from '../core/rebuild'
+import { registerStatusNoteHandler } from '../core/statusNote'
 import { onScreenRequest, publishToolScreen, setCurrentScreen } from '../core/currentScreen'
 import { persistScreen, readStoredScreen, type Screen } from './screen'
 import { TOOLS, TOOL_NAMES } from './registry'
@@ -494,6 +496,8 @@ onScreenRequest(request => {
   screenBeforeJarvis = null
   void openTool(index)
 })
+
+registerStatusNoteHandler(setStatusBarNote)
 
 registerRebuildHandler((tool, after) => {
   if (confirming || alerting) return

@@ -107,7 +107,12 @@ let weather: CurrentWeather | null = null
 // of things worth re-measuring slot widths for does not include this.
 let timerText: string | null = null
 
+// A tool's note about where the wearer is (core/statusNote.ts), shown in
+// the centre slot ahead of everything else while it lasts (G2-102).
+let noteText: string | null = null
+
 function renderWeather(): string {
+  if (noteText) return noteText
   if (timerText) return timerText
   if (!weather) return NO_DATA_TEXT
   return `${currentConditionWord(weather)} ${Math.round(weather.celsius)}C`
@@ -303,6 +308,11 @@ export function setWeather(next: CurrentWeather | null) {
 // Called by the app shell whenever the timer service notifies (every tick
 // while running, and on pause/resume/cancel), same wiring shape as
 // setWeather above. null hands the centre slot back to weather.
+export function setNote(text: string | null) {
+  noteText = text
+  refresh()
+}
+
 export function setTimer(text: string | null) {
   timerText = text
   refresh()
