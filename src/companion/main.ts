@@ -1,3 +1,4 @@
+import { WINGMAN_ENABLED } from '../shared/features'
 import './styles.css'
 import { bridge } from '../platform/bridge'
 import {
@@ -36,7 +37,7 @@ if (!root) throw new Error('companion root element missing from index.html')
 
 const TABS: { tab: Route['tab']; label: string; icon: string }[] = [
   { tab: 'jarvis', label: 'Jarvis', icon: 'jarvis' },
-  { tab: 'live', label: 'Wingman', icon: 'live' },
+  ...(WINGMAN_ENABLED ? [{ tab: 'live' as const, label: 'Wingman', icon: 'live' }] : []),
   { tab: 'notes', label: 'Notes', icon: 'notes' },
   { tab: 'settings', label: 'Settings', icon: 'settings' },
 ]

@@ -2,6 +2,7 @@ import type { Tool } from '../core/tool'
 import { chatTool } from '../features/chat/tool'
 import { notesTool } from '../features/notes/tool'
 import { liveTool } from '../features/live/tool'
+import { WINGMAN_ENABLED } from '../shared/features'
 
 // Order is the index. The firmware reports the highlighted list row back as
 // currentSelectItemIndex, and that index is what gets persisted in ui.screen, so
@@ -33,7 +34,8 @@ import { liveTool } from '../features/live/tool'
 // screen index, and imported behind import.meta.env.DEV so a production
 // build tree-shakes the whole features/lab module out rather than merely
 // hiding a menu entry that is still sitting in the package.
-const tools: Tool[] = [chatTool, liveTool, notesTool]
+// Wingman is off the launcher for now (G2-100, shared/features.ts).
+const tools: Tool[] = [chatTool, ...(WINGMAN_ENABLED ? [liveTool] : []), notesTool]
 
 if (import.meta.env.DEV) {
   const { labTool } = await import('../features/lab/tool')

@@ -1,3 +1,4 @@
+import { questionLine } from '../../shared/questionKeywords'
 import { modelLabel } from '../../core/llmProviders'
 import { isCodeFontLoaded, loadCodeFont } from '../../ui/codeFont'
 import { cancel, start, stop } from '../../core/voiceCapture'
@@ -304,16 +305,11 @@ function syncPickerFromCurrent(): void {
 // changes the page (see onScroll below). Every page is under either
 // ceiling, so answer length is unlimited.
 
-// Questions can now run to three minutes of speech (core/voiceCapture.ts) -
-// thousands of characters. The full question is part of the paged view;
-// status screens (Thinking, errors) show just its start, so they stay well
-// inside one update and one screen.
-const STATUS_QUESTION_MAX_CHARS = 160
-
-function shortQuestion(question: string): string {
-  return question.length > STATUS_QUESTION_MAX_CHARS
-    ? `${question.slice(0, STATUS_QUESTION_MAX_CHARS - 3)}...`
-    : question
+// The question line above an answer (G2-100): short questions in full, long
+// ones boiled down to their key words (shared/questionKeywords.ts), so it
+// never takes more than a line or two of the screen.
+function youLine(question: string): string {
+  return `You: ${questionLine(question)}`
 }
 
 // The pages currently on screen, and which one is showing. Empty whenever
@@ -373,11 +369,15 @@ function renderExchange(messages: readonly ChatMessage[]): string {
       : 'No messages yet.\n\nLong-press to ask something.'
   }
   const last = messages[messages.length - 1]
+  const before = messages[messages.length - 2]
   codeBlocks = []
   const parts =
     last.role === 'model'
-      ? [`${last.model ? `${last.model}: ` : ''}${withCodePlaceholders(last.text)}`]
-      : [`You: ${shortQuestion(last.text)}`]
+      ? [
+          ...(before && before.role === 'user' ? [youLine(before.text)] : []),
+          `${last.model ? `${last.model}: ` : ''}${withCodePlaceholders(last.text)}`,
+        ]
+      : [youLine(last.text)]
   pages = paginate(parts.join(DIVIDER), PAGE_INNER_WIDTH)
   pageIndex = 0
   warmCode()
@@ -730,11 +730,13 @@ let thinkingRetryNote = ''
 // Bluetooth update; a few per second reads as live without flooding it.
 const STREAM_DRAW_MS = 300
 
-function showThinking(): void {
+function showThinking(question: string): void {
   stopThinking = startLiveStatus(
     sessionToken,
     (dots, elapsedSeconds) => {
-      setContent(`Thinking${dots} (${elapsedSeconds}s)${thinkingRetryNote}`)
+      setContent(
+        `${youLine(question)}${DIVIDER}Thinking${dots} (${elapsedSeconds}s)${thinkingRetryNote}`,
+      )
     },
     thinkingStartedAt,
   )
@@ -796,7 +798,7 @@ async function askGeminiNow(question: string) {
   inFlightQuestion = question
   inFlightSessionId = targetSessionId
   status('Jarvis: asking')
-  showThinking()
+  showThinking(question)
 
   let attemptsMade = 1
   // Streamed answer text fills the first page as it arrives (G2-62), so
@@ -813,7 +815,10 @@ async function askGeminiNow(question: string) {
     if (lastScrollAt > streamStartedAt) return
     const now = Date.now()
     if (now - lastStreamDrawAt < STREAM_DRAW_MS) return
-    const firstPage = paginate(textSoFar, PAGE_INNER_WIDTH)[0]?.text
+    const firstPage = paginate(
+      `${youLine(question)}${DIVIDER}${modelLabel(llm.provider, llm.model)}: ${textSoFar}`,
+      PAGE_INNER_WIDTH,
+    )[0]?.text
     if (!firstPage || firstPage === streamedPage) return
     stopThinking?.()
     stopThinking = null
@@ -850,7 +855,7 @@ async function askGeminiNow(question: string) {
     lastErrorQuestion = question
     const triedNote = attemptsMade > 1 ? ` after ${attemptsMade} tries` : ''
     setContent(
-      `You: ${shortQuestion(question)}${DIVIDER}Couldn't reach ${providerInfo(llm.provider).label}${triedNote} (${reply.message}).` +
+      `${youLine(question)}${DIVIDER}Couldn't reach ${providerInfo(llm.provider).label}${triedNote} (${reply.message}).` +
         '\n\n(tap to retry, double-tap to go back)',
     )
     return
@@ -1069,7 +1074,7 @@ function resume(): void {
     return
   }
   if (inFlightQuestion !== null && waitingHere() && stopActiveStatus === null) {
-    showThinking()
+    showThinking(inFlightQuestion)
   }
 }
 
