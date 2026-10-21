@@ -177,3 +177,20 @@ describe('fitsAsText (G2-103)', () => {
     expect(fitsAsText(tall, PAGE_INNER_WIDTH)).toBe(false)
   })
 })
+
+describe('tailRows (G2-104)', () => {
+  it('shows the newest rows of a growing answer, one screen at most', async () => {
+    const { tailRows, PAGE_INNER_WIDTH, SCREEN_ROWS } = await import('../src/features/chat/paging')
+    const lines = Array.from({ length: 30 }, (_, i) => `line ${i + 1}`)
+    const tail = tailRows(lines.join('\n'), PAGE_INNER_WIDTH).split('\n')
+    expect(tail).toHaveLength(SCREEN_ROWS)
+    expect(tail[tail.length - 1]).toBe('line 30')
+    expect(tail[0]).toBe(`line ${30 - SCREEN_ROWS + 1}`)
+  })
+
+  it('shows a short answer whole, and never starts or ends on a blank row', async () => {
+    const { tailRows, PAGE_INNER_WIDTH } = await import('../src/features/chat/paging')
+    expect(tailRows('Hello there.', PAGE_INNER_WIDTH)).toBe('Hello there.')
+    expect(tailRows('one\n\ntwo\n\n', PAGE_INNER_WIDTH)).toBe('one\n\ntwo')
+  })
+})

@@ -14,7 +14,7 @@ import { getLlmConfig, providerInfo } from '../../core/llmSettings'
 import { chatSessions, type ChatMessage, type ChatSession } from './store'
 import { setContent } from '../../platform/page'
 import { status } from '../../platform/bridge'
-import { PAGE_INNER_WIDTH, fitsAsText, paginate, rebuildSafe, type Page } from './paging'
+import { PAGE_INNER_WIDTH, fitsAsText, paginate, rebuildSafe, tailRows, type Page } from './paging'
 import { splitAnswer } from '../../shared/answerBlocks'
 import { codeScreens, layoutCode } from '../../shared/codeLayout'
 import { CODE_FONT_PX, codeMetrics, renderCodeTiles, type CodeMetrics } from '../../ui/codeRender'
@@ -878,30 +878,26 @@ async function askGeminiNow(question: string) {
   showThinking(question)
 
   let attemptsMade = 1
-  // Streamed answer text fills the first page as it arrives (G2-62), so
-  // the wearer starts reading after the first words instead of after the
-  // whole reply. Only page 1, and only when it actually changed: every
-  // content update resets scroll, so once page 1 is full it is left alone,
-  // and a wearer who has scrolled is never yanked back to the top. The
-  // finished answer then replaces this with the normal paged view below.
-  const streamStartedAt = Date.now()
+  // The answer is shown as it is typed (G2-62, G2-104): the last screenful
+  // of what has arrived, newest line at the bottom. A content update always
+  // sends the firmware's scroll back to the top, so showing page 1 growing
+  // meant the wearer saw the first lines while the reply ran on, and any
+  // scrolling was undone on every new line. One screen has nothing to
+  // scroll. The finished answer then replaces this with the normal paged
+  // view below, from its start, where smooth scrolling is back.
   let streamedPage = ''
   let lastStreamDrawAt = 0
   const onText = (textSoFar: string) => {
     if (myAsk !== currentAskId || !stillRelevant()) return
-    if (lastScrollAt > streamStartedAt) return
     const now = Date.now()
     if (now - lastStreamDrawAt < STREAM_DRAW_MS) return
-    const firstPage = paginate(
-      `${youLine(question)}${DIVIDER}${modelLabel(llm.provider, llm.model)}: ${textSoFar}`,
-      PAGE_INNER_WIDTH,
-    )[0]?.text
-    if (!firstPage || firstPage === streamedPage) return
+    const tail = tailRows(textSoFar, PAGE_INNER_WIDTH)
+    if (!tail || tail === streamedPage) return
     stopThinking?.()
     stopThinking = null
-    streamedPage = firstPage
+    streamedPage = tail
     lastStreamDrawAt = now
-    setContent(firstPage)
+    setContent(tail)
   }
   status(`Jarvis: asking ${describeModel(llm)}`)
   // The request itself is shared with the phone (assistant.ts, G2-70).

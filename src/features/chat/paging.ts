@@ -55,16 +55,16 @@ function breakLongWord(word: string, innerWidth: number): string[] {
   return pieces
 }
 
-// A line's leading spaces are kept - code is unreadable without its
-// indentation - and a wrapped continuation keeps the same indent. Tabs
-// count as two spaces. (Found in the simulator: indented code came out
-// flush left.)
 // Code that fits this many rows is left as plain text in the answer
 // (G2-103): a one-line declaration is not worth a picture. A screen holds
 // SCREEN_ROWS rows and the question line and model name take two of them.
 // Longer code becomes pictures in a code font (see tool.ts).
 export const CODE_TEXT_MAX_ROWS = SCREEN_ROWS - 2
 
+// A line's leading spaces are kept - code is unreadable without its
+// indentation - and a wrapped continuation keeps the same indent. Tabs
+// count as two spaces. (Found in the simulator: indented code came out
+// flush left.)
 export function wrapLines(text: string, innerWidth: number): string[] {
   const lines: string[] = []
   for (const raw of text.split('\n')) {
@@ -156,4 +156,17 @@ export function rebuildSafe(text: string): string {
 // Whether a block of code is short enough to read as text on the glasses.
 export function fitsAsText(code: string, innerWidth: number): boolean {
   return wrapLines(code, innerWidth).length <= CODE_TEXT_MAX_ROWS
+}
+
+// The last screenful of an answer that is still arriving (G2-104): the
+// newest line at the bottom, older ones rolling off the top, like typing.
+// It is always one screen, so there is nothing to scroll - the firmware
+// sends every content update back to the top, which used to undo the
+// wearer's scrolling several times a second while a reply streamed in.
+export function tailRows(text: string, innerWidth: number, rows = SCREEN_ROWS): string {
+  const lines = wrapLines(text, innerWidth)
+  while (lines.length > 0 && lines[lines.length - 1] === '') lines.pop()
+  const tail = lines.slice(-rows)
+  while (tail.length > 0 && tail[0] === '') tail.shift()
+  return tail.join('\n')
 }
