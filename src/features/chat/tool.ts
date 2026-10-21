@@ -1,8 +1,6 @@
 import { setStatusNote } from '../../core/statusNote'
 import { positionLabel, screenRange } from '../../shared/position'
 import { exchangesOf, historyRows } from './exchanges'
-import { chatToDelete, deletePrompt } from './pickerRows'
-import { requestConfirm } from '../../core/confirm'
 import { questionLine } from '../../shared/questionKeywords'
 import { modelLabel } from '../../core/llmProviders'
 import { isCodeFontLoaded, loadCodeFont } from '../../ui/codeFont'
@@ -98,39 +96,6 @@ let quickAsk = false
 
 export function isAtPicker(): boolean {
   return depth === 'picker'
-}
-
-// DELETING CHATS FROM THE GLASSES (G2-108). A long press on the list does
-// not say which row is highlighted - swiping a list sends no event, only a
-// single press reports its row - so deleting works in two steps: a long press
-// switches the list into delete mode, where every saved chat reads
-// "Delete: <title>", and a single press on one asks "Delete this chat?"
-// (core/confirm.ts, No pre-selected). Cancel, or a double-tap, leaves delete
-// mode. True if the long press was used - false when there is nothing to
-// delete, so the shell starts a new chat as it always did.
-let deleting = false
-let deleteAsked: ChatSession | null = null
-
-export function toggleDeleteMode(): boolean {
-  if (depth !== 'picker') return false
-  if (!deleting && pickerSessions.length === 0) return false
-  deleting = !deleting
-  requestRebuild(chatTool)
-  return true
-}
-
-// Called once the list is on screen again after a press on a chat in delete
-// mode (an ask made before the rebuild would be covered by it).
-function askDelete(): void {
-  const target = deleteAsked
-  deleteAsked = null
-  if (!target) return
-  requestConfirm(chatTool, deletePrompt(target.title), () => {
-    pickerSessions = pickerSessions.filter(s => s.id !== target.id)
-    void chatSessions.remove(target.id)
-    deleting = false
-    status('Jarvis: chat deleted')
-  })
 }
 
 // The shell's "take the wearer back to where they long-pressed from" -
@@ -381,8 +346,6 @@ function sortForPicker(sessions: ChatSession[]): ChatSession[] {
 // saved chats arrive, rather than holding the open hostage to them.
 async function refresh(): Promise<void> {
   focus = null
-  deleting = false
-  deleteAsked = null
   const mode = nextOpenMode
   nextOpenMode = 'picker'
   quickAsk = mode === 'quickAsk'
@@ -1549,9 +1512,7 @@ export const chatTool: Tool = {
   listItems: () =>
     depth === 'history'
       ? historyRows(exchangesOf(currentMessages)).map(r => r.label)
-      : deleting
-        ? ['Cancel', ...pickerSessions.map(s => `Delete: ${pickerTitle(s.title)}`)]
-        : ['New chat', ...pickerSessions.map(s => pickerTitle(s.title))],
+      : ['New chat', ...pickerSessions.map(s => pickerTitle(s.title))],
   onListSelect: index => {
     if (depth === 'history') {
       const exchanges = exchangesOf(currentMessages)
@@ -1564,13 +1525,6 @@ export const chatTool: Tool = {
       return
     }
     if (depth !== 'picker') return
-    if (deleting) {
-      // Cancel leaves delete mode; a chat is asked about once the list is
-      // back on screen (askDelete).
-      if (index === 0) deleting = false
-      else deleteAsked = chatToDelete(index, pickerSessions)
-      return
-    }
     focus = null
     listenWhenReady = index === 0
     if (index === 0) {
@@ -1604,7 +1558,6 @@ export const chatTool: Tool = {
   // straight to recording - per direct request, there is nothing else to do
   // on an empty conversation, so a long-press first was a wasted step.
   onContentReady: () => {
-    askDelete()
     fillSection()
     startIfPending()
   },
@@ -1676,11 +1629,6 @@ export const chatTool: Tool = {
   // Mid-recording or answering, and in a conversation started from another
   // screen, it still goes through the leave prompt.
   onBack: () => {
-    if (depth === 'picker' && deleting) {
-      deleting = false
-      requestRebuild(chatTool)
-      return true
-    }
     if (codeView) {
       closeCodeView()
       return true

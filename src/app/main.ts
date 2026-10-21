@@ -44,7 +44,6 @@ import {
 } from './statusbar'
 import { registerRebuildHandler } from '../core/rebuild'
 import { registerStatusNoteHandler } from '../core/statusNote'
-import { registerConfirmHandler } from '../core/confirm'
 import { onScreenRequest, publishToolScreen, setCurrentScreen } from '../core/currentScreen'
 import { persistScreen, readStoredScreen, type Screen } from './screen'
 import { TOOLS, TOOL_NAMES } from './registry'
@@ -91,7 +90,6 @@ import {
   retry as retryJarvis,
   prepareOpen as prepareJarvisOpen,
   isAtPicker as isJarvisAtPicker,
-  toggleDeleteMode as toggleJarvisDeleteMode,
   onReturnRequested as onJarvisReturnRequested,
   armWakeListen as armJarvisWakeListen,
   isBusy as isJarvisBusy,
@@ -123,10 +121,6 @@ function activeTool() {
 // restore the wearer into a half-answered question about a page they cannot
 // remember opening.
 let confirming = false
-
-// A question a tool asked through core/confirm.ts, while it is on screen
-// (G2-108); null for the usual leave prompt.
-let customConfirm: { prompt: string; onYes: () => void } | null = null
 
 // Whether the "Time's up!" alert is covering the page (see showTimerAlert).
 // Same standing as confirming: not part of Screen, never persisted - the
@@ -172,7 +166,7 @@ function confirmContainers(tool: Tool) {
         paddingLength: 0,
         containerID: CONTAINER_ID_CONFIRM_TITLE,
         containerName: CONTAINER_NAME_CONFIRM_TITLE,
-        content: customConfirm?.prompt ?? tool.confirmPrompt?.() ?? `Leave ${tool.name}?`,
+        content: tool.confirmPrompt?.() ?? `Leave ${tool.name}?`,
         isEventCapture: 0,
       }),
     ],
@@ -205,7 +199,6 @@ function enterConfirm(tool: Tool) {
     if (ok) {
       confirming = true
     } else {
-      customConfirm = null
       status('Failed to open leave prompt')
     }
   })
@@ -505,13 +498,6 @@ onScreenRequest(request => {
 })
 
 registerStatusNoteHandler(setStatusBarNote)
-
-registerConfirmHandler((tool, prompt, onYes) => {
-  if (confirming || alerting) return
-  if (screen.kind !== 'tool' || TOOLS[screen.index] !== tool) return
-  customConfirm = { prompt, onYes }
-  enterConfirm(tool)
-})
 
 registerRebuildHandler((tool, after) => {
   if (confirming || alerting) return
@@ -1137,19 +1123,7 @@ const unsubscribe = bridge.onEvenHubEvent(event => {
     ) {
       const tool = TOOLS[screen.index]
       const choice = listEvent.currentSelectItemIndex ?? CONFIRM_NO
-      if (customConfirm) {
-        // The tool's own question: Yes does what it asked and redraws the
-        // tool; No puts the tool back as it was.
-        const asked = customConfirm
-        customConfirm = null
-        if (choice === CONFIRM_YES) {
-          asked.onYes()
-          confirming = false
-          rebuildToolInPlace(tool, screen.index)
-        } else {
-          cancelConfirm(screen.index)
-        }
-      } else if (choice === CONFIRM_YES) {
+      if (choice === CONFIRM_YES) {
         confirmExit(tool, screen.index)
       } else {
         cancelConfirm(screen.index)
@@ -1286,12 +1260,8 @@ const unsubscribe = bridge.onEvenHubEvent(event => {
   // report holding the whole time a question was spoken ended the
   // recording too early. LONG_PRESS_RELEASE_EVENT is deliberately unhandled.
   if (sysType === OsEventTypeList.LONG_PRESS_EVENT) {
-    if (screen.kind === 'tool' && screen.index === JARVIS_INDEX) {
-      // On the chat list a long press switches to delete mode (G2-108); with
-      // nothing to delete it starts a new chat as it always did.
-      if (isJarvisAtPicker() && toggleJarvisDeleteMode()) return
-      askJarvis()
-    } else activeTool()?.onLongPress?.()
+    if (screen.kind === 'tool' && screen.index === JARVIS_INDEX) askJarvis()
+    else activeTool()?.onLongPress?.()
     return
   }
 
