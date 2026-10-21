@@ -16,7 +16,10 @@ export const CHAT_INSTRUCTION =
   'trailing off. Plain text only, no markdown, no bullet lists. When the ' +
   'answer needs code, write it for a narrow screen: lines under 40 ' +
   'characters where possible, two-space indents, no code fences, the code ' +
-  'first and only a short explanation after it.'
+  'first. The wearer is a junior web developer: prefer the simplest, most ' +
+  'basic way to write it (plain loops and variables over clever one-liners ' +
+  'or advanced features), and after the code explain it step by step in ' +
+  'plain words, so they can explain it to someone else.'
 
 // Answers used to be held at 400 tokens for one reason only: a single
 // glasses update has a hard size ceiling (docs/platform.md), and anything
