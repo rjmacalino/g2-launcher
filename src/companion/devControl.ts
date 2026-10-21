@@ -2,6 +2,7 @@ import { status } from '../platform/bridge'
 import type { Route } from './app'
 import { chatSessions } from '../features/chat/store'
 import { devAsk } from '../features/chat/tool'
+import { probeLongText } from '../platform/textProbe'
 
 // The page half of vite.config.ts's dev-only remote control (G2-71):
 // lets a test script tap and type on the phone page the way a person
@@ -18,6 +19,8 @@ export type DevCommand =
   | { action: 'seedChat'; question: string; answer: string }
   // Asks a question on the glasses as if spoken (needs Jarvis open there).
   | { action: 'glassesAsk'; text: string }
+  // The long-text test of Settings > Diagnostics, from a script.
+  | { action: 'probeText'; kind: 'single' | 'append' }
 
 function find(selector: string, index = 0, text?: string): HTMLElement | null {
   const all = [...document.querySelectorAll<HTMLElement>(selector)]
@@ -57,6 +60,9 @@ export function runDevCommand(command: DevCommand, navigate: (route: Route) => v
       status(`dev: typed into ${command.selector}`)
       return
     }
+    case 'probeText':
+      void probeLongText(command.kind)
+      return
     case 'glassesAsk':
       void devAsk(command.text).then(() => status('dev: asked on the glasses'))
       return

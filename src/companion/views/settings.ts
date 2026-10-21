@@ -23,6 +23,7 @@ import { isWakeListening, wakeDescription } from '../../core/wakeListener'
 import { getPrepNotes, setPrepNotes, PREP_NOTES_MAX_CHARS } from '../../features/live/settings'
 import type { AppContext, Page } from '../app'
 import { h, icon, toast } from '../dom'
+import { probeLongText } from '../../platform/textProbe'
 
 // The Settings tab (G2-71). Everything here lives only on this phone - the
 // AI keys included, never in the app's code (see core/llmSettings.ts).
@@ -331,6 +332,22 @@ function diagnosticsCard(): { el: HTMLElement; stop: () => void } {
         'p',
         { class: 'caption', style: 'margin: 0 0 12px' },
         'What the app has been doing, newest first - the lines to send when something on the glasses does not work.',
+      ),
+      h(
+        'div',
+        { class: 'button-row', style: 'margin-bottom: 12px' },
+        h(
+          'button',
+          {
+            class: 'button',
+            onclick: async () => {
+              toast('Open a Jarvis chat on the glasses, then look at them')
+              await probeLongText('single')
+              await probeLongText('append')
+            },
+          },
+          'Test long text on glasses',
+        ),
       ),
       list,
     ),
