@@ -255,20 +255,26 @@ function redoView(rows: string[], at: number, setWin: (w: Win) => void): () => s
 
 // Where the wearer is in a long answer or in code, in the middle of the
 // status bar in place of the weather (G2-102).
+// Tells at a glance, on every page, that the answer has a code view (G2-122).
+function withCodeTag(label: string | null): string | null {
+  if (codeBlocks.length === 0 || codeView) return label
+  return label ? `${label} - tap: code` : 'Tap: code'
+}
+
 function updatePositionNote(): void {
   if (stream && stream.timer !== null) {
     setStatusNote(streamNote(stream))
     return
   }
   if (tailView) {
-    setStatusNote(viewLabel(tailView.rows, tailView.win))
+    setStatusNote(withCodeTag(viewLabel(tailView.rows, tailView.win)))
     return
   }
   let note: string | null = null
   if (depth === 'conversation' && !listening && !transcribing && stopActiveStatus === null) {
     note = codeView
       ? positionLabel(codeView.screen, codeView.screens.length)
-      : positionLabel(pageIndex, pages.length)
+      : withCodeTag(positionLabel(pageIndex, pages.length))
   }
   setStatusNote(note)
 }
