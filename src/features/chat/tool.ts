@@ -18,7 +18,6 @@ import {
   moveView,
   pageIndexAt,
   rowsOf,
-  slideFrames,
   tailWin,
   viewLabel,
   viewPages,
@@ -243,31 +242,6 @@ async function showPage(text: string, redo: () => string = renderConversation): 
   await setContent(redo())
 }
 
-// Where the wearer is in a long answer or in code, in the middle of the
-// status bar in place of the weather (G2-102).
-// Changing page with a short slide (G2-113): a few in-between pictures with
-// the old screen moving up as the new one rises in (or coming down from
-// above, going back), then the real page. While it runs, further swipes are
-// ignored. A rejected frame just ends the slide early.
-let sliding = false
-
-async function slideTo(
-  fromText: string,
-  toText: string,
-  dir: 1 | -1,
-  redo?: () => string,
-): Promise<void> {
-  sliding = true
-  try {
-    for (const frame of slideFrames(fromText.split('\n'), toText.split('\n'), dir)) {
-      if (!(await setContent(frame))) break
-    }
-    await showPage(toText, redo)
-  } finally {
-    sliding = false
-  }
-}
-
 // The page a view starts on, worked out again after the page size shrank
 // (see lowerPageLimit): what to draw instead of a page the glasses refused.
 function redoView(rows: string[], at: number, setWin: (w: Win) => void): () => string {
@@ -279,6 +253,8 @@ function redoView(rows: string[], at: number, setWin: (w: Win) => void): () => s
   }
 }
 
+// Where the wearer is in a long answer or in code, in the middle of the
+// status bar in place of the weather (G2-102).
 function updatePositionNote(): void {
   if (stream && stream.timer !== null) {
     setStatusNote(streamNote(stream))
@@ -1050,11 +1026,10 @@ function moveHold(s: Stream, delta: -1 | 1): void {
     if (delta === 1) skipToEnd(s)
     return
   }
-  const from = windowText(rows, s.win ?? tailWin(rows))
   s.win = next
   const text = windowText(rows, next)
   const again = redoView(rows, next.start, w => (s.win = w))
-  s.pending = s.pending.then(() => slideTo(from, text, delta, again))
+  s.pending = s.pending.then(() => showPage(text, again))
 }
 
 function resumeStream(s: Stream): void {
@@ -1701,7 +1676,6 @@ export const chatTool: Tool = {
   // conversation is on screen - recording, transcribing, thinking - which
   // is exactly when pages is empty or a live status is running.
   onScroll: delta => {
-    if (sliding) return
     // While the answer is being typed or paused (G2-107, G2-111): a swipe up
     // pauses and goes back a window, a swipe down skips to the end; paused,
     // both ways read over what has arrived.
@@ -1731,13 +1705,10 @@ export const chatTool: Tool = {
       const view = tailView
       const next = moveView(view.rows, view.win, delta)
       if (next) {
-        const from = windowText(view.rows, view.win)
         view.win = next
         const text = windowText(view.rows, next)
-        void slideTo(
-          from,
+        void showPage(
           text,
-          delta,
           redoView(view.rows, next.start, w => (view.win = w)),
         )
         updatePositionNote()
@@ -1753,12 +1724,11 @@ export const chatTool: Tool = {
     if (next === pageIndex) return
     // The firmware only reports a swipe at a section's very top or bottom,
     // so one swipe there moves on - no second "are you sure" swipe.
-    const fromText = pages[pageIndex].text
     pageIndex = next
     updatePositionNote()
     // Any content update starts the new page at its top - including when
     // going back, so a previous page is re-read from its start.
-    void slideTo(fromText, pages[pageIndex].text, delta)
+    void showPage(pages[pageIndex].text)
   },
   // Never actually rendered for the picker (contentKind is 'list' there).
   // For a conversation: the page already being read, if any - so "No" on the
