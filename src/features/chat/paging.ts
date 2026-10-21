@@ -120,11 +120,17 @@ export type Page = {
   // features/chat/tool.ts turns such a page on the first swipe past it,
   // since there is nothing more on it left to read.
   fitsOneScreen: boolean
+  // Which rows of the whole wrapped text this page covers (end exclusive) and
+  // how many rows there are in all, so the status bar can say which screens
+  // of the answer are showing (G2-112).
+  startRow: number
+  endRow: number
+  totalRows: number
 }
 
 export function paginate(text: string, innerWidth: number): Page[] {
   const lines = wrapLines(text, innerWidth)
-  const chunks: { lines: string[]; overlap: number }[] = []
+  const chunks: { lines: string[]; overlap: number; start: number; end: number }[] = []
   let next = 0
   while (next < lines.length) {
     // A page never starts its new text on a blank line.
@@ -133,6 +139,7 @@ export function paginate(text: string, innerWidth: number): Page[] {
     const previous = chunks[chunks.length - 1]
     const carried = previous ? overlapFrom(previous.lines) : []
     const page = [...carried]
+    const firstNew = next
     let chars = page.join('\n').length
     const budget = pageMaxChars - HINT_RESERVE_CHARS
     while (next < lines.length) {
@@ -143,16 +150,35 @@ export function paginate(text: string, innerWidth: number): Page[] {
       chars += added
       next++
     }
-    chunks.push({ lines: page, overlap: carried.length })
+    chunks.push({
+      lines: page,
+      overlap: carried.length,
+      start: Math.max(0, firstNew - carried.length),
+      end: next,
+    })
   }
 
   if (chunks.length <= 1) {
     const only = (chunks[0]?.lines ?? []).join('\n')
-    return [{ text: only, fitsOneScreen: (chunks[0]?.lines.length ?? 0) <= SCREEN_ROWS }]
+    return [
+      {
+        text: only,
+        fitsOneScreen: (chunks[0]?.lines.length ?? 0) <= SCREEN_ROWS,
+        startRow: 0,
+        endRow: lines.length,
+        totalRows: lines.length,
+      },
+    ]
   }
   return chunks.map((chunk, i) => {
     const rows = i < chunks.length - 1 ? [...chunk.lines, '(more below)'] : chunk.lines
-    return { text: rows.join('\n'), fitsOneScreen: rows.length <= SCREEN_ROWS }
+    return {
+      text: rows.join('\n'),
+      fitsOneScreen: rows.length <= SCREEN_ROWS,
+      startRow: chunk.start,
+      endRow: chunk.end,
+      totalRows: lines.length,
+    }
   })
 }
 

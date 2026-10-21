@@ -1,5 +1,5 @@
 import { setStatusNote } from '../../core/statusNote'
-import { positionLabel } from '../../shared/position'
+import { positionLabel, screenRange } from '../../shared/position'
 import { exchangesOf, historyRows } from './exchanges'
 import { chatToDelete, deletePrompt } from './pickerRows'
 import { requestConfirm } from '../../core/confirm'
@@ -21,6 +21,7 @@ import { moveWindow, rowsOf, tailWin, windowText, type Win } from './viewer'
 import {
   PAGE_INNER_WIDTH,
   REBUILD_MAX_CHARS,
+  SCREEN_ROWS,
   fitsAsText,
   lowerPageLimit,
   paginate,
@@ -271,14 +272,18 @@ function updatePositionNote(): void {
     return
   }
   if (tailView) {
-    setStatusNote(null)
+    const { win, rows } = tailView
+    setStatusNote(screenRange(win.start, win.end, rows.length, SCREEN_ROWS))
     return
   }
   let note: string | null = null
   if (depth === 'conversation' && !listening && !transcribing && stopActiveStatus === null) {
+    const page = pages[pageIndex]
     note = codeView
       ? positionLabel(codeView.screen, codeView.screens.length)
-      : positionLabel(pageIndex, pages.length)
+      : page
+        ? screenRange(page.startRow, page.endRow, page.totalRows, SCREEN_ROWS)
+        : null
   }
   setStatusNote(note)
 }
@@ -939,7 +944,11 @@ let stream: Stream | null = null
 
 // The wearer-facing hint in the middle of the status bar.
 function streamNote(s: Stream): string | null {
-  if (s.mode === 'hold') return 'Tap to continue'
+  if (s.mode === 'hold') {
+    const rows = allRows(s)
+    const win = s.win ?? tailWin(rows)
+    return screenRange(win.start, win.end, rows.length, SCREEN_ROWS) ?? 'Tap to continue'
+  }
   return s.shown < s.received.length ? 'Tap to pause' : null
 }
 
@@ -1728,6 +1737,7 @@ export const chatTool: Tool = {
         tailView.win = next
         const text = windowText(tailView.rows, next)
         void showPage(text, () => text)
+        updatePositionNote()
       }
       return
     }
