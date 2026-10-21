@@ -12,7 +12,7 @@ import { CANVAS_WIDTH, CONTENT_HEIGHT, TILE_COUNT, TILE_HEIGHT, TILE_WIDTH } fro
 // RJ found the bundled monospace font too thick and asked for the footer's.
 // It is proportional, so indentation is counted in columns (the width of a
 // digit) rather than characters, and lines are wrapped by measured width.
-export const CODE_FONT_PX = 12
+export const CODE_FONT_PX = 14
 
 const MARGIN_X = 8
 const MARGIN_Y = 6
