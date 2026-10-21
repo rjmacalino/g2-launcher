@@ -4,7 +4,7 @@ import { bridge, status } from '../platform/bridge'
 // companion page. Kept in memory once loaded, because drawing code asks for
 // it synchronously; the saved value is read once at startup. A change takes
 // effect the next time a code view is opened.
-export const CODE_SIZES = [10, 12, 14, 16, 18] as const
+export const CODE_SIZES = [12, 14, 16, 18] as const
 export const DEFAULT_CODE_SIZE = 14
 const STORAGE_KEY = 'jarvis.codeSize'
 
