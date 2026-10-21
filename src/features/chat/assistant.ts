@@ -40,7 +40,7 @@ export function toTurns(messages: readonly ChatMessage[]): LlmTurn[] {
 // answer gets a generous limit, after which the wearer sees an error and
 // can retry. A reply arriving after that is ignored.
 const ABOUT_ME_TIMEOUT_MS = 3000
-const ANSWER_TIMEOUT_MS = 60_000
+const ANSWER_TIMEOUT_MS = 300_000
 
 function within<T>(promise: Promise<T>, ms: number, fallback: T): Promise<T> {
   return Promise.race([

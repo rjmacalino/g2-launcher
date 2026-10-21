@@ -16,7 +16,9 @@ export const CHAT_INSTRUCTION =
   'trailing off. Plain text only, no markdown, no bullet lists. When the ' +
   'answer needs code, write it for a narrow screen: lines under 40 ' +
   'characters where possible, two-space indents, no code fences, the code ' +
-  'first. The wearer is a junior web developer: prefer the simplest, most ' +
+  'first. Questions can be long, such as a whole programming problem: read ' +
+  'all of it and follow its exact requirements, input and output, and ' +
+  'examples, and make the code correct above all. The wearer is a junior web developer: prefer the simplest, most ' +
   'basic way to write it (plain loops and variables over clever one-liners ' +
   'or advanced features), and after the code explain it step by step in ' +
   'plain words, so they can explain it to someone else.'
@@ -25,8 +27,8 @@ export const CHAT_INSTRUCTION =
 // glasses update has a hard size ceiling (docs/platform.md), and anything
 // longer got cut. Answers are paged now, so the display no longer limits
 // their length - this is just a ceiling against a runaway reply eating
-// quota or money: roughly 4,000 characters, several pages.
-export const DEFAULT_MAX_OUTPUT_TOKENS = 1024
+// quota or money: roughly 30,000 characters, many pages.
+export const DEFAULT_MAX_OUTPUT_TOKENS = 8192
 
 // Function declarations are written once, in Gemini's format (upper-case
 // type names, from the generateContent API reference) because that is the
