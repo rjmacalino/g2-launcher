@@ -15,6 +15,7 @@ import { chatSessions, type ChatMessage, type ChatSession } from './store'
 import { setContent } from '../../platform/page'
 import { status } from '../../platform/bridge'
 import { TYPING_CHARS_PER_SECOND, TYPING_TICK_MS, nextShown } from './typing'
+import { moveWindow, rowsOf, tailWin, windowText, type Win } from './viewer'
 import {
   PAGE_INNER_WIDTH,
   REBUILD_MAX_CHARS,
@@ -132,6 +133,31 @@ let currentSessionTitle: string | null = null
 // store waits for its own startup load before writing (so it can never
 // overwrite history it has not seen), and that wait must not reach the
 // screen.
+// Dev only (companion/devControl.ts, never reached in a build): asks a
+// question on the glasses as if it had just been spoken and transcribed, so
+// the typing view can be tested without a microphone. Jarvis must be open.
+export async function devAsk(text: string): Promise<void> {
+  const created = chatSessions.newSession({ role: 'user', text, timestamp: Date.now() })
+  depth = 'conversation'
+  focus = null
+  codeView = null
+  pages = []
+  quickAsk = false
+  currentSessionId = created.id
+  currentSessionTitle = created.title
+  currentMessages = created.messages
+  // Saved before it is announced: the phone page looks the chat up, and
+  // sends the glasses back to the list if it is not there yet.
+  await chatSessions.save({
+    id: created.id,
+    title: created.title,
+    messages: created.messages,
+    updatedAt: Date.now(),
+  })
+  publishScreen()
+  requestRebuild(chatTool, () => void askGemini(text))
+}
+
 function saveCurrent(): void {
   if (currentSessionId === null) return
   void chatSessions.save({
@@ -192,8 +218,6 @@ function publishScreen(): void {
   updatePositionNote()
 }
 
-// Where the wearer is in a long answer or in code, in the middle of the
-// status bar in place of the weather (G2-102).
 // Puts a page of text on the glasses. If the update is rejected because it
 // is long (see lowerPageLimit), the sections get shorter and the same view
 // is drawn again in them - redo gives the new first page.
@@ -204,9 +228,15 @@ async function showPage(text: string, redo: () => string = renderConversation): 
   await setContent(redo())
 }
 
+// Where the wearer is in a long answer or in code, in the middle of the
+// status bar in place of the weather (G2-102).
 function updatePositionNote(): void {
   if (stream && stream.timer !== null) {
     setStatusNote(streamNote(stream))
+    return
+  }
+  if (tailView) {
+    setStatusNote(null)
     return
   }
   let note: string | null = null
@@ -368,6 +398,13 @@ function youLine(question: string): string {
 let pages: Page[] = []
 let pageIndex = 0
 
+// Set while the screen still shows the typed last screenful of a finished
+// answer (G2-107): when the typing caught up by itself nothing replaces it,
+// so the wearer is not thrown back to the first line. A swipe then reads
+// over the answer in windows (features/chat/viewer.ts), starting just above
+// that screen.
+let tailView: { rows: string[]; win: Win } | null = null
+
 // Page turning, per direct report that one-screen pages turned on every
 // swipe and lost the wearer's place. The firmware scrolls a page smoothly
 // on its own and reports only a swipe at its top or bottom edge
@@ -409,6 +446,7 @@ function renderConversation(): string {
 // a command's result that is not part of a saved conversation (see
 // finishListening).
 function renderExchange(messages: readonly ChatMessage[]): string {
+  tailView = null
   if (messages.length === 0) {
     pages = []
     // Shown for the moment between picking "New chat" and the microphone
@@ -833,12 +871,10 @@ let thinkingRetryNote = ''
 // scrolling. Instead the answer is revealed at a readable pace
 // (features/chat/typing.ts), as its last screenful - newest line at the
 // bottom - which is one screen, so there is nothing to scroll or jump.
-//   follow: the typed last screenful. Tap skips ahead (the whole answer if
-//           the model is done, otherwise up to the live end); swipe up
-//           stops following.
-//   hold:   a still, scrollable view of what has been typed so far, with
-//           smooth scrolling; new lines no longer move it. Tap shows the
-//           whole answer once it is done.
+//   follow: the typed last screenful. Tap pauses; swipe up pauses and goes
+//           back a window.
+//   hold:   paused, free to read up and down over what has arrived so far
+//           (see PAUSED below). Tap goes on typing.
 type Stream = {
   header: string
   label: string
@@ -853,6 +889,11 @@ type Stream = {
   drawn: string
   relevant: () => boolean
   release: (() => void) | null
+  // The window being read while paused.
+  win: Win | null
+  // Set when the typing caught up with the model by itself; unset if it was
+  // cut short (left, backgrounded).
+  outcome?: 'caught-up'
   // The last update sent to the glasses: the next must wait for it, as two
   // content updates in flight at once can be rejected.
   pending: Promise<unknown>
@@ -861,8 +902,8 @@ let stream: Stream | null = null
 
 // The wearer-facing hint in the middle of the status bar.
 function streamNote(s: Stream): string | null {
-  if (s.mode === 'hold') return s.complete ? 'Done - tap' : 'Tap: full answer'
-  return s.shown < s.received.length ? 'Tap to skip' : null
+  if (s.mode === 'hold') return 'Tap to continue'
+  return s.shown < s.received.length ? 'Tap to pause' : null
 }
 
 function drawStream(s: Stream): void {
@@ -893,7 +934,10 @@ function tickStream(s: Stream): void {
       s.shown = next
     }
     drawStream(s)
-    if (s.complete && s.shown >= s.received.length) s.release?.()
+    if (s.complete && s.shown >= s.received.length) {
+      s.outcome = 'caught-up'
+      s.release?.()
+    }
   } else {
     drawStream(s)
   }
@@ -919,45 +963,53 @@ function waitForReveal(s: Stream): Promise<void> {
   }).then(() => s.pending.then(() => undefined))
 }
 
-// A swipe up while the answer is being typed: stop following and hold what
-// has been typed so far as a view that scrolls smoothly.
-function holdStream(): void {
-  const s = stream
-  if (!s || s.timer === null || s.mode !== 'follow') return
-  s.mode = 'hold'
-  pages = paginate(
-    `${s.header}${DIVIDER}${s.label}: ${s.received.slice(0, s.shown)}`,
-    PAGE_INNER_WIDTH,
-  )
-  pageIndex = 0
-  const held = pages[0].text
-  const again = (): string => {
-    pages = paginate(
-      `${s.header}${DIVIDER}${s.label}: ${s.received.slice(0, s.shown)}`,
-      PAGE_INNER_WIDTH,
-    )
-    pageIndex = 0
-    return pages[0].text
-  }
-  s.pending = s.pending.then(() => showPage(held, again))
-  setStatusNote(streamNote(s))
+// PAUSED (G2-107): a tap while the answer is being typed leaves the screen
+// exactly as it is. The wearer then reads freely over everything that has
+// arrived so far, in windows (features/chat/viewer.ts): smooth scrolling
+// inside a window, a swipe past its edge moves to the next or previous one,
+// and a swipe down past the last window waits for more to arrive. Tap again
+// to go on typing from where they have read to.
+function allRows(s: Stream): string[] {
+  return rowsOf(s.received, PAGE_INNER_WIDTH)
 }
 
-// A tap while the answer is being typed. True if it was used.
-function skipStream(): boolean {
+function freezeStream(): Stream | null {
+  const s = stream
+  if (!s || s.timer === null || s.mode !== 'follow') return null
+  s.mode = 'hold'
+  s.win = tailWin(rowsOf(s.received.slice(0, s.shown), PAGE_INNER_WIDTH))
+  setStatusNote(streamNote(s))
+  return s
+}
+
+function moveHold(s: Stream, delta: -1 | 1): void {
+  const now = Date.now()
+  if (now - lastScrollAt < SCROLL_COOLDOWN_MS) return
+  lastScrollAt = now
+  const rows = allRows(s)
+  const next = moveWindow(rows, s.win ?? tailWin(rows), delta)
+  if (!next) return
+  s.win = next
+  const text = windowText(rows, next)
+  s.pending = s.pending.then(() => showPage(text, () => text))
+}
+
+function resumeStream(s: Stream): void {
+  const read = s.win ? allRows(s).slice(0, s.win.end).join('\n').length : 0
+  s.shown = Math.min(s.received.length, Math.max(s.shown, read))
+  s.mode = 'follow'
+  s.win = null
+  s.drawn = ''
+  pages = []
+  tickStream(s)
+}
+
+// A tap while the answer is being typed: pause, or go on. True if used.
+function tapStream(): boolean {
   const s = stream
   if (!s || s.timer === null) return false
-  if (s.complete) {
-    s.release?.()
-    return true
-  }
-  s.fast = true
-  if (s.mode === 'hold') {
-    s.mode = 'follow'
-    s.drawn = ''
-    pages = []
-  }
-  tickStream(s)
+  if (s.mode === 'follow') freezeStream()
+  else resumeStream(s)
   return true
 }
 
@@ -1049,6 +1101,7 @@ async function askGeminiNow(question: string) {
     drawn: '',
     relevant: () => myAsk === currentAskId && stillRelevant(),
     release: null,
+    win: null,
     pending: Promise.resolve(),
   }
   stream = typed
@@ -1152,7 +1205,15 @@ async function askGeminiNow(question: string) {
   })
   if (!stillRelevant()) return
   currentMessages = answeredMessages
-  void showPage(renderConversation())
+  const firstPage = renderConversation()
+  if (typed.outcome === 'caught-up' && typed.mode === 'follow') {
+    // The typing caught up by itself: the wearer is reading the last lines,
+    // so leave them there instead of jumping back to the first (G2-107).
+    const rows = rowsOf(typed.received, PAGE_INNER_WIDTH)
+    tailView = { rows, win: tailWin(rows) }
+  } else {
+    void showPage(firstPage)
+  }
   publishScreen()
 }
 
@@ -1506,7 +1567,7 @@ export const chatTool: Tool = {
     stopListeningIfAny()
   },
   onTap: () => {
-    if (skipStream()) return
+    if (tapStream()) return
     if (depth !== 'conversation' || busy()) return
     if (codeView) moveCode(1)
     else openCodeView()
@@ -1565,13 +1626,32 @@ export const chatTool: Tool = {
   // conversation is on screen - recording, transcribing, thinking - which
   // is exactly when pages is empty or a live status is running.
   onScroll: delta => {
-    // While the answer is being typed: a swipe up stops following (G2-106).
-    if (stream && stream.timer !== null && stream.mode === 'follow') {
-      if (delta === -1) holdStream()
+    // While the answer is being typed or paused (G2-107): a swipe up pauses
+    // and goes back a window; paused, both ways read over what has arrived.
+    if (stream && stream.timer !== null) {
+      if (stream.mode === 'follow') {
+        const paused = delta === -1 ? freezeStream() : null
+        if (paused) moveHold(paused, -1)
+      } else {
+        moveHold(stream, delta)
+      }
       return
     }
     if (codeView) {
       moveCode(delta)
+      return
+    }
+    // The finished tail: read up and down over the answer in windows.
+    if (tailView && depth === 'conversation') {
+      const now = Date.now()
+      if (now - lastScrollAt < SCROLL_COOLDOWN_MS) return
+      lastScrollAt = now
+      const next = moveWindow(tailView.rows, tailView.win, delta)
+      if (next) {
+        tailView.win = next
+        const text = windowText(tailView.rows, next)
+        void showPage(text, () => text)
+      }
       return
     }
     if (depth !== 'conversation' || listening || stopActiveStatus !== null) return
@@ -1597,6 +1677,8 @@ export const chatTool: Tool = {
   // ceiling for a rebuild (features/chat/paging.ts's PAGE_MAX_CHARS).
   // A rebuild carries at most 1000 characters; a longer section shows its
   // start, and onContentReady fills in the rest.
-  initialContent: () =>
-    rebuildSafe(pages.length > 0 ? pages[pageIndex].text : renderConversation()),
+  initialContent: () => {
+    tailView = null
+    return rebuildSafe(pages.length > 0 ? pages[pageIndex].text : renderConversation())
+  },
 }
