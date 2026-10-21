@@ -91,7 +91,7 @@ import {
   retry as retryJarvis,
   prepareOpen as prepareJarvisOpen,
   isAtPicker as isJarvisAtPicker,
-  requestDeleteChat,
+  toggleDeleteMode as toggleJarvisDeleteMode,
   onReturnRequested as onJarvisReturnRequested,
   armWakeListen as armJarvisWakeListen,
   isBusy as isJarvisBusy,
@@ -556,12 +556,9 @@ function enterJarvis() {
 // Jarvis rather than treating the list as a screen to come back to; in a
 // conversation it asks the next question there (Jarvis's own onLongPress).
 // Anywhere else: a new conversation, handing back afterward.
-function askJarvis(row?: number) {
+function askJarvis() {
   if (screen.kind === 'tool' && screen.index === JARVIS_INDEX) {
     if (isJarvisAtPicker()) {
-      // A long press on a saved chat in the list asks to delete it (G2-108);
-      // on "New chat", or when the row is not known, it starts a new chat.
-      if (row !== undefined && requestDeleteChat(row)) return
       prepareJarvisOpen('newChat')
       openTool(JARVIS_INDEX)
     } else {
@@ -1290,13 +1287,10 @@ const unsubscribe = bridge.onEvenHubEvent(event => {
   // recording too early. LONG_PRESS_RELEASE_EVENT is deliberately unhandled.
   if (sysType === OsEventTypeList.LONG_PRESS_EVENT) {
     if (screen.kind === 'tool' && screen.index === JARVIS_INDEX) {
-      // What the glasses say about a long press on a list, for finding out
-      // on hardware whether the highlighted row comes with it.
-      if (isJarvisAtPicker()) {
-        const row = listEvent?.currentSelectItemIndex
-        status(`Jarvis: long press on the list, row ${row ?? 'not given'}`)
-      }
-      askJarvis(listEvent?.currentSelectItemIndex)
+      // On the chat list a long press switches to delete mode (G2-108); with
+      // nothing to delete it starts a new chat as it always did.
+      if (isJarvisAtPicker() && toggleJarvisDeleteMode()) return
+      askJarvis()
     } else activeTool()?.onLongPress?.()
     return
   }
