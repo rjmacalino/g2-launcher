@@ -313,6 +313,20 @@ export const parakeetTool: Tool = {
     void start()
   },
   onClose: stop,
+  // Double-tap on an answer goes back to listening (and the live transcript),
+  // the same "back" it means everywhere; on the listening screen it falls
+  // through to the leave prompt.
+  onBack: () => {
+    if (answer === null) return false
+    answer = null
+    pages = []
+    pageIndex = 0
+    pageWin = null
+    updateNote()
+    lastScreen = ''
+    redraw()
+    return true
+  },
   onTap: () => {
     if (releaseMic && !paused) void askNow(session, true)
   },
