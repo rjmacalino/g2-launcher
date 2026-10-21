@@ -16,6 +16,7 @@ import { status } from '../../platform/bridge'
 import { TYPING_CHARS_PER_SECOND, TYPING_TICK_MS, nextShown } from './typing'
 import {
   moveView,
+  movePaged,
   pageIndexAt,
   rowsOf,
   tailWin,
@@ -428,6 +429,9 @@ function youLine(question: string): string {
 // an error), so a swipe there does nothing.
 let pages: Page[] = []
 let pageIndex = 0
+// The part of the page on screen when going back landed on its last screenful
+// (null: the whole page). See movePaged.
+let pageWin: Win | null = null
 
 // Set while the screen still shows the typed last screenful of a finished
 // answer (G2-107): when the typing caught up by itself nothing replaces it,
@@ -504,6 +508,7 @@ function renderExchange(messages: readonly ChatMessage[]): string {
   ]
   pages = paginate(parts.join(DIVIDER), PAGE_INNER_WIDTH)
   pageIndex = 0
+  pageWin = null
   warmCode()
   return pages[0].text
 }
@@ -1725,15 +1730,23 @@ export const chatTool: Tool = {
     const now = Date.now()
     if (now - lastScrollAt < SCROLL_COOLDOWN_MS) return
     lastScrollAt = now
-    const next = Math.min(Math.max(pageIndex + delta, 0), pages.length - 1)
-    if (next === pageIndex) return
+    const next = movePaged(
+      pages.map(p => p.text.split(/\n/).length),
+      { page: pageIndex, win: pageWin },
+      delta,
+    )
+    if (!next) return
     // The firmware only reports a swipe at a section's very top or bottom,
     // so one swipe there moves on - no second "are you sure" swipe.
-    pageIndex = next
+    pageIndex = next.page
+    pageWin = next.win
     updatePositionNote()
-    // Any content update starts the new page at its top - including when
-    // going back, so a previous page is re-read from its start.
-    void showPage(pages[pageIndex].text)
+    // Any content update starts at the top of what it shows, so going back
+    // shows the last screenful of the page above (G2-124).
+    const lines = pages[pageIndex].text.split(/\n/)
+    void showPage(
+      pageWin ? lines.slice(pageWin.start, pageWin.end).join('\n') : pages[pageIndex].text,
+    )
   },
   // Never actually rendered for the picker (contentKind is 'list' there).
   // For a conversation: the page already being read, if any - so "No" on the
@@ -1745,6 +1758,7 @@ export const chatTool: Tool = {
   // start, and onContentReady fills in the rest.
   initialContent: () => {
     tailView = null
+    pageWin = null
     return rebuildSafe(pages.length > 0 ? pages[pageIndex].text : renderConversation())
   },
 }

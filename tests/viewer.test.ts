@@ -8,7 +8,7 @@ vi.mock('../src/platform/bridge', () => ({
 }))
 
 const { PAGE_MAX_CHARS, PAGE_ROWS, SCREEN_ROWS } = await import('../src/features/chat/paging')
-const { moveView, tailWin, viewLabel, viewPages, windowText } =
+const { movePaged, moveView, tailWin, viewLabel, viewPages, windowText } =
   await import('../src/features/chat/viewer')
 
 const rows = (n: number) => Array.from({ length: n }, (_, i) => `row ${i}`)
@@ -27,24 +27,29 @@ describe('viewer pages (G2-107, G2-116)', () => {
     expect(pages[3].end).toBe(100)
   })
 
-  it('goes up from the screen being looked at to the top of its page, then page by page', () => {
+  it('goes up by landing on the last screenful above, never repeating a row', () => {
     const all = rows(100)
     const pages = viewPages(all)
+    // From the typed tail (the last screenful of page 4) up to the rest of it.
     let win = moveView(all, tailWin(all), -1)
-    expect(win).toEqual(pages[3])
+    expect(win).toEqual({ start: tailWin(all).start - SCREEN_ROWS, end: tailWin(all).start })
+    // From the top of page 4: the last screenful of page 3.
+    win = moveView(all, pages[3], -1)
+    expect(win).toEqual({ start: pages[2].end - SCREEN_ROWS, end: pages[2].end })
+    // And again: the screenful before that.
     win = moveView(all, win!, -1)
-    expect(win).toEqual(pages[2])
-    win = moveView(all, win!, -1)
-    win = moveView(all, win!, -1)
-    expect(win).toEqual(pages[0])
-    expect(moveView(all, win!, -1)).toBeNull()
+    expect(win).toEqual({ start: pages[2].end - 2 * SCREEN_ROWS, end: pages[2].end - SCREEN_ROWS })
+    expect(moveView(all, pages[0], -1)).toBeNull()
   })
 
-  it('goes down to the next page, and stops at the last', () => {
+  it('goes down through the rest of a page, then the next whole page, and stops at the last', () => {
     const all = rows(100)
     const pages = viewPages(all)
     expect(moveView(all, pages[0], 1)).toEqual(pages[1])
-    expect(moveView(all, pages[2], 1)).toEqual(pages[3])
+    const landed = { start: pages[2].end - SCREEN_ROWS, end: pages[2].end }
+    expect(moveView(all, landed, 1)).toEqual(pages[3])
+    const partial = { start: pages[2].start, end: pages[2].start + SCREEN_ROWS }
+    expect(moveView(all, partial, 1)).toEqual({ start: partial.end, end: pages[2].end })
     expect(moveView(all, pages[3], 1)).toBeNull()
     expect(moveView(all, tailWin(all), 1)).toBeNull()
   })
@@ -68,5 +73,30 @@ describe('viewer pages (G2-107, G2-116)', () => {
     for (const page of viewPages(wide)) {
       expect(windowText(wide, page).length).toBeLessThanOrEqual(PAGE_MAX_CHARS)
     }
+  })
+})
+
+describe('movePaged (G2-124)', () => {
+  const lengths = [27, 27, 12]
+
+  it('lands on the last screenful of the page above, then steps back by screenfuls', () => {
+    let at = movePaged(lengths, { page: 1, win: null }, -1)
+    expect(at).toEqual({ page: 0, win: { start: 27 - SCREEN_ROWS, end: 27 } })
+    at = movePaged(lengths, at!, -1)
+    expect(at).toEqual({ page: 0, win: { start: 27 - 2 * SCREEN_ROWS, end: 27 - SCREEN_ROWS } })
+  })
+
+  it('shows a short page above whole', () => {
+    expect(movePaged([5, 27], { page: 1, win: null }, -1)).toEqual({ page: 0, win: null })
+  })
+
+  it('goes down through the rest of the page before the next one', () => {
+    const at = { page: 0, win: { start: 0, end: SCREEN_ROWS } }
+    expect(movePaged(lengths, at, 1)).toEqual({ page: 0, win: { start: SCREEN_ROWS, end: 27 } })
+    expect(movePaged(lengths, { page: 0, win: { start: 18, end: 27 } }, 1)).toEqual({
+      page: 1,
+      win: null,
+    })
+    expect(movePaged(lengths, { page: 2, win: null }, 1)).toBeNull()
   })
 })
