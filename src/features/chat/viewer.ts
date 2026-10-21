@@ -67,3 +67,32 @@ export function moveWindow(rows: readonly string[], win: Win, delta: -1 | 1): Wi
 export function windowText(rows: readonly string[], win: Win): string {
   return rows.slice(win.start, win.end).join('\n')
 }
+
+// A few in-between pictures for a page change (G2-113), so the wearer sees
+// the page slide rather than blink: going on (dir 1) the old screen moves up
+// as the new one rises in below it, going back (dir -1) the new one comes
+// down from above. Only what is on screen counts: a swipe at the bottom edge
+// means the old page's last rows are showing, and one at the top edge its
+// first rows; the new page always begins at its top. The real page is drawn
+// after the last frame. Pure, tested in tests/viewer.test.ts.
+export function slideFrames(
+  from: readonly string[],
+  to: readonly string[],
+  dir: 1 | -1,
+  rows = SCREEN_ROWS,
+  step = 2,
+): string[] {
+  const pad = (r: readonly string[]) =>
+    r.length < rows ? [...r, ...Array.from({ length: rows - r.length }, () => '')] : [...r]
+  const old = pad(dir === 1 ? from.slice(-rows) : from.slice(0, rows))
+  const next = pad(to.slice(0, rows))
+  const frames: string[] = []
+  for (let k = step; k < rows; k += step) {
+    const strip =
+      dir === 1
+        ? [...old, ...next].slice(k, k + rows)
+        : [...next, ...old].slice(rows - k, 2 * rows - k)
+    frames.push(strip.join('\n'))
+  }
+  return frames
+}

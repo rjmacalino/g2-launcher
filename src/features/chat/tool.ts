@@ -17,7 +17,7 @@ import { chatSessions, type ChatMessage, type ChatSession } from './store'
 import { setContent } from '../../platform/page'
 import { status } from '../../platform/bridge'
 import { TYPING_CHARS_PER_SECOND, TYPING_TICK_MS, nextShown } from './typing'
-import { moveWindow, rowsOf, tailWin, windowText, type Win } from './viewer'
+import { moveWindow, rowsOf, slideFrames, tailWin, windowText, type Win } from './viewer'
 import {
   PAGE_INNER_WIDTH,
   REBUILD_MAX_CHARS,
@@ -266,6 +266,29 @@ async function showPage(text: string, redo: () => string = renderConversation): 
 
 // Where the wearer is in a long answer or in code, in the middle of the
 // status bar in place of the weather (G2-102).
+// Changing page with a short slide (G2-113): a few in-between pictures with
+// the old screen moving up as the new one rises in (or coming down from
+// above, going back), then the real page. While it runs, further swipes are
+// ignored. A rejected frame just ends the slide early.
+let sliding = false
+
+async function slideTo(
+  fromText: string,
+  toText: string,
+  dir: 1 | -1,
+  redo?: () => string,
+): Promise<void> {
+  sliding = true
+  try {
+    for (const frame of slideFrames(fromText.split('\n'), toText.split('\n'), dir)) {
+      if (!(await setContent(frame))) break
+    }
+    await showPage(toText, redo)
+  } finally {
+    sliding = false
+  }
+}
+
 function updatePositionNote(): void {
   if (stream && stream.timer !== null) {
     setStatusNote(streamNote(stream))
@@ -1042,9 +1065,10 @@ function moveHold(s: Stream, delta: -1 | 1): void {
     if (delta === 1) skipToEnd(s)
     return
   }
+  const from = windowText(rows, s.win ?? tailWin(rows))
   s.win = next
   const text = windowText(rows, next)
-  s.pending = s.pending.then(() => showPage(text, () => text))
+  s.pending = s.pending.then(() => slideTo(from, text, delta, () => text))
 }
 
 function resumeStream(s: Stream): void {
@@ -1706,6 +1730,7 @@ export const chatTool: Tool = {
   // conversation is on screen - recording, transcribing, thinking - which
   // is exactly when pages is empty or a live status is running.
   onScroll: delta => {
+    if (sliding) return
     // While the answer is being typed or paused (G2-107, G2-111): a swipe up
     // pauses and goes back a window, a swipe down skips to the end; paused,
     // both ways read over what has arrived.
@@ -1734,9 +1759,10 @@ export const chatTool: Tool = {
       lastScrollAt = now
       const next = moveWindow(tailView.rows, tailView.win, delta)
       if (next) {
+        const from = windowText(tailView.rows, tailView.win)
         tailView.win = next
         const text = windowText(tailView.rows, next)
-        void showPage(text, () => text)
+        void slideTo(from, text, delta, () => text)
         updatePositionNote()
       }
       return
@@ -1750,11 +1776,12 @@ export const chatTool: Tool = {
     if (next === pageIndex) return
     // The firmware only reports a swipe at a section's very top or bottom,
     // so one swipe there moves on - no second "are you sure" swipe.
+    const fromText = pages[pageIndex].text
     pageIndex = next
     updatePositionNote()
     // Any content update starts the new page at its top - including when
     // going back, so a previous page is re-read from its start.
-    void showPage(pages[pageIndex].text)
+    void slideTo(fromText, pages[pageIndex].text, delta)
   },
   // Never actually rendered for the picker (contentKind is 'list' there).
   // For a conversation: the page already being read, if any - so "No" on the
