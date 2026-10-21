@@ -962,9 +962,12 @@ function tickStream(s: Stream): void {
     return
   }
   const now = Date.now()
-  s.budget += (TYPING_CHARS_PER_SECOND * (now - s.lastTickAt)) / 1000
+  const elapsed = now - s.lastTickAt
   s.lastTickAt = now
   if (s.mode === 'follow') {
+    // Only typing time counts: a pause must not store up time that is then
+    // spent in one burst on resuming (G2-110).
+    s.budget += (TYPING_CHARS_PER_SECOND * elapsed) / 1000
     const next = nextShown(s.received, s.shown, s.fast ? Infinity : s.budget, s.complete)
     if (next > s.shown) {
       s.budget = s.fast ? 0 : Math.max(0, s.budget - (next - s.shown))
@@ -1032,11 +1035,14 @@ function moveHold(s: Stream, delta: -1 | 1): void {
 }
 
 function resumeStream(s: Stream): void {
-  const read = s.win ? allRows(s).slice(0, s.win.end).join('\n').length : 0
-  s.shown = Math.min(s.received.length, Math.max(s.shown, read))
+  // Carries on from exactly where the typing paused (G2-110), not from where
+  // the wearer scrolled to: reading ahead is allowed, but the typing must not
+  // jump to the latest words.
   s.mode = 'follow'
   s.win = null
   s.drawn = ''
+  s.budget = 0
+  s.lastTickAt = Date.now()
   pages = []
   tickStream(s)
 }
