@@ -14,7 +14,7 @@ import { getLlmConfig, providerInfo } from '../../core/llmSettings'
 import { chatSessions, type ChatMessage, type ChatSession } from './store'
 import { setContent } from '../../platform/page'
 import { status } from '../../platform/bridge'
-import { PAGE_INNER_WIDTH, paginate, rebuildSafe, type Page } from './paging'
+import { PAGE_INNER_WIDTH, fitsAsText, paginate, rebuildSafe, type Page } from './paging'
 import { splitAnswer } from '../../shared/answerBlocks'
 import { codeScreens, layoutCode } from '../../shared/codeLayout'
 import { CODE_FONT_PX, codeMetrics, renderCodeTiles, type CodeMetrics } from '../../ui/codeRender'
@@ -430,10 +430,14 @@ let drawAgain = false
 function withCodePlaceholders(text: string): string {
   const blocks = splitAnswer(text)
   if (!blocks.some(b => b.kind === 'code')) return text
-  const total = blocks.filter(b => b.kind === 'code').length
+  const isPicture = (b: (typeof blocks)[number]) =>
+    b.kind === 'code' && !fitsAsText(b.text, PAGE_INNER_WIDTH)
+  const total = blocks.filter(isPicture).length
   return blocks
     .map(block => {
-      if (block.kind === 'text') return block.text
+      // Short code stays plain text; only code too tall for one screen
+      // becomes pictures (G2-103).
+      if (!isPicture(block)) return block.text
       codeBlocks.push(block.text)
       const n = codeBlocks.length
       const lines = block.text.split('\n').length

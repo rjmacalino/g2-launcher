@@ -166,3 +166,14 @@ describe('paginate', () => {
     expect(pages[0].text).toContain(divider)
   })
 })
+
+describe('fitsAsText (G2-103)', () => {
+  it('keeps short code as text and turns tall code into pictures', async () => {
+    const { fitsAsText, PAGE_INNER_WIDTH, CODE_TEXT_MAX_ROWS } =
+      await import('../src/features/chat/paging')
+    expect(fitsAsText('count = 0', PAGE_INNER_WIDTH)).toBe(true)
+    expect(fitsAsText('a = 1\nb = 2\nc = 3\nd = 4\ne = 5', PAGE_INNER_WIDTH)).toBe(true)
+    const tall = Array.from({ length: CODE_TEXT_MAX_ROWS + 1 }, (_, i) => `x${i} = ${i}`).join('\n')
+    expect(fitsAsText(tall, PAGE_INNER_WIDTH)).toBe(false)
+  })
+})

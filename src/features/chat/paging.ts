@@ -59,6 +59,12 @@ function breakLongWord(word: string, innerWidth: number): string[] {
 // indentation - and a wrapped continuation keeps the same indent. Tabs
 // count as two spaces. (Found in the simulator: indented code came out
 // flush left.)
+// Code that fits this many rows is left as plain text in the answer
+// (G2-103): a one-line declaration is not worth a picture. A screen holds
+// SCREEN_ROWS rows and the question line and model name take two of them.
+// Longer code becomes pictures in a code font (see tool.ts).
+export const CODE_TEXT_MAX_ROWS = SCREEN_ROWS - 2
+
 export function wrapLines(text: string, innerWidth: number): string[] {
   const lines: string[] = []
   for (const raw of text.split('\n')) {
@@ -145,4 +151,9 @@ export function rebuildSafe(text: string): string {
   if (text.length <= limit) return text
   const cut = text.lastIndexOf('\n', limit)
   return text.slice(0, cut > 0 ? cut : limit)
+}
+
+// Whether a block of code is short enough to read as text on the glasses.
+export function fitsAsText(code: string, innerWidth: number): boolean {
+  return wrapLines(code, innerWidth).length <= CODE_TEXT_MAX_ROWS
 }
