@@ -194,3 +194,22 @@ describe('tailRows (G2-104)', () => {
     expect(tailRows('one\n\ntwo\n\n', PAGE_INNER_WIDTH)).toBe('one\n\ntwo')
   })
 })
+
+describe('lowerPageLimit (G2-106)', () => {
+  it('splits long answers into sections the strict limit accepts, once lowered', async () => {
+    vi.resetModules()
+    const m = await import('../src/features/chat/paging')
+    const long = Array.from(
+      { length: 40 },
+      (_, i) => `Sentence number ${i} says something useful.`,
+    ).join(' ')
+    expect(
+      Math.max(...m.paginate(long, m.PAGE_INNER_WIDTH).map(p => p.text.length)),
+    ).toBeGreaterThan(1000)
+    expect(m.lowerPageLimit()).toBe(true)
+    expect(
+      Math.max(...m.paginate(long, m.PAGE_INNER_WIDTH).map(p => p.text.length)),
+    ).toBeLessThanOrEqual(1000)
+    expect(m.lowerPageLimit()).toBe(false)
+  })
+})

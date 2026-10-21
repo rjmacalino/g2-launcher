@@ -53,6 +53,7 @@ Source tags:
 | Rule | Source |
 |---|---|
 | Content limit 1000 chars on create/rebuild, 2000 on `textContainerUpgrade` | [DOCS] |
+| The simulator rejects a `textContainerUpgrade` over 1000 chars too (930 passed, 1082 failed, G2-106); real glasses untested. Jarvis learns it: after one rejected long update it splits answers into 1000-char sections (`lowerPageLimit` in features/chat/paging.ts) | [SIM] |
 | About 400 to 500 characters fill the full screen | [DOCS] |
 | `textColor` brightness 0 to 4 (default 4). Level 0 may be invisible | [DOCS] [SDK] |
 | Line height 27 px | [PLUGIN] font-measurement, matches our own measurement [HW] |

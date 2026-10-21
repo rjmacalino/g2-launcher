@@ -179,7 +179,7 @@ export function setContent(text: string): Promise<boolean> {
       }),
     )
     .then(ok => {
-      if (!ok) status('Content update failed')
+      if (!ok) status(`Content update failed (${text.length} characters)`)
       return ok
     })
 }

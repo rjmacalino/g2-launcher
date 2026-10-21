@@ -34,6 +34,19 @@ export const SCREEN_ROWS = Math.floor((CONTENT_HEIGHT - 2 * PADDING) / ROW_HEIGH
 // has a stricter 1000 ceiling - see rebuildSafe below.
 export const PAGE_MAX_CHARS = 1900
 export const REBUILD_MAX_CHARS = 1000
+
+// The docs allow 2000 characters in an in-place update, but the simulator
+// rejects anything over 1000 (found G2-106: 930 characters went through,
+// 1082 did not). Hardware has not said, so the app learns: the first time
+// an update that long is rejected it calls this, and sections are split to
+// the stricter size from then on. Returns false if already lowered.
+let pageMaxChars = PAGE_MAX_CHARS
+
+export function lowerPageLimit(): boolean {
+  if (pageMaxChars <= REBUILD_MAX_CHARS) return false
+  pageMaxChars = REBUILD_MAX_CHARS
+  return true
+}
 // The last lines of a section, repeated at the top of the next one, so a
 // long answer continues where the eye already is.
 export const OVERLAP_ROWS = 3
@@ -121,7 +134,7 @@ export function paginate(text: string, innerWidth: number): Page[] {
     const carried = previous ? overlapFrom(previous.lines) : []
     const page = [...carried]
     let chars = page.join('\n').length
-    const budget = PAGE_MAX_CHARS - HINT_RESERVE_CHARS
+    const budget = pageMaxChars - HINT_RESERVE_CHARS
     while (next < lines.length) {
       const added = (page.length > 0 ? 1 : 0) + lines[next].length
       // Always take at least one new line, so paging always moves forward.
