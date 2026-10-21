@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'vitest'
-import { codeScreens, layoutCode } from '../src/shared/codeLayout'
+import { codeScreens, indentUnit, layoutCode, layoutCodeRows } from '../src/shared/codeLayout'
 
 describe('layoutCode', () => {
   it('keeps short lines and their indentation exactly', () => {
@@ -23,17 +23,40 @@ describe('layoutCode', () => {
   })
 })
 
+describe('layoutCodeRows (G2-117)', () => {
+  it('numbers each source line, and gives the wrapped rest of a line no number', () => {
+    const rows = layoutCodeRows(`a\n  ${'x'.repeat(30)}\nb`, 20)
+    expect(rows.map(r => r.number)).toEqual([1, 2, null, 3])
+  })
+
+  it('records how far each line is indented, also for the wrapped rest', () => {
+    const rows = layoutCodeRows(`def f():\n    ${'x'.repeat(30)}`, 20)
+    expect(rows.map(r => r.indent)).toEqual([0, 4, 4])
+  })
+
+  it('lets a blank line inside a block carry the block guides through', () => {
+    const rows = layoutCodeRows('if x:\n  a = 1\n\n  b = 2\n\nz = 3', 40)
+    expect(rows.map(r => r.indent)).toEqual([0, 2, 2, 2, 0, 0])
+  })
+
+  it('works out the indent step the code uses', () => {
+    expect(indentUnit(layoutCodeRows('a\n    b\n        c', 40))).toBe(4)
+    expect(indentUnit(layoutCodeRows('a\n  b\n    c', 40))).toBe(2)
+    expect(indentUnit(layoutCodeRows('a\nb', 40))).toBe(2)
+  })
+})
+
 describe('codeScreens', () => {
   it('keeps a short block on one screen', () => {
     expect(codeScreens(['a', 'b'], 5)).toEqual([['a', 'b']])
   })
 
-  it('repeats the last line of a screen at the top of the next', () => {
+  it('starts each screen on the very next row, repeating nothing', () => {
     const lines = Array.from({ length: 12 }, (_, i) => `l${i}`)
     const screens = codeScreens(lines, 5)
     expect(screens[0]).toEqual(['l0', 'l1', 'l2', 'l3', 'l4'])
-    expect(screens[1][0]).toBe('l4')
-    expect(screens[screens.length - 1].at(-1)).toBe('l11')
+    expect(screens[1][0]).toBe('l5')
+    expect(screens.flat()).toEqual(lines)
     expect(screens.every(s => s.length <= 5)).toBe(true)
   })
 })

@@ -1,3 +1,4 @@
+import { indentUnit, type CodeRow } from '../shared/codeLayout'
 import { codeFontStack, isCodeFontLoaded } from './codeFont'
 import { CANVAS_WIDTH, CONTENT_HEIGHT, TILE_COUNT, TILE_HEIGHT, TILE_WIDTH } from '../platform/page'
 
@@ -25,7 +26,14 @@ function font(px: number): string {
   return `500 ${px}px ${codeFontStack()}`
 }
 
+// Greys on the green display (white is its brightest level, black off):
+// line numbers are dim, indent guides dimmer still, so the code itself
+// stays the brightest thing on screen (G2-117).
+const NUMBER_COLOR = '#7a7a7a'
+const GUIDE_COLOR = '#3c3c3c'
+
 export type CodeMetrics = {
+  charWidth: number
   cols: number
   rows: number
   lineHeight: number
@@ -45,6 +53,7 @@ export function codeMetrics(fontPx: number): CodeMetrics {
   const lineHeight = Math.round(fontPx * 1.3)
   const usable = CONTENT_HEIGHT - 2 * MARGIN_Y - FOOTER_PX - FOOTER_GAP
   return {
+    charWidth,
     cols: Math.max(10, Math.floor((CANVAS_WIDTH - 2 * MARGIN_X) / charWidth)),
     rows: Math.max(3, Math.floor(usable / lineHeight)),
     lineHeight,
@@ -63,9 +72,11 @@ async function png(canvas: HTMLCanvasElement): Promise<Uint8Array> {
 // One screen of code plus its footer, as the four tile images in container
 // order (top-left, top-right, bottom-left, bottom-right).
 export async function renderCodeTiles(
-  lines: string[],
+  rows: CodeRow[],
   metrics: CodeMetrics,
   footer: string,
+  // Columns the line numbers take, including the space after them.
+  gutter: number,
 ): Promise<Uint8Array[]> {
   const full = document.createElement('canvas')
   full.width = CANVAS_WIDTH
@@ -75,10 +86,27 @@ export async function renderCodeTiles(
   ctx.fillStyle = '#000000'
   ctx.fillRect(0, 0, full.width, full.height)
   ctx.textBaseline = 'top'
-  ctx.fillStyle = '#ffffff'
   ctx.font = font(metrics.fontPx)
-  lines.forEach((line, i) => {
-    ctx.fillText(line, MARGIN_X, MARGIN_Y + i * metrics.lineHeight)
+  const codeX = MARGIN_X + gutter * metrics.charWidth
+  const unit = indentUnit(rows)
+  rows.forEach((row, i) => {
+    const y = MARGIN_Y + i * metrics.lineHeight
+    // Indent guides: one thin vertical line at each step the line is
+    // indented past, running the full row height so rows join up.
+    ctx.fillStyle = GUIDE_COLOR
+    for (let col = 0; col < row.indent; col += unit) {
+      ctx.fillRect(Math.round(codeX + col * metrics.charWidth), y, 1, metrics.lineHeight)
+    }
+    // The source line number, right-aligned in the gutter; nothing on the
+    // wrapped rest of a long line.
+    if (row.number !== null) {
+      ctx.fillStyle = NUMBER_COLOR
+      ctx.textAlign = 'right'
+      ctx.fillText(String(row.number), codeX - metrics.charWidth, y)
+      ctx.textAlign = 'left'
+    }
+    ctx.fillStyle = '#ffffff'
+    ctx.fillText(row.text, codeX, y)
   })
   ctx.fillStyle = '#8a8a8a'
   ctx.font = `${FOOTER_PX - 2}px sans-serif`

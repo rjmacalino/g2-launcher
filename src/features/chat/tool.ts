@@ -37,7 +37,7 @@ import {
   type Page,
 } from './paging'
 import { splitAnswer } from '../../shared/answerBlocks'
-import { codeScreens, layoutCode } from '../../shared/codeLayout'
+import { codeScreens, layoutCodeRows, type CodeRow } from '../../shared/codeLayout'
 import { CODE_FONT_PX, codeMetrics, renderCodeTiles, type CodeMetrics } from '../../ui/codeRender'
 import { nextTileBank, setTiles } from '../../platform/page'
 import { askAssistant } from './assistant'
@@ -528,7 +528,14 @@ function renderExchange(messages: readonly ChatMessage[]): string {
 // opens the code view, a swipe or tap pages through it, and a double-tap
 // returns to the text.
 let codeBlocks: string[] = []
-type CodeView = { block: number; screen: number; screens: string[][]; metrics: CodeMetrics }
+type CodeView = {
+  block: number
+  screen: number
+  screens: CodeRow[][]
+  metrics: CodeMetrics
+  // Columns of the line numbers, with the space after them (G2-117).
+  gutter: number
+}
 let codeView: CodeView | null = null
 let drawing = false
 let drawAgain = false
@@ -554,8 +561,11 @@ function withCodePlaceholders(text: string): string {
 
 function layoutBlock(block: number): Omit<CodeView, 'screen'> {
   const metrics = codeMetrics(CODE_FONT_PX)
-  const screens = codeScreens(layoutCode(codeBlocks[block], metrics.cols), metrics.rows)
-  return { block, screens, metrics }
+  // The gutter holds the widest line number; the code gets what is left.
+  const lineCount = codeBlocks[block].split('\n').length
+  const gutter = Math.max(2, String(lineCount).length) + 1
+  const rows = layoutCodeRows(codeBlocks[block], metrics.cols - gutter)
+  return { block, screens: codeScreens(rows, metrics.rows), metrics, gutter }
 }
 
 function viewBlock(block: number, screen: number): void {
@@ -572,12 +582,15 @@ const TILE_CACHE_MAX = 24
 const tileCache = new Map<string, Promise<Uint8Array[]>>()
 
 function footerFor(view: Omit<CodeView, 'screen'>, screen: number): string {
-  const lines = view.screens[screen]
-  const first = view.screens.slice(0, screen).reduce((n, s) => n + s.length - 1, 0) + 1
-  const total = view.screens.reduce((n, s) => n + s.length, 0) - (view.screens.length - 1)
+  // Source line numbers, as in the gutter: the first and the last that
+  // start on this screen, of the block's whole count.
+  const numbers = view.screens[screen].flatMap(r => (r.number === null ? [] : [r.number]))
+  const first = numbers[0] ?? 1
+  const last = numbers[numbers.length - 1] ?? first
+  const total = codeBlocks[view.block].split('\n').length
   const where = codeBlocks.length > 1 ? `Code ${view.block + 1}/${codeBlocks.length} - ` : ''
   const more = screen < view.screens.length - 1 ? 'swipe for more, ' : ''
-  return `${where}lines ${first}-${first + lines.length - 1} of ${total} - ${more}hold: ask, double-tap: text`
+  return `${where}lines ${first}-${last} of ${total} - ${more}hold: ask, double-tap: text`
 }
 
 function tilesFor(view: Omit<CodeView, 'screen'>, screen: number): Promise<Uint8Array[]> {
@@ -585,7 +598,7 @@ function tilesFor(view: Omit<CodeView, 'screen'>, screen: number): Promise<Uint8
   const key = [view.metrics.fontPx, view.metrics.withFont, footer, codeBlocks[view.block]].join('|')
   const known = tileCache.get(key)
   if (known) return known
-  const drawn = renderCodeTiles(view.screens[screen], view.metrics, footer)
+  const drawn = renderCodeTiles(view.screens[screen], view.metrics, footer, view.gutter)
   drawn.catch(() => tileCache.delete(key))
   tileCache.set(key, drawn)
   if (tileCache.size > TILE_CACHE_MAX) {

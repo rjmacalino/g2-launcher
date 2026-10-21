@@ -20,8 +20,10 @@ function looksLikeCode(lines: string[]): boolean {
   if (meaningful.length === 0) return false
   const codeLike = meaningful.filter(isCodeLine).length
   // Prose sentences end in full stops and run long; code lines rarely do.
+  // A comment line is not a sentence of prose, whatever it ends with (G2-117).
+  const comment = /^\s*(\/\/|#|\/\*|\*)/
   const sentences = meaningful.filter(
-    l => /[a-z]{3,}[.!?]$/i.test(l.trim()) && l.length > 50,
+    l => !comment.test(l) && /[a-z]{3,}[.!?]$/i.test(l.trim()) && l.length > 50,
   ).length
   return codeLike / meaningful.length >= 0.6 && sentences === 0
 }

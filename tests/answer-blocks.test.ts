@@ -54,6 +54,19 @@ describe('splitAnswer', () => {
     ])
   })
 
+  it('keeps code with a long comment ending in a full stop as code (G2-117)', () => {
+    const code = [
+      'try {',
+      '  await navigator.clipboard.writeText(text)',
+      '} catch {',
+      '  // The host WebView may not allow the clipboard API; the older way.',
+      '  const area = document.createElement("textarea")',
+      '  area.value = text',
+      '}',
+    ].join('\n')
+    expect(splitAnswer(code)).toEqual([{ kind: 'code', text: code }])
+  })
+
   it('leaves a paragraph that only mentions code as text', () => {
     const answer = 'Use a dictionary. For each number, check if target - n was seen.'
     expect(splitAnswer(answer)).toEqual([{ kind: 'text', text: answer }])
