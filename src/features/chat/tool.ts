@@ -505,7 +505,7 @@ function renderExchange(messages: readonly ChatMessage[]): string {
 // THE CODE VIEW (G2-73). The glasses' own text has one proportional font,
 // which scrambles code, so code in an answer is drawn as pictures instead
 // (ui/codeRender.ts) in a real monospace font, at the size chosen on the
-// phone. In the text view each code block is a one-line placeholder; a tap
+// phone. In the text view tall code stays as text with a hint under it; a tap
 // opens the code view, a swipe or tap pages through it, and a double-tap
 // returns to the text.
 let codeBlocks: string[] = []
@@ -529,13 +529,12 @@ function withCodePlaceholders(text: string): string {
   const total = blocks.filter(isPicture).length
   return blocks
     .map(block => {
-      // Short code stays plain text; only code too tall for one screen
-      // becomes pictures (G2-103).
+      // Code too tall for one screen stays in the text too (G2-121), with a
+      // hint under it that a tap opens the picture view.
       if (!isPicture(block)) return block.text
       codeBlocks.push(block.text)
       const n = codeBlocks.length
-      const lines = block.text.split('\n').length
-      return `[code${total > 1 ? ` ${n} of ${total}` : ''} - ${lines} lines - tap to view]`
+      return `${block.text}\n[tap: view code${total > 1 ? ` ${n} of ${total}` : ''} as a picture]`
     })
     .join('\n\n')
 }

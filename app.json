@@ -2,7 +2,7 @@
   "package_id": "com.rjmacalino.g2launcher",
   "edition": "202601",
   "name": "G2 Launcher",
-  "version": "0.1.23",
+  "version": "0.1.24",
   "min_sdk_version": "0.0.15",
   "entrypoint": "index.html",
   "permissions": [
