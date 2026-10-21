@@ -15,6 +15,8 @@ import { setStatusNote } from '../../core/statusNote'
 import {
   PAGE_INNER_WIDTH,
   REBUILD_MAX_CHARS,
+  SCREEN_ROWS,
+  wrapLines,
   lowerPageLimit,
   paginate,
   type Page,
@@ -47,7 +49,6 @@ const REDRAW_MS = 1000
 // Wait this long after the last thing the other person said, so a long
 // question that arrives as several utterances is answered once, whole.
 const QUIET_BEFORE_ASKING_MS = 3000
-const SCREEN_CHARS = 400
 
 let releaseMic: (() => void) | null = null
 let paused = false
@@ -81,12 +82,20 @@ function listeningScreen(): string {
   const header = paused
     ? 'Parakeet - PAUSED (hold to resume)'
     : `Parakeet ${clock(Date.now() - startedAt)} - ${asking ? 'thinking...' : 'listening'}`
+  // Newest first, so what was just said is at the top and never needs a
+  // scroll; older lines follow for as long as the screen has rows.
+  const room = SCREEN_ROWS - 2
   const shown: string[] = []
-  let chars = 0
-  for (let i = lines.length - 1; i >= 0 && chars < SCREEN_CHARS; i--) {
-    const line = `${lines[i].speaker === 'self' ? 'Me: ' : ''}${lines[i].text}`
-    shown.unshift(line)
-    chars += line.length
+  let used = 0
+  for (let i = lines.length - 1; i >= 0; i--) {
+    const rows = wrapLines(
+      `${lines[i].speaker === 'self' ? 'Me: ' : ''}${lines[i].text}`,
+      PAGE_INNER_WIDTH,
+    )
+    if (shown.length > 0 && used + rows.length > room) break
+    shown.push(...rows.slice(0, room - used))
+    used += rows.length
+    if (used >= room) break
   }
   const body = shown.join('\n') || 'Listening...\n\n(tap: answer now, hold: pause, double-tap: end)'
   return `${header}\n\n${body}`
@@ -318,6 +327,7 @@ export const parakeetTool: Tool = {
   // through to the leave prompt.
   onBack: () => {
     if (answer === null) return false
+    status('Parakeet: back to listening')
     answer = null
     pages = []
     pageIndex = 0
