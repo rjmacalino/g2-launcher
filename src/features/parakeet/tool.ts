@@ -20,10 +20,12 @@ import {
   type Page,
 } from '../chat/paging'
 import { movePaged, type Win } from '../chat/viewer'
+import { getProfile } from './settings'
 import {
   FORCED_NOTE,
   PARAKEET_INSTRUCTION,
   parseAnswer,
+  profileBackground,
   transcriptFor,
   triggersAnswer,
   type HeardLine,
@@ -59,6 +61,7 @@ let askTimer: ReturnType<typeof setTimeout> | null = null
 let lastScreen = ''
 let llm: LlmConfig | null = null
 let aboutMe: string | null = null
+let profile = ''
 let asking = false
 let startedAt = 0
 // How many heard lines the model has already been asked about.
@@ -141,10 +144,15 @@ async function askNow(mySession: number, forced = false): Promise<void> {
   const began = Date.now()
   const upTo = lines.length
   try {
-    const reply = await askModel(llm, [{ role: 'user', text: transcriptFor(lines, handled) }], {
-      instruction: forced ? `${PARAKEET_INSTRUCTION} ${FORCED_NOTE}` : PARAKEET_INSTRUCTION,
-      aboutMe,
-    })
+    const reply = await askModel(
+      llm,
+      [{ role: 'user', text: transcriptFor(lines, forced ? 0 : handled) }],
+      {
+        instruction: forced ? `${PARAKEET_INSTRUCTION} ${FORCED_NOTE}` : PARAKEET_INSTRUCTION,
+        aboutMe,
+        background: profileBackground(profile),
+      },
+    )
     if (mySession !== session) return
     if (reply.kind === 'answer') {
       // Whatever the answer, those lines are dealt with: no second answer
@@ -226,7 +234,7 @@ async function start(): Promise<void> {
   answer = null
   pages = []
   startedAt = Date.now()
-  ;[llm, aboutMe] = await Promise.all([getLlmConfig('phone'), getAboutMe()])
+  ;[llm, aboutMe, profile] = await Promise.all([getLlmConfig('phone'), getAboutMe(), getProfile()])
   if (mySession !== session) return
   segmenter = createSegmenter()
   paused = false

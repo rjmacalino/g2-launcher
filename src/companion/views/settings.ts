@@ -22,6 +22,7 @@ import { isWakeWordEnabled, setWakeWordEnabled } from '../../core/wakeSettings'
 import { CODE_SIZES, getCodeSize, loadCodeSize, setCodeSize } from '../../core/codeSize'
 import { isWakeListening, wakeDescription } from '../../core/wakeListener'
 import { getPrepNotes, setPrepNotes, PREP_NOTES_MAX_CHARS } from '../../features/live/settings'
+import { getProfile, setProfile, PROFILE_MAX_CHARS } from '../../features/parakeet/settings'
 import type { AppContext, Page } from '../app'
 import { h, icon, toast } from '../dom'
 import { probeLongText } from '../../platform/textProbe'
@@ -398,6 +399,14 @@ export function settingsView(ctx: AppContext): Page {
       ABOUT_ME_MAX_CHARS,
       getAboutMe,
       setAboutMe,
+    ),
+    textCard(
+      'Parakeet: who I am',
+      'Parakeet answers in your voice. Write what it should know about you: work, studies, projects, strengths, hobbies, stories worth telling. The more here, the more your own the answers sound. It will not invent facts beyond this.',
+      'e.g. I am a junior web developer, two years in. I build with React and TypeScript. For fun I hike and play badminton on weekends. My proudest project is a smart glasses app.',
+      PROFILE_MAX_CHARS,
+      getProfile,
+      setProfile,
     ),
     WINGMAN_ENABLED
       ? textCard(

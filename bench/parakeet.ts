@@ -3,6 +3,7 @@ import {
   FORCED_NOTE,
   PARAKEET_INSTRUCTION,
   parseAnswer,
+  profileBackground,
   transcriptFor,
 } from '../src/features/parakeet/answer'
 import { llmFromEnv } from './llmEnv'
@@ -73,12 +74,35 @@ const SCENARIOS: { name: string; lines: Line[]; handled: number; answer: boolean
     answer: true,
   },
   {
-    name: 'small talk',
-    lines: [l('other', 'Hi, thanks for joining. How is your day going so far?')],
+    name: 'a greeting (a human would reply)',
+    lines: [l('other', 'Hi, thanks for joining us today.')],
     handled: 0,
-    answer: false,
+    answer: true,
+  },
+  {
+    name: 'a personal question the profile covers',
+    lines: [l('other', 'So what do you do for fun?')],
+    handled: 0,
+    answer: true,
+  },
+  {
+    name: 'tell me about yourself',
+    lines: [l('other', 'Great. To start, tell me a bit about yourself.')],
+    handled: 0,
+    answer: true,
+  },
+  {
+    name: 'a personal question the profile does not cover',
+    lines: [l('other', 'What is your biggest weakness?')],
+    handled: 0,
+    answer: true,
   },
 ]
+
+const PROFILE =
+  'I am a junior web developer, two years in, building with React and TypeScript. ' +
+  'For fun I hike and play badminton on weekends. My side project is an app for ' +
+  'smart glasses that I am building to learn.'
 
 const config = llmFromEnv()
 if (!config) {
@@ -92,13 +116,14 @@ for (const s of SCENARIOS) {
     [{ role: 'user', text: transcriptFor(s.lines, s.handled) }],
     {
       instruction: PARAKEET_INSTRUCTION,
+      background: profileBackground(PROFILE),
     },
   )
   const text = reply.kind === 'answer' ? parseAnswer(reply.text) : null
   const ok = (text !== null) === s.answer
   if (ok) right++
   console.log(
-    `${ok ? 'OK  ' : 'FAIL'} ${s.name}: ${text ? text.slice(0, 80).replace(/\n/g, ' ') : 'NONE'}`,
+    `${ok ? 'OK  ' : 'FAIL'} ${s.name}: ${text ? text.slice(0, 400).replace(/\n/g, ' ') : 'NONE'}`,
   )
 }
 const forced = await askModel(
@@ -107,6 +132,6 @@ const forced = await askModel(
   { instruction: `${PARAKEET_INSTRUCTION} ${FORCED_NOTE}` },
 )
 console.log(
-  `tap-for-help after "thanks": ${forced.kind === 'answer' ? forced.text.slice(0, 80) : forced.kind}`,
+  `tap-for-help after "thanks": ${forced.kind === 'answer' ? forced.text.slice(0, 400) : forced.kind}`,
 )
 console.log(`${right}/${SCENARIOS.length} as expected`)
