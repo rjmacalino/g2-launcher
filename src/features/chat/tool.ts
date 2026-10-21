@@ -1,6 +1,8 @@
 import { setStatusNote } from '../../core/statusNote'
 import { positionLabel } from '../../shared/position'
 import { exchangesOf, historyRows } from './exchanges'
+import { chatToDelete, deletePrompt } from './pickerRows'
+import { requestConfirm } from '../../core/confirm'
 import { questionLine } from '../../shared/questionKeywords'
 import { modelLabel } from '../../core/llmProviders'
 import { isCodeFontLoaded, loadCodeFont } from '../../ui/codeFont'
@@ -95,6 +97,21 @@ let quickAsk = false
 
 export function isAtPicker(): boolean {
   return depth === 'picker'
+}
+
+// A long press on a saved chat in the list (G2-108): ask whether to delete
+// it. False for "New chat" or a row that is not known, so the shell starts a
+// new chat as it always did.
+export function requestDeleteChat(row: number): boolean {
+  if (depth !== 'picker') return false
+  const target = chatToDelete(row, pickerSessions)
+  if (!target) return false
+  requestConfirm(chatTool, deletePrompt(target.title), () => {
+    pickerSessions = pickerSessions.filter(s => s.id !== target.id)
+    void chatSessions.remove(target.id)
+    status('Jarvis: chat deleted')
+  })
+  return true
 }
 
 // The shell's "take the wearer back to where they long-pressed from" -

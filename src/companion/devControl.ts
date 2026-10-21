@@ -1,7 +1,7 @@
 import { status } from '../platform/bridge'
 import type { Route } from './app'
 import { chatSessions } from '../features/chat/store'
-import { devAsk } from '../features/chat/tool'
+import { devAsk, requestDeleteChat } from '../features/chat/tool'
 
 // The page half of vite.config.ts's dev-only remote control (G2-71):
 // lets a test script tap and type on the phone page the way a person
@@ -18,6 +18,8 @@ export type DevCommand =
   | { action: 'seedChat'; question: string; answer: string }
   // Asks a question on the glasses as if spoken (needs Jarvis open there).
   | { action: 'glassesAsk'; text: string }
+  // As a long press on that row of the glasses' chat list.
+  | { action: 'listLongPress'; row: number }
 
 function find(selector: string, index = 0, text?: string): HTMLElement | null {
   const all = [...document.querySelectorAll<HTMLElement>(selector)]
@@ -57,6 +59,9 @@ export function runDevCommand(command: DevCommand, navigate: (route: Route) => v
       status(`dev: typed into ${command.selector}`)
       return
     }
+    case 'listLongPress':
+      status(`dev: long press on row ${command.row}: ${requestDeleteChat(command.row)}`)
+      return
     case 'glassesAsk':
       void devAsk(command.text).then(() => status('dev: asked on the glasses'))
       return
