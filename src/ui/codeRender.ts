@@ -28,6 +28,12 @@ function font(px: number): string {
 // line numbers are dim, indent guides dimmer still, so the code itself
 // stays the brightest thing on screen (G2-117).
 const NUMBER_COLOR = '#7a7a7a'
+
+// The colour of the code itself (G2-119). The footer is drawn with the very
+// same call and font in #8a8a8a and reads thin; pure white code read heavy.
+// The simulator shows every non-black pixel at full brightness, so only the
+// glasses can judge this shade.
+const CODE_COLOR = '#a8a8a8'
 const GUIDE_COLOR = '#3c3c3c'
 
 export type CodeMetrics = {
@@ -112,7 +118,7 @@ export async function renderCodeTiles(
       ctx.fillText(String(row.number), codeX - metrics.cell, y)
       ctx.textAlign = 'left'
     }
-    ctx.fillStyle = '#ffffff'
+    ctx.fillStyle = CODE_COLOR
     ctx.fillText(row.text, Math.round(codeX + row.textIndent * metrics.cell), y)
   })
   ctx.fillStyle = '#8a8a8a'
