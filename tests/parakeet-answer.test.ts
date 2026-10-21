@@ -1,0 +1,71 @@
+import { describe, expect, it } from 'vitest'
+import { parseAnswer, transcriptFor, triggersAnswer } from '../src/features/parakeet/answer'
+
+describe('parseAnswer (G2-128)', () => {
+  it('keeps a real answer, trimmed', () => {
+    expect(parseAnswer('  Use a hash map.  ')).toBe('Use a hash map.')
+  })
+
+  it('treats NONE, in any case, and an empty reply as nothing to answer', () => {
+    expect(parseAnswer('NONE')).toBeNull()
+    expect(parseAnswer(' none. ')).toBeNull()
+    expect(parseAnswer('')).toBeNull()
+  })
+})
+
+describe('transcriptFor', () => {
+  it('labels the speakers and keeps the order', () => {
+    const text = transcriptFor([
+      { speaker: 'other', text: 'Reverse a string.', at: 1 },
+      { speaker: 'self', text: 'Sure.', at: 2 },
+      { speaker: 'unknown', text: 'Go on.', at: 3 },
+    ])
+    expect(text).toBe('Them: Reverse a string.\nMe: Sure.\nGo on.')
+  })
+
+  it('keeps the newest lines when the talk is long', () => {
+    const lines = Array.from({ length: 1000 }, (_, i) => ({
+      speaker: 'other',
+      text: `line number ${i}`,
+      at: i,
+    }))
+    const text = transcriptFor(lines)
+    expect(text.endsWith('line number 999')).toBe(true)
+    expect(text.startsWith('Them: line number 0')).toBe(false)
+  })
+})
+
+describe('transcriptFor, handled lines', () => {
+  const lines = [
+    { speaker: 'other', text: 'Reverse a string.', at: 1 },
+    { speaker: 'self', text: 'I would loop backwards.', at: 2 },
+    { speaker: 'other', text: 'Now do it in place.', at: 3 },
+  ]
+
+  it('sets the lines already dealt with apart from the new ones', () => {
+    const expected = [
+      'Earlier:',
+      'Them: Reverse a string.',
+      'Me: I would loop backwards.',
+      '',
+      'New:',
+      'Them: Now do it in place.',
+    ].join('\n')
+    expect(transcriptFor(lines, 2)).toBe(expected)
+  })
+
+  it('says so when nothing is new', () => {
+    expect(transcriptFor(lines, 3)).toContain('(nothing new)')
+  })
+})
+
+describe('triggersAnswer', () => {
+  it('waits for someone other than the wearer to say a few words', () => {
+    expect(triggersAnswer({ speaker: 'other', text: 'Can you reverse a list', at: 1 })).toBe(true)
+    expect(triggersAnswer({ speaker: 'unknown', text: 'Given an array of numbers', at: 1 })).toBe(
+      true,
+    )
+    expect(triggersAnswer({ speaker: 'self', text: 'Let me think about that', at: 1 })).toBe(false)
+    expect(triggersAnswer({ speaker: 'other', text: 'Okay', at: 1 })).toBe(false)
+  })
+})

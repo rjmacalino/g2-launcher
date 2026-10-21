@@ -2,6 +2,7 @@ import type { Tool } from '../core/tool'
 import { chatTool } from '../features/chat/tool'
 import { notesTool } from '../features/notes/tool'
 import { liveTool } from '../features/live/tool'
+import { parakeetTool } from '../features/parakeet/tool'
 import { LAB_ENABLED, WINGMAN_ENABLED } from '../shared/features'
 
 // Order is the index. The firmware reports the highlighted list row back as
@@ -35,7 +36,8 @@ import { LAB_ENABLED, WINGMAN_ENABLED } from '../shared/features'
 // build tree-shakes the whole features/lab module out rather than merely
 // hiding a menu entry that is still sitting in the package.
 // Wingman is off the launcher for now (G2-100, shared/features.ts).
-const tools: Tool[] = [chatTool, ...(WINGMAN_ENABLED ? [liveTool] : []), notesTool]
+// Parakeet (G2-128) comes after Notes so a stored screen index stays valid.
+const tools: Tool[] = [chatTool, ...(WINGMAN_ENABLED ? [liveTool] : []), notesTool, parakeetTool]
 
 if (import.meta.env.DEV && LAB_ENABLED) {
   const { labTool } = await import('../features/lab/tool')
