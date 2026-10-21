@@ -1,5 +1,5 @@
 import { setStatusNote } from '../../core/statusNote'
-import { positionLabel, screenRange } from '../../shared/position'
+import { positionLabel } from '../../shared/position'
 import { exchangesOf, historyRows } from './exchanges'
 import { questionLine } from '../../shared/questionKeywords'
 import { modelLabel } from '../../core/llmProviders'
@@ -15,11 +15,20 @@ import { chatSessions, type ChatMessage, type ChatSession } from './store'
 import { setContent } from '../../platform/page'
 import { status } from '../../platform/bridge'
 import { TYPING_CHARS_PER_SECOND, TYPING_TICK_MS, nextShown } from './typing'
-import { moveWindow, rowsOf, slideFrames, tailWin, windowText, type Win } from './viewer'
+import {
+  moveView,
+  pageIndexAt,
+  rowsOf,
+  slideFrames,
+  tailWin,
+  viewLabel,
+  viewPages,
+  windowText,
+  type Win,
+} from './viewer'
 import {
   PAGE_INNER_WIDTH,
   REBUILD_MAX_CHARS,
-  SCREEN_ROWS,
   fitsAsText,
   lowerPageLimit,
   paginate,
@@ -254,24 +263,31 @@ async function slideTo(
   }
 }
 
+// The page a view starts on, worked out again after the page size shrank
+// (see lowerPageLimit): what to draw instead of a page the glasses refused.
+function redoView(rows: string[], at: number, setWin: (w: Win) => void): () => string {
+  return () => {
+    const pagesNow = viewPages(rows)
+    const win = pagesNow[pageIndexAt(pagesNow, at)] ?? { start: 0, end: rows.length }
+    setWin(win)
+    return windowText(rows, win)
+  }
+}
+
 function updatePositionNote(): void {
   if (stream && stream.timer !== null) {
     setStatusNote(streamNote(stream))
     return
   }
   if (tailView) {
-    const { win, rows } = tailView
-    setStatusNote(screenRange(win.start, win.end, rows.length, SCREEN_ROWS))
+    setStatusNote(viewLabel(tailView.rows, tailView.win))
     return
   }
   let note: string | null = null
   if (depth === 'conversation' && !listening && !transcribing && stopActiveStatus === null) {
-    const page = pages[pageIndex]
     note = codeView
       ? positionLabel(codeView.screen, codeView.screens.length)
-      : page
-        ? screenRange(page.startRow, page.endRow, page.totalRows, SCREEN_ROWS)
-        : null
+      : positionLabel(pageIndex, pages.length)
   }
   setStatusNote(note)
 }
@@ -933,7 +949,7 @@ function streamNote(s: Stream): string | null {
   if (s.mode === 'hold') {
     const rows = allRows(s)
     const win = s.win ?? tailWin(rows)
-    return screenRange(win.start, win.end, rows.length, SCREEN_ROWS) ?? 'Tap to continue'
+    return viewLabel(rows, win) ?? 'Tap to continue'
   }
   return s.shown < s.received.length ? 'Tap to pause' : null
 }
@@ -1022,7 +1038,7 @@ function moveHold(s: Stream, delta: -1 | 1): void {
   if (now - lastScrollAt < SCROLL_COOLDOWN_MS) return
   lastScrollAt = now
   const rows = allRows(s)
-  const next = moveWindow(rows, s.win ?? tailWin(rows), delta)
+  const next = moveView(rows, s.win ?? tailWin(rows), delta)
   if (!next) {
     // Down past the last line: go on to the end at full speed (G2-111).
     if (delta === 1) skipToEnd(s)
@@ -1031,7 +1047,8 @@ function moveHold(s: Stream, delta: -1 | 1): void {
   const from = windowText(rows, s.win ?? tailWin(rows))
   s.win = next
   const text = windowText(rows, next)
-  s.pending = s.pending.then(() => slideTo(from, text, delta, () => text))
+  const again = redoView(rows, next.start, w => (s.win = w))
+  s.pending = s.pending.then(() => slideTo(from, text, delta, again))
 }
 
 function resumeStream(s: Stream): void {
@@ -1700,17 +1717,23 @@ export const chatTool: Tool = {
       moveCode(delta)
       return
     }
-    // The finished tail: read up and down over the answer in windows.
+    // The finished tail: read up and down over the answer a page at a time.
     if (tailView && depth === 'conversation') {
       const now = Date.now()
       if (now - lastScrollAt < SCROLL_COOLDOWN_MS) return
       lastScrollAt = now
-      const next = moveWindow(tailView.rows, tailView.win, delta)
+      const view = tailView
+      const next = moveView(view.rows, view.win, delta)
       if (next) {
-        const from = windowText(tailView.rows, tailView.win)
-        tailView.win = next
-        const text = windowText(tailView.rows, next)
-        void slideTo(from, text, delta, () => text)
+        const from = windowText(view.rows, view.win)
+        view.win = next
+        const text = windowText(view.rows, next)
+        void slideTo(
+          from,
+          text,
+          delta,
+          redoView(view.rows, next.start, w => (view.win = w)),
+        )
         updatePositionNote()
       }
       return

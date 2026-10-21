@@ -47,9 +47,10 @@ export function lowerPageLimit(): boolean {
   pageMaxChars = REBUILD_MAX_CHARS
   return true
 }
-// The last lines of a section, repeated at the top of the next one, so a
-// long answer continues where the eye already is.
-export const OVERLAP_ROWS = 3
+// A page is up to three screens of rows (G2-116), read by scrolling smoothly
+// through it; a swipe past its edge turns to the next, which starts on the
+// very next line - nothing is repeated, so "75" follows "74".
+export const PAGE_ROWS = SCREEN_ROWS * 3
 
 // Room kept for the indicator row within PAGE_MAX_CHARS.
 const HINT_RESERVE_CHARS = 40
@@ -104,81 +105,48 @@ export function wrapLines(text: string, innerWidth: number): string[] {
   return lines
 }
 
-// The last OVERLAP_ROWS non-blank lines of a page, to carry onto the next.
-function overlapFrom(page: string[]): string[] {
-  let end = page.length
-  while (end > 0 && page[end - 1] === '') end--
-  const carried = page.slice(Math.max(0, end - OVERLAP_ROWS), end)
-  // Never carry a leading blank line: a section must not start empty.
-  while (carried.length > 0 && carried[0] === '') carried.shift()
-  return carried
+export type RowRange = { start: number; end: number }
+
+// The pages of a wrapped text as ranges of rows: each up to PAGE_ROWS rows
+// and the character budget, the next starting on the line after the last,
+// never on a blank row. Trailing blank rows are ignored.
+export function pageRanges(rows: readonly string[]): RowRange[] {
+  let last = rows.length
+  while (last > 0 && rows[last - 1] === '') last--
+  const budget = pageMaxChars - HINT_RESERVE_CHARS
+  const ranges: RowRange[] = []
+  let next = 0
+  while (next < last) {
+    while (next < last && rows[next] === '') next++
+    if (next >= last) break
+    const start = next
+    let chars = 0
+    // Always takes at least one row, so paging always moves forward.
+    while (next < last && next - start < PAGE_ROWS) {
+      const added = (next > start ? 1 : 0) + rows[next].length
+      if (next > start && chars + added > budget) break
+      chars += added
+      next++
+    }
+    ranges.push({ start, end: next })
+  }
+  return ranges
 }
 
 export type Page = {
   text: string
-  // Whether the whole page is visible at once, with nothing to scroll -
-  // features/chat/tool.ts turns such a page on the first swipe past it,
-  // since there is nothing more on it left to read.
+  // Whether the whole page is visible at once, with nothing to scroll.
   fitsOneScreen: boolean
-  // Which rows of the whole wrapped text this page covers (end exclusive) and
-  // how many rows there are in all, so the status bar can say which screens
-  // of the answer are showing (G2-112).
-  startRow: number
-  endRow: number
-  totalRows: number
 }
 
 export function paginate(text: string, innerWidth: number): Page[] {
   const lines = wrapLines(text, innerWidth)
-  const chunks: { lines: string[]; overlap: number; start: number; end: number }[] = []
-  let next = 0
-  while (next < lines.length) {
-    // A page never starts its new text on a blank line.
-    while (next < lines.length && lines[next] === '') next++
-    if (next >= lines.length) break
-    const previous = chunks[chunks.length - 1]
-    const carried = previous ? overlapFrom(previous.lines) : []
-    const page = [...carried]
-    const firstNew = next
-    let chars = page.join('\n').length
-    const budget = pageMaxChars - HINT_RESERVE_CHARS
-    while (next < lines.length) {
-      const added = (page.length > 0 ? 1 : 0) + lines[next].length
-      // Always take at least one new line, so paging always moves forward.
-      if (page.length > carried.length && chars + added > budget) break
-      page.push(lines[next])
-      chars += added
-      next++
-    }
-    chunks.push({
-      lines: page,
-      overlap: carried.length,
-      start: Math.max(0, firstNew - carried.length),
-      end: next,
-    })
-  }
-
-  if (chunks.length <= 1) {
-    const only = (chunks[0]?.lines ?? []).join('\n')
-    return [
-      {
-        text: only,
-        fitsOneScreen: (chunks[0]?.lines.length ?? 0) <= SCREEN_ROWS,
-        startRow: 0,
-        endRow: lines.length,
-        totalRows: lines.length,
-      },
-    ]
-  }
-  return chunks.map((chunk, i) => {
-    const rows = i < chunks.length - 1 ? [...chunk.lines, '(more below)'] : chunk.lines
-    return {
-      text: rows.join('\n'),
-      fitsOneScreen: rows.length <= SCREEN_ROWS,
-      startRow: chunk.start,
-      endRow: chunk.end,
-      totalRows: lines.length,
-    }
+  const ranges = pageRanges(lines)
+  if (ranges.length === 0) return [{ text: '', fitsOneScreen: true }]
+  return ranges.map((range, i) => {
+    const rows = lines.slice(range.start, range.end)
+    const shown = i < ranges.length - 1 ? [...rows, '(more below)'] : rows
+    return { text: shown.join('\n'), fitsOneScreen: shown.length <= SCREEN_ROWS }
   })
 }
 

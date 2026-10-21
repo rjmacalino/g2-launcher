@@ -1,20 +1,15 @@
-import { OVERLAP_ROWS, SCREEN_ROWS, wrapLines } from './paging'
+import { positionLabel } from '../../shared/position'
+import { SCREEN_ROWS, pageRanges, wrapLines, type RowRange } from './paging'
 
-// Reading an answer that is paused or just finished typing (G2-107): the
-// glasses cannot be scrolled to a position, and every update starts at the
-// top, so the text is served in windows of up to three screens. Inside a
-// window the firmware scrolls smoothly; a swipe past its top or bottom edge
-// moves to the neighbouring window, which repeats a few rows so the eye keeps
-// its place. The first window up from the screen being looked at ends where
-// that screen ends, so the wearer lands just above it, not at the very start.
+// Reading an answer that is paused or has just finished typing (G2-107,
+// G2-116). The glasses cannot be scrolled to a position and every update
+// starts at the top, so the text is shown a page at a time - the same pages
+// a finished answer has (paging.ts: up to three screens, smooth scrolling
+// inside, the next page starting on the very next line). What is on screen
+// is a range of rows: the last screenful while typing, or a whole page.
 // Pure, tested in tests/viewer.test.ts.
 
-export const WINDOW_ROWS = SCREEN_ROWS * 3
-// Under the 1000 characters an update is known to accept (docs/platform.md).
-export const WINDOW_MAX_CHARS = 900
-
-// A span of rows [start, end) of the wrapped text.
-export type Win = { start: number; end: number }
+export type Win = RowRange
 
 export function rowsOf(text: string, innerWidth: number): string[] {
   const rows = wrapLines(text, innerWidth)
@@ -27,41 +22,35 @@ export function tailWin(rows: readonly string[]): Win {
   return { start: Math.max(0, rows.length - SCREEN_ROWS), end: rows.length }
 }
 
-function fitFromEnd(rows: readonly string[], end: number): Win {
-  let start = end
-  let chars = 0
-  while (start > 0 && end - start < WINDOW_ROWS) {
-    const add = rows[start - 1].length + 1
-    if (chars + add > WINDOW_MAX_CHARS && end > start) break
-    chars += add
-    start--
-  }
-  return { start, end }
+export function viewPages(rows: readonly string[]): Win[] {
+  return pageRanges(rows)
 }
 
-function fitFromStart(rows: readonly string[], start: number): Win {
-  let end = start
-  let chars = 0
-  while (end < rows.length && end - start < WINDOW_ROWS) {
-    const add = rows[end].length + 1
-    if (chars + add > WINDOW_MAX_CHARS && end > start) break
-    chars += add
-    end++
-  }
-  return { start, end }
+// The page a row is on (the last page for a row past the end).
+export function pageIndexAt(pages: readonly Win[], row: number): number {
+  for (let i = 0; i < pages.length; i++) if (row < pages[i].end) return i
+  return Math.max(0, pages.length - 1)
 }
 
-// The window after a swipe past the top (-1) or bottom (1) edge, or null when
-// there is nowhere further to go.
-export function moveWindow(rows: readonly string[], win: Win, delta: -1 | 1): Win | null {
+// Where a swipe past the top (-1) or bottom (1) edge goes: down is the next
+// page, up is the top of the page the view is in - or the page before, when
+// the view already starts there. null when there is nowhere further.
+export function moveView(rows: readonly string[], win: Win, delta: -1 | 1): Win | null {
+  const pages = viewPages(rows)
+  if (pages.length === 0) return null
   if (delta === -1) {
-    if (win.start <= 0) return null
-    const oneScreen = win.end - win.start <= SCREEN_ROWS
-    const end = oneScreen ? win.end : Math.min(win.end, win.start + OVERLAP_ROWS)
-    return fitFromEnd(rows, end)
+    const p = pageIndexAt(pages, win.start)
+    if (win.start > pages[p].start) return pages[p]
+    return p > 0 ? pages[p - 1] : null
   }
-  if (win.end >= rows.length) return null
-  return fitFromStart(rows, Math.max(0, win.end - OVERLAP_ROWS))
+  const p = pageIndexAt(pages, Math.max(win.start, win.end - 1))
+  return p + 1 < pages.length ? pages[p + 1] : null
+}
+
+// "Page 2 of 4" for what is on screen; null for a single page.
+export function viewLabel(rows: readonly string[], win: Win): string | null {
+  const pages = viewPages(rows)
+  return positionLabel(pageIndexAt(pages, Math.max(win.start, win.end - 1)), pages.length)
 }
 
 export function windowText(rows: readonly string[], win: Win): string {
@@ -74,7 +63,7 @@ export function windowText(rows: readonly string[], win: Win): string {
 // down from above. Only what is on screen counts: a swipe at the bottom edge
 // means the old page's last rows are showing, and one at the top edge its
 // first rows; the new page always begins at its top. The real page is drawn
-// after the last frame. Pure, tested in tests/viewer.test.ts.
+// after the last frame. Pure, tested in tests/slide-frames.test.ts.
 export function slideFrames(
   from: readonly string[],
   to: readonly string[],

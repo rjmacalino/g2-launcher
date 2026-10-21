@@ -10,7 +10,7 @@ vi.mock('../src/platform/bridge', () => ({
   status: vi.fn(),
 }))
 
-const { paginate, rebuildSafe, PAGE_INNER_WIDTH, SCREEN_ROWS, PAGE_MAX_CHARS, OVERLAP_ROWS } =
+const { paginate, rebuildSafe, PAGE_INNER_WIDTH, SCREEN_ROWS, PAGE_MAX_CHARS, PAGE_ROWS } =
   await import('../src/features/chat/paging')
 
 // The firmware's hard ceiling on content in a page rebuild, the stricter of
@@ -32,31 +32,15 @@ function wordsOf(text: string): string[] {
   return text.split(/\s+/).filter(w => w !== '')
 }
 
-// The rows a section adds on top of new text: lines repeated from the
-// previous section at the top, and "(more below)" at the bottom of all but
-// the last.
+// The rows of a page without its "(more below)" line, which every page
+// but the last ends with.
 function rowsWithoutHint(pageText: string, index: number, total: number): string[] {
   const rows = pageText.split('\n')
   return index < total - 1 ? rows.slice(0, -1) : rows
 }
 
-// How many of a section's first rows repeat the end of the previous one.
-function carriedCount(previous: string[], current: string[]): number {
-  const tail = [...previous]
-  while (tail.length > 0 && tail[tail.length - 1] === '') tail.pop()
-  for (let k = Math.min(OVERLAP_ROWS, current.length); k > 0; k--) {
-    if (tail.slice(-k).join('\n') === current.slice(0, k).join('\n')) return k
-  }
-  return 0
-}
-
 function newRowsOf(pages: { text: string }[]): string[] {
-  return pages.flatMap((page, i) => {
-    const rows = rowsWithoutHint(page.text, i, pages.length)
-    if (i === 0) return rows
-    const previous = rowsWithoutHint(pages[i - 1].text, i - 1, pages.length)
-    return rows.slice(carriedCount(previous, rows))
-  })
+  return pages.flatMap((page, i) => rowsWithoutHint(page.text, i, pages.length))
 }
 
 describe('paginate', () => {
@@ -65,8 +49,8 @@ describe('paginate', () => {
     expect(PAGE_MAX_CHARS).toBeLessThan(2000)
   })
 
-  it('fits a typical answer with code in one continuous scroll', () => {
-    const code = Array.from({ length: 30 }, (_, i) => `  line ${i}: x = x + ${i}`).join('\n')
+  it('fits a typical answer with a little code on one page', () => {
+    const code = Array.from({ length: 12 }, (_, i) => `  line ${i}: x = x + ${i}`).join('\n')
     const pages = paginate(`You: two sum?\nJarvis: ${code}\nUse a hash map.`, PAGE_INNER_WIDTH)
     expect(pages).toHaveLength(1)
   })
@@ -94,16 +78,25 @@ describe('paginate', () => {
     }
   })
 
-  it('repeats the last lines read at the top of the next page', () => {
-    const pages = paginate(longAnswer(8), PAGE_INNER_WIDTH)
-    for (let i = 1; i < pages.length; i++) {
-      const previousRows = pages[i - 1].text
-        .split('\n')
-        .slice(0, -1)
-        .filter(r => r !== '')
-      const carried = pages[i].text.split('\n').slice(0, 2)
-      expect(previousRows.slice(-OVERLAP_ROWS)).toEqual(expect.arrayContaining(carried))
+  it('makes a page three screens at most, and 100 numbers four pages (G2-116)', () => {
+    expect(PAGE_ROWS).toBe(SCREEN_ROWS * 3)
+    const numbers = Array.from({ length: 100 }, (_, i) => String(i + 1)).join('\n')
+    const pages = paginate(numbers, PAGE_INNER_WIDTH)
+    expect(pages).toHaveLength(4)
+    for (const [i, page] of pages.entries()) {
+      expect(rowsWithoutHint(page.text, i, pages.length).length).toBeLessThanOrEqual(PAGE_ROWS)
     }
+  })
+
+  it('starts each page on the very next line, repeating nothing (G2-116)', () => {
+    const numbers = Array.from({ length: 100 }, (_, i) => String(i + 1)).join('\n')
+    const pages = paginate(numbers, PAGE_INNER_WIDTH)
+    for (let i = 1; i < pages.length; i++) {
+      const before = rowsWithoutHint(pages[i - 1].text, i - 1, pages.length)
+      const after = rowsWithoutHint(pages[i].text, i, pages.length)
+      expect(Number(after[0])).toBe(Number(before[before.length - 1]) + 1)
+    }
+    expect(newRowsOf(pages)).toEqual(numbers.split('\n'))
   })
 
   it('loses no words and keeps their order across pages', () => {

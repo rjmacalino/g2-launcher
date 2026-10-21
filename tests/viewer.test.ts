@@ -7,56 +7,66 @@ vi.mock('../src/platform/bridge', () => ({
   status: vi.fn(),
 }))
 
-const { OVERLAP_ROWS, SCREEN_ROWS } = await import('../src/features/chat/paging')
-const { WINDOW_MAX_CHARS, WINDOW_ROWS, moveWindow, tailWin, windowText } =
+const { PAGE_MAX_CHARS, PAGE_ROWS, SCREEN_ROWS } = await import('../src/features/chat/paging')
+const { moveView, tailWin, viewLabel, viewPages, windowText } =
   await import('../src/features/chat/viewer')
 
 const rows = (n: number) => Array.from({ length: n }, (_, i) => `row ${i}`)
 
-describe('viewer windows (G2-107)', () => {
+describe('viewer pages (G2-107, G2-116)', () => {
   it('starts on the last screenful', () => {
     expect(tailWin(rows(30))).toEqual({ start: 30 - SCREEN_ROWS, end: 30 })
     expect(tailWin(rows(3))).toEqual({ start: 0, end: 3 })
   })
 
-  it('goes up from the screen being looked at: a window ending where it ends', () => {
-    const all = rows(60)
-    const up = moveWindow(all, tailWin(all), -1)
-    expect(up).toEqual({ start: 60 - WINDOW_ROWS, end: 60 })
+  it('cuts the rows into pages of three screens, each starting on the next line', () => {
+    const pages = viewPages(rows(100))
+    expect(pages).toHaveLength(4)
+    expect(pages[0]).toEqual({ start: 0, end: PAGE_ROWS })
+    for (let i = 1; i < pages.length; i++) expect(pages[i].start).toBe(pages[i - 1].end)
+    expect(pages[3].end).toBe(100)
   })
 
-  it('keeps going up by windows that overlap by a few rows, until the start', () => {
-    const all = rows(60)
-    let win = moveWindow(all, tailWin(all), -1)!
-    const next = moveWindow(all, win, -1)!
-    expect(next.end).toBe(win.start + OVERLAP_ROWS)
-    win = next
-    for (let i = 0; i < 10 && win.start > 0; i++) win = moveWindow(all, win, -1) ?? win
-    expect(win.start).toBe(0)
-    expect(moveWindow(all, win, -1)).toBeNull()
+  it('goes up from the screen being looked at to the top of its page, then page by page', () => {
+    const all = rows(100)
+    const pages = viewPages(all)
+    let win = moveView(all, tailWin(all), -1)
+    expect(win).toEqual(pages[3])
+    win = moveView(all, win!, -1)
+    expect(win).toEqual(pages[2])
+    win = moveView(all, win!, -1)
+    win = moveView(all, win!, -1)
+    expect(win).toEqual(pages[0])
+    expect(moveView(all, win!, -1)).toBeNull()
   })
 
-  it('goes down from the screen being looked at, overlapping a few rows', () => {
-    const all = rows(60)
-    const here = { start: 10, end: 10 + SCREEN_ROWS }
-    expect(moveWindow(all, here, 1)).toEqual({
-      start: here.end - OVERLAP_ROWS,
-      end: here.end - OVERLAP_ROWS + WINDOW_ROWS,
-    })
+  it('goes down to the next page, and stops at the last', () => {
+    const all = rows(100)
+    const pages = viewPages(all)
+    expect(moveView(all, pages[0], 1)).toEqual(pages[1])
+    expect(moveView(all, pages[2], 1)).toEqual(pages[3])
+    expect(moveView(all, pages[3], 1)).toBeNull()
+    expect(moveView(all, tailWin(all), 1)).toBeNull()
   })
 
-  it('stops at the end, and a short text has nowhere to go', () => {
-    const all = rows(60)
-    expect(moveWindow(all, tailWin(all), 1)).toBeNull()
+  it('has nowhere to go in a short text', () => {
     const short = rows(4)
-    expect(moveWindow(short, tailWin(short), -1)).toBeNull()
-    expect(moveWindow(short, tailWin(short), 1)).toBeNull()
+    expect(moveView(short, tailWin(short), -1)).toBeNull()
+    expect(moveView(short, tailWin(short), 1)).toBeNull()
   })
 
-  it('keeps a window under the character limit', () => {
-    const wide = Array.from({ length: 40 }, () => 'x'.repeat(80))
-    const up = moveWindow(wide, tailWin(wide), -1)!
-    expect(windowText(wide, up).length).toBeLessThanOrEqual(WINDOW_MAX_CHARS)
-    expect(up.end).toBe(40)
+  it('says which page is on screen, and nothing for a single page', () => {
+    const all = rows(100)
+    const pages = viewPages(all)
+    expect(viewLabel(all, tailWin(all))).toBe('Page 4 of 4')
+    expect(viewLabel(all, pages[0])).toBe('Page 1 of 4')
+    expect(viewLabel(rows(5), tailWin(rows(5)))).toBeNull()
+  })
+
+  it('keeps a page under the character limit', () => {
+    const wide = Array.from({ length: 60 }, () => 'x'.repeat(80))
+    for (const page of viewPages(wide)) {
+      expect(windowText(wide, page).length).toBeLessThanOrEqual(PAGE_MAX_CHARS)
+    }
   })
 })
