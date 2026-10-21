@@ -1,5 +1,5 @@
 // Parakeet (G2-128): listens to a conversation or an interview through the
-// glasses and shows an answer to the question it just heard. The pieces here
+// glasses and answers the questions it hears, as the wearer. The pieces here
 // are pure, so they are unit-tested (tests/parakeet-answer.test.ts).
 
 export type HeardLine = { speaker: string; text: string; at: number }
@@ -43,7 +43,10 @@ export const PARAKEET_INSTRUCTION =
   'tricks), the code first with no code fences, two-space indents and ' +
   'lines under 40 characters, then a plain step by step explanation in the ' +
   'first person ("I would...") the wearer can repeat. The wearer is a ' +
-  'junior web developer. Plain text only, no markdown.'
+  'junior web developer. Plain text only, no markdown.\n\n' +
+  'FORMAT. The very first line of an answer is "Q: " and the question as ' +
+  'the other person asked it, shortened to at most 60 characters, for the ' +
+  "wearer's list of questions. The answer starts on the next line."
 
 // Added when the wearer taps for help: they want an answer now, so a
 // question that was already handled is fair game again.
@@ -88,6 +91,17 @@ export function parseAnswer(reply: string): string | null {
   const text = reply.trim()
   if (text === '' || /^none\.?$/i.test(text)) return null
   return text
+}
+
+export type Answered = { question: string; answer: string }
+
+// Splits the "Q: ..." line off an answer (G2-132). A reply without one keeps
+// all of its text as the answer, and the question falls back to what the
+// other person said last.
+export function splitQuestion(reply: string, fallback: string): Answered {
+  const match = /^\s*Q:\s*(.+)\n([\s\S]*)$/.exec(reply)
+  if (!match || !match[2].trim()) return { question: fallback, answer: reply.trim() }
+  return { question: match[1].trim(), answer: match[2].trim() }
 }
 
 // A line from someone other than the wearer is worth answering after; the

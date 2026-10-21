@@ -6,162 +6,131 @@ import { status } from '../../platform/bridge'
 import { concat, toFloat32 } from '../../shared/pcm'
 import { rmsLevel } from '../../shared/endpoint'
 import { positionLabel } from '../../shared/position'
+import { questionLine } from '../../shared/questionKeywords'
 import { isSilenceHallucination, stripNonSpeech } from '../../shared/transcript'
 import { createSegmenter, type Segment } from '../live/segmenter'
 import { getAboutMe } from '../../core/geminiSettings'
 import { askModel } from '../../core/llm'
 import { getLlmConfig, type LlmConfig } from '../../core/llmSettings'
+import { requestRebuild } from '../../core/rebuild'
 import { setStatusNote } from '../../core/statusNote'
 import {
   PAGE_INNER_WIDTH,
   REBUILD_MAX_CHARS,
-  SCREEN_ROWS,
-  wrapLines,
   lowerPageLimit,
   paginate,
+  rebuildSafe,
   type Page,
 } from '../chat/paging'
 import { movePaged, type Win } from '../chat/viewer'
 import { getProfile } from './settings'
 import {
-  FORCED_NOTE,
   PARAKEET_INSTRUCTION,
   parseAnswer,
   profileBackground,
+  splitQuestion,
   transcriptFor,
   triggersAnswer,
+  type Answered,
   type HeardLine,
 } from './answer'
 
-// Parakeet (G2-128): a launcher tool that listens through the glasses
-// microphone and, once the other person has finished asking something,
-// shows an answer to it. The listening is Wingman's (mic, utterance
-// segmenter, Whisper); the answer comes from the model chosen for Jarvis on
-// the phone, since depth matters more than speed here. The answer is paged
-// like Jarvis's: swipe at an edge for the next page, back lands on the last
-// screenful above.
+// Parakeet (G2-128, G2-132): a launcher tool that listens through the
+// glasses microphone and answers, as the wearer, the questions the other
+// person asks. The listening is Wingman's (mic, utterance segmenter,
+// Whisper); the answers come from the model chosen for Jarvis on the phone,
+// since depth matters more than speed here.
 //
-// Tap asks again now (about everything heard so far), long press pauses and
-// resumes the listening, double-tap ends it.
+// Two screens, per RJ's design:
+// - the list: every question heard so far, newest on top and numbered
+//   ("5. Who is better, LeBron or MJ?"), picked the way an app is picked
+//   in the launcher. Listening runs here. Tap opens a question's answer;
+//   double-tap ends Parakeet; long press pauses and resumes listening.
+// - the answer: paged like Jarvis's (swipe at an edge for the next page,
+//   back lands on the last screenful above). The mic is off here - the
+//   wearer is reading the answer aloud and must not be heard as a new
+//   question. Double-tap goes back to the list and listening resumes.
 
 const MAX_WAITING = 3
-const REDRAW_MS = 1000
 // Wait this long after the last thing the other person said, so a long
 // question that arrives as several utterances is answered once, whole.
 const QUIET_BEFORE_ASKING_MS = 3000
+// The firmware's list item length (the same limit Notes keeps to).
+const ITEM_MAX_CHARS = 64
 
 let releaseMic: (() => void) | null = null
+// Long press: the wearer turned listening off on the list.
 let paused = false
 let segmenter: ReturnType<typeof createSegmenter> | null = null
 let waiting: Segment[] = []
 let transcribing = false
 let lines: HeardLine[] = []
 let session = 0
-let redrawTimer: ReturnType<typeof setInterval> | null = null
 let askTimer: ReturnType<typeof setTimeout> | null = null
-let lastScreen = ''
 let llm: LlmConfig | null = null
 let aboutMe: string | null = null
 let profile = ''
 let asking = false
-let startedAt = 0
 // How many heard lines the model has already been asked about.
 let handled = 0
 
-let answer: string | null = null
+// Oldest first; the list shows them the other way round.
+let answered: Answered[] = []
+// The question whose answer is on screen, or null on the list.
+let reading: number | null = null
 let pages: Page[] = []
 let pageIndex = 0
 let pageWin: Win | null = null
 
-function clock(ms: number): string {
-  const total = Math.floor(ms / 1000)
-  return `${Math.floor(total / 60)}:${String(total % 60).padStart(2, '0')}`
-}
-
-function listeningScreen(): string {
-  const header = paused
-    ? 'Parakeet - PAUSED (hold to resume)'
-    : `Parakeet ${clock(Date.now() - startedAt)} - ${asking ? 'thinking...' : 'listening'}`
-  // Newest first, so what was just said is at the top and never needs a
-  // scroll; older lines follow for as long as the screen has rows.
-  const room = SCREEN_ROWS - 2
-  const shown: string[] = []
-  let used = 0
-  for (let i = lines.length - 1; i >= 0; i--) {
-    const rows = wrapLines(
-      `${lines[i].speaker === 'self' ? 'Me: ' : ''}${lines[i].text}`,
-      PAGE_INNER_WIDTH,
-    )
-    if (shown.length > 0 && used + rows.length > room) break
-    shown.push(...rows.slice(0, room - used))
-    used += rows.length
-    if (used >= room) break
+function updateNote(): void {
+  if (reading !== null) {
+    setStatusNote(positionLabel(pageIndex, pages.length) ?? `Answer ${reading + 1}`)
+    return
   }
-  const body = shown.join('\n') || 'Listening...\n\n(tap: answer now, hold: pause, double-tap: end)'
-  return `${header}\n\n${body}`
+  setStatusNote(paused ? 'Paused - hold to listen' : asking ? 'Thinking...' : 'Listening')
 }
 
-// What is on the glasses: the page of the answer being read, or the live
-// transcript while there is no answer yet.
-function screen(): string {
-  if (answer === null || pages.length === 0) return listeningScreen()
-  const text = pages[pageIndex].text
+function pageText(): string {
+  const text = pages[pageIndex]?.text ?? ''
   if (!pageWin) return text
   return text.split(/\n/).slice(pageWin.start, pageWin.end).join('\n')
 }
 
-function updateNote(): void {
-  setStatusNote(answer === null ? null : (positionLabel(pageIndex, pages.length) ?? 'Answer'))
-}
-
 async function put(text: string): Promise<void> {
   const ok = await setContent(text)
-  if (ok || text.length <= REBUILD_MAX_CHARS || !lowerPageLimit() || answer === null) return
+  if (ok || text.length <= REBUILD_MAX_CHARS || !lowerPageLimit() || reading === null) return
   // The glasses refused a long update: cut the answer into shorter pages.
-  pages = paginate(answer, PAGE_INNER_WIDTH)
+  pages = paginate(answered[reading].answer, PAGE_INNER_WIDTH)
   pageIndex = 0
   pageWin = null
   updateNote()
   await setContent(pages[0].text)
 }
 
-function redraw(): void {
-  const text = screen()
-  if (text === lastScreen) return
-  lastScreen = text
-  void put(text)
-}
-
-function showAnswer(text: string): void {
-  answer = text
-  pages = paginate(text, PAGE_INNER_WIDTH)
-  pageIndex = 0
-  pageWin = null
+// A new question on the list while the list is showing: the list has no
+// in-place update, so the page is rebuilt (and lands on the newest, the top).
+function refreshList(): void {
   updateNote()
-  lastScreen = ''
-  redraw()
+  if (reading === null) requestRebuild(parakeetTool)
 }
 
-async function askNow(mySession: number, forced = false): Promise<void> {
+async function askNow(mySession: number): Promise<void> {
   if (mySession !== session || asking || lines.length === 0) return
   if (!llm) {
     status('Parakeet: add an AI key in Jarvis on the companion page')
     return
   }
   asking = true
-  redraw()
+  updateNote()
   const began = Date.now()
   const upTo = lines.length
+  const lastAsked = [...lines].reverse().find(l => l.speaker !== 'self')?.text ?? ''
   try {
-    const reply = await askModel(
-      llm,
-      [{ role: 'user', text: transcriptFor(lines, forced ? 0 : handled) }],
-      {
-        instruction: forced ? `${PARAKEET_INSTRUCTION} ${FORCED_NOTE}` : PARAKEET_INSTRUCTION,
-        aboutMe,
-        background: profileBackground(profile),
-      },
-    )
+    const reply = await askModel(llm, [{ role: 'user', text: transcriptFor(lines, handled) }], {
+      instruction: PARAKEET_INSTRUCTION,
+      aboutMe,
+      background: profileBackground(profile),
+    })
     if (mySession !== session) return
     if (reply.kind === 'answer') {
       // Whatever the answer, those lines are dealt with: no second answer
@@ -171,13 +140,25 @@ async function askNow(mySession: number, forced = false): Promise<void> {
       status(
         `Parakeet: ${text ? 'answer' : 'nothing to answer'} in ${((Date.now() - began) / 1000).toFixed(1)}s`,
       )
-      if (text) showAnswer(text)
+      const found = text ? splitQuestion(text, questionLine(lastAsked)) : null
+      // A reply that is only a question line has no answer to read, and the
+      // same question twice in a row is one question (seen with a small PC
+      // model, which does not always respect "Earlier").
+      const same = (a: string, b: string) => a.toLowerCase() === b.toLowerCase()
+      const last = answered[answered.length - 1]
+      if (
+        found &&
+        !found.answer.startsWith('Q:') &&
+        !(last && same(last.question, found.question))
+      ) {
+        answered.push(found)
+      }
     } else if (reply.kind === 'error') {
       status(`Parakeet: failed (${reply.message})`)
     }
   } finally {
     asking = false
-    if (mySession === session) redraw()
+    if (mySession === session) refreshList()
   }
 }
 
@@ -211,13 +192,20 @@ function transcribeNext(mySession: number): void {
       if (triggersAnswer(line) || (line.speaker === 'self' && askTimer !== null)) {
         scheduleAsk(mySession)
       }
-      redraw()
     })
     .catch(e => status(`Parakeet: transcription failed (${e instanceof Error ? e.message : e})`))
     .finally(() => {
       transcribing = false
       transcribeNext(mySession)
     })
+}
+
+// Dev-only (companion/devControl.ts): a line as if heard and transcribed,
+// so the simulator, which has no conversation to hear, can test the rest.
+export function devHear(speaker: string, text: string): void {
+  const line = { speaker, text, at: Date.now() }
+  lines.push(line)
+  if (triggersAnswer(line)) scheduleAsk(session)
 }
 
 function onSegment(segment: Segment, mySession: number): void {
@@ -228,10 +216,42 @@ function onSegment(segment: Segment, mySession: number): void {
 
 function listen(mySession: number): Promise<(() => void) | null> {
   return openMic((pcm, speaker) => {
-    if (mySession !== session || !segmenter || paused) return
+    if (mySession !== session || !segmenter) return
     const segment = segmenter.push(pcm, rmsLevel(toFloat32(pcm)), speaker, Date.now())
     if (segment) onSegment(segment, mySession)
   })
+}
+
+// The mic on or off. Off drops whatever was half heard: on the answer screen
+// that is the wearer reading aloud, which must not become a question.
+async function setListening(on: boolean): Promise<void> {
+  const mySession = session
+  if (!on) {
+    releaseMic?.()
+    releaseMic = null
+    segmenter = null
+    waiting = []
+    if (askTimer !== null) clearTimeout(askTimer)
+    askTimer = null
+    return
+  }
+  if (releaseMic) return
+  segmenter = createSegmenter()
+  const release = await listen(mySession)
+  if (mySession !== session) {
+    release?.()
+    return
+  }
+  if (!release) {
+    status('Parakeet: could not start the glasses microphone')
+    return
+  }
+  // Stopped again while the mic was starting.
+  if (paused || reading !== null) {
+    release()
+    return
+  }
+  releaseMic = release
 }
 
 async function start(): Promise<void> {
@@ -239,111 +259,81 @@ async function start(): Promise<void> {
   const mySession = ++session
   lines = []
   handled = 0
-  waiting = []
-  answer = null
-  pages = []
-  startedAt = Date.now()
+  answered = []
+  reading = null
   ;[llm, aboutMe, profile] = await Promise.all([getLlmConfig('phone'), getAboutMe(), getProfile()])
   if (mySession !== session) return
-  segmenter = createSegmenter()
-  paused = false
-  const release = await listen(mySession)
-  if (mySession !== session) {
-    release?.()
-    return
-  }
-  if (!release) {
-    void setContent('Could not start the glasses microphone.\n\nDouble-tap to go back.')
-    return
-  }
-  releaseMic = release
-  status(`Parakeet: listening (Whisper via ${engineDescription()})`)
-  redraw()
-  startRedraw()
-}
-
-async function togglePause(): Promise<void> {
-  if (!segmenter) return
-  const mySession = session
-  if (!paused) {
-    paused = true
-    const rest = segmenter.flush(Date.now())
-    if (rest) onSegment(rest, mySession)
-    segmenter = createSegmenter()
-    releaseMic?.()
-    releaseMic = null
-    redraw()
-    return
-  }
-  const release = await listen(mySession)
-  if (mySession !== session) {
-    release?.()
-    return
-  }
-  if (!release) return
-  releaseMic = release
-  paused = false
-  redraw()
-}
-
-function startRedraw(): void {
-  if (redrawTimer === null) redrawTimer = setInterval(redraw, REDRAW_MS)
-}
-
-function stopRedraw(): void {
-  if (redrawTimer !== null) clearInterval(redrawTimer)
-  redrawTimer = null
+  await setListening(true)
+  if (releaseMic) status(`Parakeet: listening (Whisper via ${engineDescription()})`)
+  updateNote()
 }
 
 function stop(): void {
   session++
-  stopRedraw()
-  if (askTimer !== null) clearTimeout(askTimer)
-  askTimer = null
-  releaseMic?.()
-  releaseMic = null
-  segmenter = null
-  waiting = []
+  void setListening(false)
   transcribing = false
   asking = false
   paused = false
   setStatusNote(null)
 }
 
+function listItems(): string[] {
+  if (answered.length === 0) {
+    return [paused ? 'Paused - hold to listen again' : 'Listening for a question...']
+  }
+  return answered.map((a, i) => `${i + 1}. ${a.question}`.slice(0, ITEM_MAX_CHARS)).reverse()
+}
+
 export const parakeetTool: Tool = {
   name: 'Parakeet',
   confirmOnExit: () => true,
   confirmPrompt: () => 'End Parakeet?',
-  initialContent: () => {
-    lastScreen = 'Starting the microphone...'
-    return lastScreen
-  },
+  contentKind: () => (reading === null ? 'list' : 'text'),
+  listItems,
+  // Only reached for the answer screen (the list is a list).
+  initialContent: () => rebuildSafe(pageText()),
   onOpen: () => {
     void start()
   },
+  // An answer longer than a rebuild carries: put the whole page up.
+  onContentReady: () => {
+    if (reading === null) return
+    const full = pageText()
+    if (full !== rebuildSafe(full)) void put(full)
+  },
   onClose: stop,
-  // Double-tap on an answer goes back to listening (and the live transcript),
-  // the same "back" it means everywhere; on the listening screen it falls
-  // through to the leave prompt.
-  onBack: () => {
-    if (answer === null) return false
-    status('Parakeet: back to listening')
-    answer = null
-    pages = []
+  onListSelect: index => {
+    // Newest is on top: the first item is the last question.
+    const chosen = answered.length - 1 - index
+    if (answered.length === 0 || chosen < 0) return
+    reading = chosen
+    pages = paginate(answered[chosen].answer, PAGE_INNER_WIDTH)
     pageIndex = 0
     pageWin = null
+    void setListening(false)
     updateNote()
-    lastScreen = ''
-    redraw()
+  },
+  // Double-tap on an answer: back to the list, and listening again. On the
+  // list it falls through to the leave prompt.
+  onBack: () => {
+    if (reading === null) return false
+    reading = null
+    pages = []
+    if (!paused) void setListening(true)
+    refreshList()
     return true
   },
-  onTap: () => {
-    if (releaseMic && !paused) void askNow(session, true)
+  // Long press on the list: pause or resume listening.
+  onLongPress: () => {
+    if (reading !== null) return
+    paused = !paused
+    void setListening(!paused)
+    status(`Parakeet: ${paused ? 'paused' : 'listening again'}`)
+    refreshList()
   },
-  onLongPress: () => void togglePause(),
   // Called only for a swipe at a page's top (-1) or bottom (1) edge.
   onScroll: delta => {
-    if (answer === null || pages.length === 0) return
+    if (reading === null || pages.length === 0) return
     const next = movePaged(
       pages.map(p => p.text.split(/\n/).length),
       { page: pageIndex, win: pageWin },
@@ -353,17 +343,8 @@ export const parakeetTool: Tool = {
     pageIndex = next.page
     pageWin = next.win
     updateNote()
-    redraw()
+    void put(pageText())
   },
-  onSuspend: () => {
-    stopRedraw()
-    setStatusNote(null)
-  },
-  onResume: () => {
-    if (!releaseMic) return
-    lastScreen = ''
-    updateNote()
-    redraw()
-    startRedraw()
-  },
+  onSuspend: () => setStatusNote(null),
+  onResume: updateNote,
 }

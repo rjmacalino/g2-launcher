@@ -1,5 +1,10 @@
 import { describe, expect, it } from 'vitest'
-import { parseAnswer, transcriptFor, triggersAnswer } from '../src/features/parakeet/answer'
+import {
+  parseAnswer,
+  splitQuestion,
+  transcriptFor,
+  triggersAnswer,
+} from '../src/features/parakeet/answer'
 
 describe('parseAnswer (G2-128)', () => {
   it('keeps a real answer, trimmed', () => {
@@ -56,6 +61,26 @@ describe('transcriptFor, handled lines', () => {
 
   it('says so when nothing is new', () => {
     expect(transcriptFor(lines, 3)).toContain('(nothing new)')
+  })
+})
+
+describe('splitQuestion (G2-132)', () => {
+  it('takes the question off the first line', () => {
+    expect(splitQuestion('Q: What do you do for fun?\nI hike on weekends.', 'x')).toEqual({
+      question: 'What do you do for fun?',
+      answer: 'I hike on weekends.',
+    })
+  })
+
+  it('keeps a reply without a question line whole, with the fallback question', () => {
+    expect(splitQuestion('I hike on weekends.', 'fun?')).toEqual({
+      question: 'fun?',
+      answer: 'I hike on weekends.',
+    })
+  })
+
+  it('does not take a question line that has no answer under it', () => {
+    expect(splitQuestion('Q: Only a question', 'q').answer).toBe('Q: Only a question')
   })
 })
 
