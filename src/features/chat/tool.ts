@@ -3,7 +3,6 @@ import { positionLabel } from '../../shared/position'
 import { exchangesOf, historyRows } from './exchanges'
 import { questionLine } from '../../shared/questionKeywords'
 import { modelLabel } from '../../core/llmProviders'
-import { isCodeFontLoaded, loadCodeFont } from '../../ui/codeFont'
 import { cancel, start, stop } from '../../core/voiceCapture'
 import { engineDescription } from '../../core/whisper'
 import { takePreroll } from '../../core/wakeListener'
@@ -38,7 +37,13 @@ import {
 } from './paging'
 import { splitAnswer } from '../../shared/answerBlocks'
 import { codeScreens, layoutCodeRows, type CodeRow } from '../../shared/codeLayout'
-import { CODE_FONT_PX, codeMetrics, renderCodeTiles, type CodeMetrics } from '../../ui/codeRender'
+import {
+  CODE_FONT_PX,
+  codeGutter,
+  codeMetrics,
+  renderCodeTiles,
+  type CodeMetrics,
+} from '../../ui/codeRender'
 import { nextTileBank, setTiles } from '../../platform/page'
 import { askAssistant } from './assistant'
 import { setCurrentScreen } from '../../core/currentScreen'
@@ -533,8 +538,8 @@ type CodeView = {
   screen: number
   screens: CodeRow[][]
   metrics: CodeMetrics
-  // Columns of the line numbers, with the space after them (G2-117).
-  gutter: number
+  // Pixels the line numbers take, with the gap after them (G2-117).
+  gutterPx: number
 }
 let codeView: CodeView | null = null
 let drawing = false
@@ -562,10 +567,9 @@ function withCodePlaceholders(text: string): string {
 function layoutBlock(block: number): Omit<CodeView, 'screen'> {
   const metrics = codeMetrics(CODE_FONT_PX)
   // The gutter holds the widest line number; the code gets what is left.
-  const lineCount = codeBlocks[block].split('\n').length
-  const gutter = Math.max(2, String(lineCount).length) + 1
-  const rows = layoutCodeRows(codeBlocks[block], metrics.cols - gutter)
-  return { block, screens: codeScreens(rows, metrics.rows), metrics, gutter }
+  const { gutterPx, maxPx } = codeGutter(codeBlocks[block].split('\n').length, metrics)
+  const rows = layoutCodeRows(codeBlocks[block], maxPx, metrics.measure, metrics.cell)
+  return { block, screens: codeScreens(rows, metrics.rows), metrics, gutterPx }
 }
 
 function viewBlock(block: number, screen: number): void {
@@ -595,10 +599,10 @@ function footerFor(view: Omit<CodeView, 'screen'>, screen: number): string {
 
 function tilesFor(view: Omit<CodeView, 'screen'>, screen: number): Promise<Uint8Array[]> {
   const footer = footerFor(view, screen)
-  const key = [view.metrics.fontPx, view.metrics.withFont, footer, codeBlocks[view.block]].join('|')
+  const key = [view.metrics.fontPx, footer, codeBlocks[view.block]].join('|')
   const known = tileCache.get(key)
   if (known) return known
-  const drawn = renderCodeTiles(view.screens[screen], view.metrics, footer, view.gutter)
+  const drawn = renderCodeTiles(view.screens[screen], view.metrics, footer, view.gutterPx)
   drawn.catch(() => tileCache.delete(key))
   tileCache.set(key, drawn)
   if (tileCache.size > TILE_CACHE_MAX) {
@@ -616,9 +620,7 @@ function warmCode(): void {
   warmTimer = setTimeout(() => {
     warmTimer = null
     if (codeBlocks.length === 0 || codeView) return
-    void loadCodeFont().then(() => {
-      if (codeBlocks.length > 0 && !codeView) void tilesFor(layoutBlock(0), 0).catch(() => {})
-    })
+    if (codeBlocks.length > 0 && !codeView) void tilesFor(layoutBlock(0), 0).catch(() => {})
   }, 300)
 }
 
@@ -626,13 +628,6 @@ async function drawCode(): Promise<void> {
   if (drawing) {
     drawAgain = true
     return
-  }
-  // Measured before the bundled font arrived: measure again with it.
-  const fontStarted = performance.now()
-  await loadCodeFont()
-  const fontMs = performance.now() - fontStarted
-  if (codeView && !codeView.metrics.withFont && isCodeFontLoaded()) {
-    viewBlock(codeView.block, codeView.screen)
   }
   drawing = true
   try {
@@ -647,9 +642,7 @@ async function drawCode(): Promise<void> {
       }
       const renderStarted = performance.now()
       const tiles = await tilesFor(view, view.screen)
-      status(
-        `Jarvis: code font ${(fontMs / 1000).toFixed(1)}s (${isCodeFontLoaded() ? 'bundled' : 'fallback'}), ready in ${((performance.now() - renderStarted) / 1000).toFixed(1)}s`,
-      )
+      status(`Jarvis: code ready in ${((performance.now() - renderStarted) / 1000).toFixed(1)}s`)
       const sendStarted = performance.now()
       await setTiles(tiles)
       if (loading) await setContent(' ')
@@ -685,7 +678,7 @@ function openCodeView(): void {
   nextTileBank()
   viewBlock(0, 0)
   updatePositionNote()
-  status(`Jarvis: code view (${codeView?.metrics.cols} x ${codeView?.metrics.rows})`)
+  status(`Jarvis: code view (${codeView?.screens.length} screens)`)
   requestRebuild(chatTool, () => void drawCode())
 }
 

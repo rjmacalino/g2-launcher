@@ -1,36 +1,76 @@
-// Laying code out for the glasses' code view (G2-73): code is drawn as an
-// image in a monospace font (ui/codeRender.ts), so it can be laid out by
-// character count - every character the same width, indentation exact.
-// Pure; unit-tested in tests/code-layout.test.ts.
+// Laying code out for the glasses' code view (G2-73, G2-118): code is drawn
+// as an image (ui/codeRender.ts) in the same plain sans-serif as the footer
+// line, a proportional font, so widths are measured in pixels (measure is
+// given in, which keeps this pure and testable) and indentation is counted
+// in columns - one column is the width of a digit - so blocks and their
+// guides line up whatever the letters are. Unit-tested in
+// tests/code-layout.test.ts.
 
-// One row of the picture (G2-117): its text, the source line number it
-// starts (null for the wrapped rest of a long line), and how far its source
-// line is indented, which is where the indent guides go. A blank line takes
-// the indent of the block around it, so a guide runs on through it.
-export type CodeRow = { text: string; number: number | null; indent: number }
+// One row of the picture: its text without the indentation, the source line
+// number it starts (null for the wrapped rest of a long line), how far its
+// source line is indented (where the indent guides go), and how far in the
+// text itself starts (deeper for a wrapped rest). A blank line takes the
+// indent of the block around it, so a guide runs on through it.
+export type CodeRow = {
+  text: string
+  number: number | null
+  indent: number
+  textIndent: number
+}
 
-// Rows no wider than cols. A long line breaks at cols and carries on
-// indented two deeper than where it started, so a continuation is never
-// mistaken for a line of its own. Tabs count as two spaces.
-export function layoutCodeRows(code: string, cols: number): CodeRow[] {
+export type Measure = (text: string) => number
+
+// The widest the indentation of a row may be, so a deeply nested line keeps
+// room for its text.
+const MAX_INDENT_SHARE = 0.6
+
+// Where to cut `text` so the front fits `room` pixels: at the last space if
+// that is not too far back, else mid-word. At least one character, so
+// wrapping always moves on.
+function cutPoint(text: string, room: number, measure: Measure): number {
+  if (measure(text) <= room) return text.length
+  let fit = 1
+  while (fit < text.length && measure(text.slice(0, fit + 1)) <= room) fit++
+  const space = text.lastIndexOf(' ', fit - 1)
+  return space > fit * 0.5 ? space + 1 : fit
+}
+
+// Rows no wider than maxPx, counting their indentation at cellPx a column. A
+// long line breaks and carries on two columns deeper than it started, so a
+// continuation is never mistaken for a line of its own. Tabs count as two
+// spaces.
+export function layoutCodeRows(
+  code: string,
+  maxPx: number,
+  measure: Measure,
+  cellPx: number,
+): CodeRow[] {
+  const widest = Math.max(1, Math.floor((maxPx * MAX_INDENT_SHARE) / cellPx))
   const rows: CodeRow[] = []
   let number = 0
   for (const raw of code.replace(/\t/g, '  ').split('\n')) {
     number++
     const line = raw.replace(/\s+$/, '')
-    // -1: a blank line, filled in below.
-    const indent = line === '' ? -1 : line.length - line.trimStart().length
-    if (line.length <= cols) {
-      rows.push({ text: line, number, indent })
+    if (line === '') {
+      // -1: a blank line, filled in below.
+      rows.push({ text: '', number, indent: -1, textIndent: 0 })
       continue
     }
-    const carry = ' '.repeat(Math.min(indent + 2, Math.floor(cols / 2)))
-    rows.push({ text: line.slice(0, cols), number, indent })
-    let rest = line.slice(cols)
-    const room = cols - carry.length
+    const indent = line.length - line.trimStart().length
+    let rest = line.trimStart()
+    let textIndent = Math.min(indent, widest)
+    let first = true
     while (rest.length > 0) {
-      rows.push({ text: carry + rest.slice(0, room), number: null, indent })
-      rest = rest.slice(room)
+      const cut = cutPoint(rest, maxPx - textIndent * cellPx, measure)
+      rows.push({
+        text: rest.slice(0, cut).trimEnd(),
+        number: first ? number : null,
+        indent,
+        textIndent,
+      })
+      rest = rest.slice(cut).trimStart()
+      if (first) textIndent = Math.min(textIndent + 2, widest)
+      first = false
     }
   }
   while (rows.length > 0 && rows[rows.length - 1].text === '') rows.pop()
@@ -54,11 +94,6 @@ function fillBlankIndents(rows: CodeRow[]): CodeRow[] {
     rows[i] = { ...rows[i], indent: Math.min(before, after) }
   }
   return rows
-}
-
-// Just the text, for callers that only need the lines.
-export function layoutCode(code: string, cols: number): string[] {
-  return layoutCodeRows(code, cols).map(r => r.text)
 }
 
 // One indent step: the smallest indentation the code uses, between two and
