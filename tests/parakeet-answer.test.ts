@@ -85,12 +85,13 @@ describe('splitQuestion (G2-132)', () => {
 })
 
 describe('triggersAnswer', () => {
-  it('waits for someone other than the wearer to say a few words', () => {
+  it('waits for a few words from anyone', () => {
     expect(triggersAnswer({ speaker: 'other', text: 'Can you reverse a list', at: 1 })).toBe(true)
     expect(triggersAnswer({ speaker: 'unknown', text: 'Given an array of numbers', at: 1 })).toBe(
       true,
     )
-    expect(triggersAnswer({ speaker: 'self', text: 'Let me think about that', at: 1 })).toBe(false)
+    // The glasses' speaker guess is not trusted (G2-133): the model decides.
+    expect(triggersAnswer({ speaker: 'self', text: 'What do you do', at: 1 })).toBe(true)
     expect(triggersAnswer({ speaker: 'other', text: 'Okay', at: 1 })).toBe(false)
   })
 })

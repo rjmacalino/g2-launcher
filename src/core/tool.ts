@@ -70,6 +70,11 @@ export type Tool = {
   // and highlight, the same widget the launcher menu itself uses.
   listItems?(): string[]
 
+  // Text over the list, when contentKind() is 'list' (G2-133): a few rows
+  // the tool keeps up to date with platform/page.ts's setListHeader, without
+  // rebuilding the list. Omitted or null: the list has the whole area.
+  listHeader?(): string | null
+
   // Container size when contentKind() is 'image', in pixels. Defaults to the
   // platform maximum (288 x 144, see platform/page.ts's IMAGE_MAX_WIDTH /
   // IMAGE_MAX_HEIGHT) when omitted - most images want as much room as this

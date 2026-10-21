@@ -1,7 +1,7 @@
 import type { Tool } from '../../core/tool'
 import { openMic } from '../../core/mic'
 import { engineDescription, transcribe } from '../../core/whisper'
-import { setContent } from '../../platform/page'
+import { LIST_HEADER_ROWS, setContent, setListHeader } from '../../platform/page'
 import { status } from '../../platform/bridge'
 import { concat, toFloat32 } from '../../shared/pcm'
 import { rmsLevel } from '../../shared/endpoint'
@@ -20,6 +20,7 @@ import {
   lowerPageLimit,
   paginate,
   rebuildSafe,
+  wrapLines,
   type Page,
 } from '../chat/paging'
 import { movePaged, type Win } from '../chat/viewer'
@@ -55,6 +56,7 @@ const MAX_WAITING = 3
 // Wait this long after the last thing the other person said, so a long
 // question that arrives as several utterances is answered once, whole.
 const QUIET_BEFORE_ASKING_MS = 3000
+const MAX_WAIT_FOR_QUIET_MS = 12_000
 // The firmware's list item length (the same limit Notes keeps to).
 const ITEM_MAX_CHARS = 64
 
@@ -126,11 +128,23 @@ async function askNow(mySession: number): Promise<void> {
   const upTo = lines.length
   const lastAsked = [...lines].reverse().find(l => l.speaker !== 'self')?.text ?? ''
   try {
-    const reply = await askModel(llm, [{ role: 'user', text: transcriptFor(lines, handled) }], {
-      instruction: PARAKEET_INSTRUCTION,
-      aboutMe,
-      background: profileBackground(profile),
-    })
+    const reply = await askModel(
+      llm,
+      [
+        {
+          role: 'user',
+          text: transcriptFor(
+            lines.map(l => ({ ...l, speaker: 'unknown' })),
+            handled,
+          ),
+        },
+      ],
+      {
+        instruction: PARAKEET_INSTRUCTION,
+        aboutMe,
+        background: profileBackground(profile),
+      },
+    )
     if (mySession !== session) return
     if (reply.kind === 'answer') {
       // Whatever the answer, those lines are dealt with: no second answer
@@ -162,15 +176,23 @@ async function askNow(mySession: number): Promise<void> {
   }
 }
 
+// When the current wait for quiet began; 0 when none is running.
+let waitingSince = 0
+
 function scheduleAsk(mySession: number): void {
   if (askTimer !== null) clearTimeout(askTimer)
+  if (waitingSince === 0) waitingSince = Date.now()
   askTimer = setTimeout(() => {
     askTimer = null
-    // Still being spoken or written down: wait for the end of it.
-    if (transcribing || waiting.length > 0 || segmenter?.level().speaking) {
+    // Still being spoken or written down: wait for the end of it - but not
+    // for ever. In a noisy room it is never quiet, and Parakeet sat on
+    // "Listening for a question..." through five questions (G2-133).
+    const busy = transcribing || waiting.length > 0 || segmenter?.level().speaking
+    if (busy && Date.now() - waitingSince < MAX_WAIT_FOR_QUIET_MS) {
       scheduleAsk(mySession)
       return
     }
+    waitingSince = 0
     void askNow(mySession)
   }, QUIET_BEFORE_ASKING_MS)
 }
@@ -187,11 +209,8 @@ function transcribeNext(mySession: number): void {
       if (!text || isSilenceHallucination(text)) return
       const line = { speaker: segment.speaker, text, at: segment.endedAt }
       lines.push(line)
-      // The wearer talking while an answer is due gives the model more to
-      // go on (are they answering? thinking?), so the wait starts over.
-      if (triggersAnswer(line) || (line.speaker === 'self' && askTimer !== null)) {
-        scheduleAsk(mySession)
-      }
+      showCaptions()
+      if (triggersAnswer(line)) scheduleAsk(mySession)
     })
     .catch(e => status(`Parakeet: transcription failed (${e instanceof Error ? e.message : e})`))
     .finally(() => {
@@ -205,6 +224,7 @@ function transcribeNext(mySession: number): void {
 export function devHear(speaker: string, text: string): void {
   const line = { speaker, text, at: Date.now() }
   lines.push(line)
+  showCaptions()
   if (triggersAnswer(line)) scheduleAsk(session)
 }
 
@@ -233,6 +253,7 @@ async function setListening(on: boolean): Promise<void> {
     waiting = []
     if (askTimer !== null) clearTimeout(askTimer)
     askTimer = null
+    waitingSince = 0
     return
   }
   if (releaseMic) return
@@ -277,6 +298,20 @@ function stop(): void {
   setStatusNote(null)
 }
 
+// Live captions over the list (G2-133): what was heard, newest first, so the
+// wearer can see whether the questions are being heard right.
+function captions(): string {
+  const rows: string[] = []
+  for (let i = lines.length - 1; i >= 0 && rows.length < LIST_HEADER_ROWS; i--) {
+    rows.push(...wrapLines(lines[i].text, PAGE_INNER_WIDTH))
+  }
+  return rows.slice(0, LIST_HEADER_ROWS).join('\n') || '(live captions appear here)'
+}
+
+function showCaptions(): void {
+  if (reading === null) void setListHeader(captions())
+}
+
 function listItems(): string[] {
   if (answered.length === 0) {
     return [paused ? 'Paused - hold to listen again' : 'Listening for a question...']
@@ -290,6 +325,7 @@ export const parakeetTool: Tool = {
   confirmPrompt: () => 'End Parakeet?',
   contentKind: () => (reading === null ? 'list' : 'text'),
   listItems,
+  listHeader: () => (reading === null ? captions() : null),
   // Only reached for the answer screen (the list is a list).
   initialContent: () => rebuildSafe(pageText()),
   onOpen: () => {

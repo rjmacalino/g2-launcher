@@ -22,6 +22,9 @@ import {
   CONTAINER_NAME_CONFIRM_TITLE,
   CONTAINER_NAME_CONTENT,
   CONTAINER_NAME_CONTENT_IMAGE,
+  CONTAINER_ID_LIST_HEADER,
+  CONTAINER_NAME_LIST_HEADER,
+  LIST_HEADER_HEIGHT,
   CONTENT_HEIGHT,
   CONTENT_Y,
   IMAGE_MAX_HEIGHT,
@@ -335,13 +338,13 @@ const menuList = new ListContainerProperty({
 // Tool.contentKind in core/tool.ts). Only Teleprompter uses this today, for its
 // script picker, and it is the same ListContainerProperty shape as the menu:
 // firmware owns highlight and scroll, we only react to a click.
-function toolListContent(tool: Tool): ListContainerProperty {
+function toolListContent(tool: Tool, below = 0): ListContainerProperty {
   const items = tool.listItems?.() ?? []
   return new ListContainerProperty({
     xPosition: 0,
-    yPosition: CONTENT_Y,
+    yPosition: CONTENT_Y + below,
     width: CANVAS_WIDTH,
-    height: CONTENT_HEIGHT,
+    height: CONTENT_HEIGHT - below,
     borderWidth: 0,
     paddingLength: PADDING,
     containerID: CONTAINER_ID_CONTENT,
@@ -428,6 +431,29 @@ function toolContainers(index: number) {
   const menuObject = toolMenu(tool)
 
   if (kind === 'list') {
+    const header = tool.listHeader?.() ?? null
+    if (header !== null) {
+      return {
+        containerTotalNum: bar.length + 2,
+        textObject: [
+          ...bar,
+          new TextContainerProperty({
+            xPosition: 0,
+            yPosition: CONTENT_Y,
+            width: CANVAS_WIDTH,
+            height: LIST_HEADER_HEIGHT,
+            borderWidth: 0,
+            paddingLength: PADDING,
+            containerID: CONTAINER_ID_LIST_HEADER,
+            containerName: CONTAINER_NAME_LIST_HEADER,
+            content: header,
+            isEventCapture: 0,
+          }),
+        ],
+        listObject: [toolListContent(tool, LIST_HEADER_HEIGHT)],
+        menuObject,
+      }
+    }
     return {
       containerTotalNum: bar.length + 1,
       textObject: bar,

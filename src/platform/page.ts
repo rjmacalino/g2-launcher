@@ -73,6 +73,26 @@ export const CONTAINER_NAME_CONTENT = 'tool'
 export const CONTAINER_ID_CONTENT_IMAGE = 6
 export const CONTAINER_NAME_CONTENT_IMAGE = 'tool.image'
 
+// A few rows of text above a tool's list (G2-133, Tool.listHeader): Parakeet's
+// live captions. ID 5 is the confirm title's, but that lives on its own page
+// (the leave prompt), never on a page with this one, so the two cannot meet.
+export const CONTAINER_ID_LIST_HEADER = 5
+export const CONTAINER_NAME_LIST_HEADER = 'tool.header'
+export const LIST_HEADER_ROWS = 3
+export const LIST_HEADER_HEIGHT = LIST_HEADER_ROWS * ROW_HEIGHT_PX + 2 * PADDING
+
+// Replaces the header text in place: no rebuild, so the list below keeps its
+// highlighted row.
+export function setListHeader(text: string): Promise<boolean> {
+  return bridge.textContainerUpgrade(
+    new TextContainerUpgrade({
+      containerID: CONTAINER_ID_LIST_HEADER,
+      containerName: CONTAINER_NAME_LIST_HEADER,
+      content: text,
+    }),
+  )
+}
+
 // Platform maximum for one image container (see docs/platform.md, Image
 // containers). Not the canvas size - 576x288 would tile a smaller image
 // rather than fit it, and no single container can reach full-canvas anyway.

@@ -106,8 +106,13 @@ export function splitQuestion(reply: string, fallback: string): Answered {
 
 // A line from someone other than the wearer is worth answering after; the
 // wearer's own lines only add context.
+//
+// Any speaker counts (G2-133): the glasses' guess at who spoke is not
+// reliable enough - in RJ's first test every question he asked aloud was
+// marked as his own, so none was ever answered. The model tells the asker
+// from the answerer by what is said (PARAKEET_INSTRUCTION, step 1).
 export function triggersAnswer(line: HeardLine): boolean {
-  return line.speaker !== 'self' && line.text.trim().split(/\s+/).length >= 3
+  return line.text.trim().split(/\s+/).length >= 3
 }
 
 // How the profile reaches the model: as facts to speak from, not as a
