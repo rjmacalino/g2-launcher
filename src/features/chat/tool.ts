@@ -1028,7 +1028,11 @@ function moveHold(s: Stream, delta: -1 | 1): void {
   lastScrollAt = now
   const rows = allRows(s)
   const next = moveWindow(rows, s.win ?? tailWin(rows), delta)
-  if (!next) return
+  if (!next) {
+    // Down past the last line: go on to the end at full speed (G2-111).
+    if (delta === 1) skipToEnd(s)
+    return
+  }
   s.win = next
   const text = windowText(rows, next)
   s.pending = s.pending.then(() => showPage(text, () => text))
@@ -1045,6 +1049,15 @@ function resumeStream(s: Stream): void {
   s.lastTickAt = Date.now()
   pages = []
   tickStream(s)
+}
+
+// Jump to the end of the answer at full speed (G2-111): a swipe down while
+// it is typing, or down past the last line while paused. The screen then
+// stays on the last lines, as when the typing finishes by itself.
+function skipToEnd(s: Stream): void {
+  s.fast = true
+  if (s.mode === 'hold') resumeStream(s)
+  else tickStream(s)
 }
 
 // A tap while the answer is being typed: pause, or go on. True if used.
@@ -1684,12 +1697,18 @@ export const chatTool: Tool = {
   // conversation is on screen - recording, transcribing, thinking - which
   // is exactly when pages is empty or a live status is running.
   onScroll: delta => {
-    // While the answer is being typed or paused (G2-107): a swipe up pauses
-    // and goes back a window; paused, both ways read over what has arrived.
+    // While the answer is being typed or paused (G2-107, G2-111): a swipe up
+    // pauses and goes back a window, a swipe down skips to the end; paused,
+    // both ways read over what has arrived.
     if (stream && stream.timer !== null) {
       if (stream.mode === 'follow') {
-        const paused = delta === -1 ? freezeStream() : null
-        if (paused) moveHold(paused, -1)
+        // Up pauses and goes back a window; down skips to the end.
+        if (delta === -1) {
+          const paused = freezeStream()
+          if (paused) moveHold(paused, -1)
+        } else {
+          skipToEnd(stream)
+        }
       } else {
         moveHold(stream, delta)
       }
