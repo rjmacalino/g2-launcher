@@ -19,6 +19,7 @@ import {
   type Purpose,
 } from '../../core/llmSettings'
 import { isWakeWordEnabled, setWakeWordEnabled } from '../../core/wakeSettings'
+import { CODE_SIZES, getCodeSize, loadCodeSize, setCodeSize } from '../../core/codeSize'
 import { isWakeListening, wakeDescription } from '../../core/wakeListener'
 import { getPrepNotes, setPrepNotes, PREP_NOTES_MAX_CHARS } from '../../features/live/settings'
 import type { AppContext, Page } from '../app'
@@ -90,6 +91,16 @@ function glassesCard(ctx: AppContext): HTMLElement {
     setTimeout(() => paint(on), 800)
   })
 
+  const sizeSelect = h(
+    'select',
+    { class: 'field', 'aria-label': 'Code size' },
+    CODE_SIZES.map(px => h('option', { value: String(px) }, `${px} px`)),
+  ) as HTMLSelectElement
+  void loadCodeSize().then(() => (sizeSelect.value = String(getCodeSize())))
+  sizeSelect.addEventListener('change', async () => {
+    if (await setCodeSize(Number(sizeSelect.value))) toast('Code size saved')
+  })
+
   return card(
     h(
       'div',
@@ -115,6 +126,15 @@ function glassesCard(ctx: AppContext): HTMLElement {
       { class: 'caption', style: 'margin: 8px 0 0' },
       'Listens for its name on the glasses microphone while the app is open. The listening happens on this phone; nothing is stored or sent until you speak to Jarvis.',
     ),
+    h('div', { style: 'margin-top: 16px' }, [
+      h('div', { style: 'font-weight: 500' }, 'Code size on the glasses'),
+      h(
+        'p',
+        { class: 'caption', style: 'margin: 4px 0 6px' },
+        'Bigger is easier to read but shows fewer lines. Applies the next time you open code.',
+      ),
+      sizeSelect,
+    ]),
   )
 }
 

@@ -1,3 +1,4 @@
+import { getCodeSize } from '../../core/codeSize'
 import { setStatusNote } from '../../core/statusNote'
 import { positionLabel } from '../../shared/position'
 import { exchangesOf, historyRows } from './exchanges'
@@ -37,13 +38,7 @@ import {
 } from './paging'
 import { splitAnswer } from '../../shared/answerBlocks'
 import { codeScreens, layoutCodeRows, type CodeRow } from '../../shared/codeLayout'
-import {
-  CODE_FONT_PX,
-  codeGutter,
-  codeMetrics,
-  renderCodeTiles,
-  type CodeMetrics,
-} from '../../ui/codeRender'
+import { codeGutter, codeMetrics, renderCodeTiles, type CodeMetrics } from '../../ui/codeRender'
 import { nextTileBank, setTiles } from '../../platform/page'
 import { askAssistant } from './assistant'
 import { setCurrentScreen } from '../../core/currentScreen'
@@ -551,7 +546,7 @@ function withCodePlaceholders(text: string): string {
 }
 
 function layoutBlock(block: number): Omit<CodeView, 'screen'> {
-  const metrics = codeMetrics(CODE_FONT_PX)
+  const metrics = codeMetrics(getCodeSize())
   // The gutter holds the widest line number; the code gets what is left.
   const { gutterPx, maxPx } = codeGutter(codeBlocks[block].split('\n').length, metrics)
   const rows = layoutCodeRows(codeBlocks[block], maxPx, metrics.measure, metrics.cell)

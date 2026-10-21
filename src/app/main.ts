@@ -95,6 +95,7 @@ import {
 } from '../features/chat/tool'
 import { startWakeListening, stopWakeListening } from '../core/wakeListener'
 import { isWakeWordEnabled, onWakeSettingChanged } from '../core/wakeSettings'
+import { loadCodeSize } from '../core/codeSize'
 import { micResumed, micSuspended } from '../core/mic'
 import { describeDuration, formatDuration } from '../shared/duration'
 
@@ -982,6 +983,9 @@ onWakeSettingChanged(enabled => void applyWakeSetting(enabled))
 void isWakeWordEnabled().then(enabled => {
   if (enabled) void applyWakeSetting(true)
 })
+
+// The code view's size, read once so drawing code can ask for it at once.
+void loadCodeSize()
 
 // Same idea for Jarvis's saved conversations: loaded once in the background
 // so opening Jarvis reads an in-memory copy instead of storage (see
