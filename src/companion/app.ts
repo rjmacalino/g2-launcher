@@ -6,10 +6,7 @@ import type { CurrentScreen } from '../core/currentScreen'
 // screen, if any, matches it, so moving on either side moves the other.
 
 export type Route =
-  | { tab: 'jarvis'; chatId?: string }
-  | { tab: 'live' }
-  | { tab: 'notes'; noteId?: string }
-  | { tab: 'settings' }
+  { tab: 'jarvis'; chatId?: string } | { tab: 'notes'; noteId?: string } | { tab: 'settings' }
 
 // What a tab hands the shell to show.
 export type Page = {
@@ -79,8 +76,6 @@ export function screenToRoute(screen: CurrentScreen): Route | null {
       return typeof detail.noteId === 'string'
         ? { tab: 'notes', noteId: detail.noteId }
         : { tab: 'notes' }
-    case 'Wingman':
-      return { tab: 'live' }
     default:
       return null
   }

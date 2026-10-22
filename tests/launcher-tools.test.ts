@@ -1,6 +1,6 @@
 import { describe, expect, it, vi } from 'vitest'
 
-// The launcher lists Jarvis and Notes; Wingman is switched off (G2-100).
+// The launcher lists Jarvis and Notes; Wingman and Parakeet are gone (G2-135).
 vi.mock('../src/platform/bridge', () => ({
   status: vi.fn(),
   bridge: {
@@ -10,11 +10,12 @@ vi.mock('../src/platform/bridge', () => ({
 }))
 
 describe('launcher tools (G2-100)', () => {
-  it('has no Wingman while it is switched off', async () => {
+  it('has only Jarvis and Notes', async () => {
     const { TOOL_NAMES } = await import('../src/app/registry')
     expect(TOOL_NAMES).toContain('Jarvis')
     expect(TOOL_NAMES).toContain('Notes')
     expect(TOOL_NAMES).not.toContain('Wingman')
+    expect(TOOL_NAMES).not.toContain('Parakeet')
     expect(TOOL_NAMES).not.toContain('Lab')
   })
 })

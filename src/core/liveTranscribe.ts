@@ -22,8 +22,13 @@ const RETRY_MS = 2000
 
 export type LiveTranscriber = {
   push(pcm: Uint8Array): void
+  // Ends the audio, waits up to waitMs for the last words, then closes.
+  finish(waitMs: number): Promise<void>
   close(): void
 }
+
+// Audio kept while the session is still connecting: 10 s.
+const BACKLOG_BYTES = 320_000
 
 export type LiveHandlers = {
   // The words so far of what is being said right now (replaces the last).
@@ -50,6 +55,9 @@ export function openLiveTranscriber(apiKey: string, handlers: LiveHandlers): Liv
   let pending: Uint8Array[] = []
   let pendingBytes = 0
   let renewTimer: ReturnType<typeof setTimeout> | null = null
+  let flushOnReady: (() => void) | null = null
+  // Waiting in finish() for the last final.
+  let finalWaiter: (() => void) | null = null
 
   function connect(): void {
     if (closed) return
@@ -85,13 +93,18 @@ export function openLiveTranscriber(apiKey: string, handlers: LiveHandlers): Liv
       if (message.setupComplete !== undefined) {
         ready = true
         handlers.onStatus?.('Captions: Gemini Live connected')
+        flushOnReady?.()
         return
       }
       const content = message.serverContent
       const interim = content?.interimInputTranscription?.text
       if (interim) handlers.onInterim(interim)
       const final = content?.inputTranscription?.text?.trim()
-      if (final) handlers.onFinal(final)
+      if (final) {
+        handlers.onFinal(final)
+        finalWaiter?.()
+        finalWaiter = null
+      }
       // The server is about to end the session: start the next one now.
       if (message.goAway !== undefined) renew()
     }
@@ -120,35 +133,64 @@ export function openLiveTranscriber(apiKey: string, handlers: LiveHandlers): Liv
 
   connect()
 
+  // Sends what has built up. Before the session is ready the audio waits
+  // (up to BACKLOG_BYTES, newest kept), so the first words of a question
+  // said straight after a long press are not lost while connecting.
+  function flush(): void {
+    if (pendingBytes === 0) return
+    if (!ready || !socket || socket.readyState !== WebSocket.OPEN) {
+      while (pendingBytes > BACKLOG_BYTES && pending.length > 1) {
+        pendingBytes -= pending.shift()!.length
+      }
+      return
+    }
+    const chunk = new Uint8Array(pendingBytes)
+    let at = 0
+    for (const part of pending) {
+      chunk.set(part, at)
+      at += part.length
+    }
+    pending = []
+    pendingBytes = 0
+    socket.send(
+      JSON.stringify({
+        realtimeInput: { audio: { data: base64(chunk), mimeType: 'audio/pcm;rate=16000' } },
+      }),
+    )
+  }
+  flushOnReady = flush
+
+  function close(): void {
+    closed = true
+    if (renewTimer !== null) clearTimeout(renewTimer)
+    const ws = socket
+    socket = null
+    ws?.close()
+  }
+
   return {
     push(pcm: Uint8Array): void {
       if (closed) return
       pending.push(pcm)
       pendingBytes += pcm.length
-      if (pendingBytes < CHUNK_BYTES) return
-      const chunk = new Uint8Array(pendingBytes)
-      let at = 0
-      for (const part of pending) {
-        chunk.set(part, at)
-        at += part.length
+      if (pendingBytes >= CHUNK_BYTES) flush()
+    },
+    async finish(waitMs: number): Promise<void> {
+      if (closed) return
+      flush()
+      if (ready && socket?.readyState === WebSocket.OPEN) {
+        socket.send(JSON.stringify({ realtimeInput: { audioStreamEnd: true } }))
+        // The last words come back as a final once the stream has ended.
+        await new Promise<void>(resolve => {
+          const timer = setTimeout(resolve, waitMs)
+          finalWaiter = () => {
+            clearTimeout(timer)
+            resolve()
+          }
+        })
       }
-      pending = []
-      pendingBytes = 0
-      // Audio from before the session is ready is dropped: captions are
-      // about now, not a backlog.
-      if (!ready || !socket || socket.readyState !== WebSocket.OPEN) return
-      socket.send(
-        JSON.stringify({
-          realtimeInput: { audio: { data: base64(chunk), mimeType: 'audio/pcm;rate=16000' } },
-        }),
-      )
+      close()
     },
-    close(): void {
-      closed = true
-      if (renewTimer !== null) clearTimeout(renewTimer)
-      const ws = socket
-      socket = null
-      ws?.close()
-    },
+    close,
   }
 }

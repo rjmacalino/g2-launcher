@@ -1,4 +1,3 @@
-import { WINGMAN_ENABLED } from '../shared/features'
 import './styles.css'
 import { bridge } from '../platform/bridge'
 import {
@@ -17,7 +16,6 @@ import {
 } from './app'
 import { h, icon, isTyping } from './dom'
 import { jarvisView } from './views/jarvis'
-import { liveView } from './views/live'
 import { notesView } from './views/notes'
 import { settingsView } from './views/settings'
 
@@ -37,7 +35,6 @@ if (!root) throw new Error('companion root element missing from index.html')
 
 const TABS: { tab: Route['tab']; label: string; icon: string }[] = [
   { tab: 'jarvis', label: 'Jarvis', icon: 'jarvis' },
-  ...(WINGMAN_ENABLED ? [{ tab: 'live' as const, label: 'Wingman', icon: 'live' }] : []),
   { tab: 'notes', label: 'Notes', icon: 'notes' },
   { tab: 'settings', label: 'Settings', icon: 'settings' },
 ]
@@ -61,8 +58,6 @@ function screenKey(screen: CurrentScreen): string {
 
 function viewFor(next: Route): Page {
   switch (next.tab) {
-    case 'live':
-      return liveView(ctx)
     case 'notes':
       return notesView(ctx, next)
     case 'settings':

@@ -1,4 +1,3 @@
-import { WINGMAN_ENABLED } from '../../shared/features'
 import { bridge, onStatus, recentStatus } from '../../platform/bridge'
 import { ABOUT_ME_MAX_CHARS, getAboutMe, setAboutMe } from '../../core/geminiSettings'
 import {
@@ -21,8 +20,6 @@ import {
 import { isWakeWordEnabled, setWakeWordEnabled } from '../../core/wakeSettings'
 import { CODE_SIZES, getCodeSize, loadCodeSize, setCodeSize } from '../../core/codeSize'
 import { isWakeListening, wakeDescription } from '../../core/wakeListener'
-import { getPrepNotes, setPrepNotes, PREP_NOTES_MAX_CHARS } from '../../features/live/settings'
-import { getProfile, setProfile, PROFILE_MAX_CHARS } from '../../features/parakeet/settings'
 import {
   TRANSCRIBERS,
   getTranscriber,
@@ -153,23 +150,13 @@ let editingKey: Provider = 'gemini'
 const JOBS: { purpose: Purpose; title: string; hint: string }[] = [
   { purpose: 'glasses', title: 'Jarvis on the glasses', hint: 'Spoken questions - quick wins' },
   { purpose: 'phone', title: 'Jarvis on the phone', hint: 'Typed questions and code - depth wins' },
-  // Wingman is switched off (G2-101, shared/features.ts), so no cue model.
-  ...(WINGMAN_ENABLED
-    ? [
-        {
-          purpose: 'wingman' as const,
-          title: 'Wingman',
-          hint: 'Cues mid-conversation - speed wins',
-        },
-      ]
-    : []),
 ]
 
-// Which speech-to-text Parakeet listens with (G2-134).
+// Which speech-to-text Jarvis listens with (G2-134, G2-135).
 function transcriberCard(): HTMLElement {
   const select = h(
     'select',
-    { class: 'field', 'aria-label': 'Parakeet transcriber' },
+    { class: 'field', 'aria-label': 'Transcriber' },
     TRANSCRIBERS.map(t => h('option', { value: t.id }, t.label)),
   ) as HTMLSelectElement
   void getTranscriber().then(choice => (select.value = choice))
@@ -177,11 +164,11 @@ function transcriberCard(): HTMLElement {
     if (await setTranscriber(select.value as Transcriber)) toast('Transcriber saved')
   })
   return card(
-    h('h2', {}, 'Parakeet: transcriber'),
+    h('h2', {}, 'Speech to text'),
     h(
       'p',
       { class: 'caption', style: 'margin: 4px 0 8px' },
-      'How Parakeet turns speech into text. Gemini Live shows words as they are spoken and is free on the Gemini free tier. Whisper works offline on this phone but runs a few seconds behind. Applies the next time you open Parakeet.',
+      'How Jarvis turns what you say into text. Gemini Live writes the words while you speak, so the question is ready the moment you tap, and it is free on the Gemini free tier. Whisper works offline on this phone but transcribes only after you tap, which is slower.',
     ),
     select,
   )
@@ -428,25 +415,7 @@ export function settingsView(ctx: AppContext): Page {
       getAboutMe,
       setAboutMe,
     ),
-    textCard(
-      'Parakeet: who I am',
-      'Parakeet answers in your voice. Write what it should know about you: work, studies, projects, strengths, hobbies, stories worth telling. The more here, the more your own the answers sound. It will not invent facts beyond this.',
-      'e.g. I am a junior web developer, two years in. I build with React and TypeScript. For fun I hike and play badminton on weekends. My proudest project is a smart glasses app.',
-      PROFILE_MAX_CHARS,
-      getProfile,
-      setProfile,
-    ),
     transcriberCard(),
-    WINGMAN_ENABLED
-      ? textCard(
-          'Wingman prep notes',
-          'Background for your next conversation - who it is with, what it is about, what you want from it. Used for Live cues.',
-          'e.g. Coffee with Sam, a recruiter at a fintech startup. I want to ask about the team and remote work.',
-          PREP_NOTES_MAX_CHARS,
-          getPrepNotes,
-          setPrepNotes,
-        )
-      : null,
     label('Help'),
     diagnostics.el,
   )

@@ -16,7 +16,6 @@
     "test": "vitest run",
     "bench": "vite-node bench/run.ts --",
     "bench:wake": "vite-node bench/wake.ts --",
-    "bench:cues": "vite-node bench/cues.ts --",
     "bench:cuedata": "vite-node bench/cueData.ts --",
     "bench:chatdata": "vite-node bench/chatData.ts --",
     "typecheck": "tsc --noEmit",

@@ -1,6 +1,4 @@
-// Features that are built but switched off (G2-100). Wingman's code stays
-// in the app, so turning it back on is changing this one line.
-export const WINGMAN_ENABLED = false
+// Features that are built but switched off (G2-100).
 
 // Lab is the developer test screen, only ever in dev builds. Off for now,
 // at RJ's request.
