@@ -207,8 +207,10 @@ function teardownCapture() {
 // transcription also saves the wait for it.
 const SILENCE_PEAK = 0.001
 
-// After the tap, how long to wait for Gemini Live's last words.
-const LIVE_FINISH_MS = 1500
+// After the tap, how long to wait for Gemini Live's last words. The words
+// caught while speaking are used either way; in the simulator the final
+// text after the stream ended never came, so a long wait was pure delay.
+const LIVE_FINISH_MS = 700
 
 function peakLevel(samples: Float32Array): number {
   let peak = 0

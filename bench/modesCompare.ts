@@ -9,7 +9,7 @@ import { llmFromEnv } from './llmEnv'
 // (G2-143), built the way features/chat/assistant.ts builds them: Jarvis's
 // rules (or the wearer's, in Interview), then the shared instructions, then
 // the mode's preset. Prints time and the start of each answer, and saves the
-// full answers under bench/results/. Run: npx tsx bench/modesCompare.ts
+// full answers under bench/results/. Run: npx tsx bench/modesCompare.ts [gemini|deepseek]
 // Optional: a model per provider, e.g. GEMINI_MODEL=gemini-3.8-flash.
 
 // A made-up candidate, so Interview answers have facts to use. The real one
@@ -35,7 +35,9 @@ const QUESTIONS: { mode: ModeId; text: string }[] = [
 ]
 
 const results: unknown[] = []
+const ONLY = process.argv[2]
 for (const provider of ['gemini', 'deepseek'] as const) {
+  if (ONLY && provider !== ONLY) continue
   process.env.LLM_PROVIDER = provider
   const wanted = process.env[`${provider.toUpperCase()}_MODEL`]
   if (wanted) process.env.LLM_MODEL = wanted
