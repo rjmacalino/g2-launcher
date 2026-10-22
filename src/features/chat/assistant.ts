@@ -7,6 +7,7 @@ import { dispatchVoiceCommand } from '../../core/voiceDispatch'
 import { getAboutMe } from '../../core/geminiSettings'
 import { DEFAULT_LOCAL_INSTRUCTIONS, getLocalInstructions } from '../../core/localInstructions'
 import { getModePreset, modeOf } from '../../core/modes'
+import { CHAT_INSTRUCTION, WEARER_INSTRUCTION } from '../../core/llmTypes'
 import { askModel } from '../../core/llm'
 import type { LlmResult, LlmTurn } from '../../core/llmTypes'
 import { getLlmConfig, providerInfo, type LlmConfig } from '../../core/llmSettings'
@@ -95,6 +96,8 @@ export async function askAssistant(
     actionContext,
     aboutMe,
     guide: fullGuide,
+    // Interview mode speaks as the wearer, not as Jarvis (G2-140).
+    instruction: modeId === 'interview' ? WEARER_INSTRUCTION : CHAT_INSTRUCTION,
     // Questions about now - news, scores, prices, opening hours - need the
     // web; the model decides when (G2-76).
     webSearch: true,
