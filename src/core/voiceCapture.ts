@@ -1,6 +1,6 @@
 import { AudioInputSource } from '@evenrealities/even_hub_sdk'
-import { bridge } from '../../platform/bridge'
-import { transcribe } from '../../core/whisper'
+import { bridge } from '../platform/bridge'
+import { transcribe } from './whisper'
 
 // Browser SpeechRecognition looked available (Lab's presence-check probe
 // constructed it without throwing) but actually using it fails with
@@ -11,14 +11,27 @@ import { transcribe } from '../../core/whisper'
 // not go through getUserMedia at all and is already proven working (Lab's
 // microphone probe: real streamed PCM frames). See docs/roadmap.md
 // decision D1.
+//
+// Lives in core/, not features/jarvis, because more than one feature needs
+// it now (Jarvis's one-shot commands/questions, and Chat's ongoing
+// conversation) - same reasoning as core/whisper.ts, which this already
+// depended on. Each caller (jarvis/tool.ts, chat/tool.ts) owns its own
+// long-press-to-start / double-press-to-end gesture wiring and session
+// bookkeeping; this file only owns capturing PCM and turning it into text.
+// peak is the loudest sample in the recording (0 to 1) - reported on the
+// status line so real-hardware use shows what speech actually measures,
+// before any "too quiet to be speech" threshold gets picked.
 export type VoiceResult =
-  { kind: 'transcript'; transcript: string } | { kind: 'error'; message: string }
+  { kind: 'transcript'; transcript: string; peak: number } | { kind: 'error'; message: string }
 
-// Driven by the SDK's own LONG_PRESS_EVENT to start (see app/main.ts) and a
-// double-press to end. MAX_RECORD_MS only exists as a safety net for a
-// wearer who never double-presses at all - the normal end of a recording is
-// always the deliberate double-press, not this timer.
-const MAX_RECORD_MS = 15_000
+// Driven by the caller's own long-press-to-start / double-press-to-end
+// wiring (see app/main.ts for how each tool claims that gesture while it is
+// the active screen). MAX_RECORD_MS only exists as a safety net for a
+// wearer who never ends the recording at all - the normal end is always the
+// deliberate gesture, not this timer. Three minutes per direct request, so
+// a long question is never cut off mid-sentence; transcribing more than 30
+// seconds depends on the chunked transcription in core/whisper.ts.
+const MAX_RECORD_MS = 180_000
 
 // No interim, incrementally-transcribed captions here on purpose - tried in
 // G2-51/G2-52 and reverted [HW]: real-hardware testing found neither the
@@ -96,15 +109,70 @@ function teardownCapture() {
   bridge.audioControl(false)
 }
 
+// Below this, the recording is digital silence - the microphone delivered
+// frames but no sound at all, not a quiet room (a real microphone's own
+// noise floor sits well above it). Whisper does not return nothing for
+// silence: it invents a plausible sentence ["So how should it find us?" in
+// the simulator, which has no real microphone], which then went to Gemini
+// as a question and became a saved conversation's title. Skipping the
+// transcription also saves the wait for it.
+const SILENCE_PEAK = 0.001
+
+function peakLevel(samples: Float32Array): number {
+  let peak = 0
+  for (let i = 0; i < samples.length; i++) {
+    const level = Math.abs(samples[i])
+    if (level > peak) peak = level
+  }
+  return peak
+}
+
+// Whisper marks non-speech in brackets or parentheses - "[BLANK_AUDIO]",
+// "(upbeat music)", "[Music]" - which are not anything the wearer said.
+function stripNonSpeech(transcript: string): string {
+  return transcript
+    .replace(/\[[^\]]*\]|\([^)]*\)/g, ' ')
+    .replace(/\s+/g, ' ')
+    .trim()
+}
+
+// What Whisper is known to invent from near-silence rather than return
+// nothing: faint room noise in the simulator came back as "You" and was
+// sent to Gemini as a question, then saved as a conversation titled "You".
+// Only whole transcripts that are never a real question on their own -
+// "thank you" is left alone, since someone might actually say it.
+const SILENCE_HALLUCINATIONS = new Set([
+  'you',
+  'thanks for watching',
+  'thank you for watching',
+  'thanks for watching bye',
+  'please subscribe',
+])
+
+function isSilenceHallucination(transcript: string): boolean {
+  const words = transcript
+    .toLowerCase()
+    .replace(/[^a-z ]/g, '')
+    .replace(/\s+/g, ' ')
+    .trim()
+  return SILENCE_HALLUCINATIONS.has(words)
+}
+
 // Ends capture and runs one transcription over everything recorded.
 export async function stop(): Promise<VoiceResult> {
   teardownCapture()
   if (chunks.length === 0) return { kind: 'error', message: 'no audio captured' }
   try {
     const audio = toFloat32(concat(chunks))
-    const transcript = await transcribe(audio)
-    if (!transcript) return { kind: 'error', message: 'heard nothing' }
-    return { kind: 'transcript', transcript }
+    const peak = peakLevel(audio)
+    if (peak < SILENCE_PEAK) {
+      return { kind: 'error', message: 'no sound picked up' }
+    }
+    const transcript = stripNonSpeech(await transcribe(audio))
+    if (!transcript || isSilenceHallucination(transcript)) {
+      return { kind: 'error', message: `heard nothing - audio level ${peak.toFixed(3)}` }
+    }
+    return { kind: 'transcript', transcript, peak }
   } catch (e) {
     return { kind: 'error', message: e instanceof Error ? e.message : String(e) }
   }

@@ -52,11 +52,45 @@ async function readAllNotes(): Promise<NoteDoc[]> {
   }
 }
 
+// Notes can now change from three places in the same running app: the
+// companion page, the glasses' Notes screen, and Jarvis acting on a spoken
+// request (features/notes/actions.ts). Anything showing notes subscribes
+// here to redraw after a write it did not make itself - the companion's
+// list, most usefully, so "add eggs to my shopping list" appears there
+// while it is open.
+const changeListeners = new Set<() => void>()
+
+export function onNotesChange(fn: () => void): () => void {
+  changeListeners.add(fn)
+  return () => changeListeners.delete(fn)
+}
+
 function writeAllNotes(all: NoteDoc[]): Promise<boolean> {
   return bridge.setLocalStorage(NOTES_STORAGE_KEY, JSON.stringify(all)).then(ok => {
     if (!ok) status('Failed to save notes')
+    if (ok) for (const fn of changeListeners) fn()
     return ok
   })
+}
+
+// Read, change and write back as one step, one at a time. Jarvis can be
+// asked for several changes in one sentence ("add eggs to shopping and
+// remind me to call mom" arrives as two separate actions), and two
+// overlapping read-then-write cycles would each write back a copy missing
+// the other's change. change returns the full new list to write, or null
+// for "nothing changed, write nothing".
+let mutateQueue: Promise<unknown> = Promise.resolve()
+
+function mutateNotes<T>(
+  change: (all: NoteDoc[]) => { next: NoteDoc[] | null; result: T },
+): Promise<T> {
+  const run = mutateQueue.then(async () => {
+    const { next, result } = change(await readAllNotes())
+    if (next) await writeAllNotes(next)
+    return result
+  })
+  mutateQueue = run.catch(() => undefined)
+  return run
 }
 
 // Platform limits, not arbitrary choices: a list holds at most 20 items of at
@@ -138,4 +172,5 @@ export const notes = {
   remove: removeNote,
   save: saveNote,
   resetItems: resetNoteItems,
+  mutate: mutateNotes,
 }

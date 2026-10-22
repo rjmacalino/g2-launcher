@@ -10,9 +10,37 @@ progress, `[x]` done, `[?]` waiting on a decision.
    the official templates and the simulator automation API come first.
 2. Verify, then build. Anything marked [UNVERIFIED] in platform.md gets a
    probe on the simulator, then on hardware, before a feature depends on it.
-3. Glasses first. Every flow must work with ring or temple input, phone locked.
+3. Glasses first for input and control, companion first for depth. Every
+   flow must still work with ring or temple input, phone locked - the
+   glasses are what makes this hands-free, and nothing can require the
+   phone to be unlocked and in hand to work at all. But the glasses screen
+   is a small, monochrome, no-scroll surface; the companion page runs in a
+   real WebView with no such limit. For anything with more to show than
+   fits that constraint (full conversation history, lists of past runs,
+   settings with explanation), the companion is where it is actually read
+   and managed - the glasses stay the quick way to act, not the only way to
+   see. Added 2026-10-13 after building Chat's companion history view;
+   see Chat (G2-58) below for the first real example.
 4. Time and state survive suspension. Persist to storage, derive from
    timestamps, never trust a running interval.
+5. Both surfaces drive the app; the glasses are the companion's extension.
+   The companion is not a separate settings page next to the "real" app -
+   it is the fuller version of whatever the glasses are showing. Whichever
+   tool is open on the glasses, the companion follows and shows that same
+   tool's richer page automatically (see core/currentScreen.ts, added
+   2026-10-14) - a wearer should never find the two surfaces on different
+   apps. Within that, some actions only make sense on the companion and
+   are deliberately left off the glasses entirely, not just hidden behind
+   an extra tap: editing a Teleprompter script (glasses only get the
+   picker), deleting a saved chat (glasses only get read/ask - a delete
+   gesture there would also risk colliding with Chat's own long-press-to-
+   ask), anything needing real text entry. The test for "glasses or
+   companion-only" is not "is this important" but "does this need a
+   keyboard, a destructive confirmation worth more screen than the
+   glasses have, or does it conflict with a gesture the glasses already
+   use for something else." Companion-to-glasses sync (companion
+   navigation steering what the glasses show) is not built yet - today
+   this is one-directional, glasses to companion only.
 
 ## Phase 0: foundations (no user-visible features)
 
@@ -216,21 +244,52 @@ then on hardware by RJ. Results go back into platform.md with a [HW] tag.
       below) is a separate, larger, and currently blocked track: it needs RJ
       to create a free Picovoice account and report back its actual
       free-tier terms, which could not be verified from documentation alone
+- [~] Chat (G2-58, see decision D4): a real multi-turn conversation with
+      Gemini, deliberately separate from Jarvis per direct decision rather
+      than folded into it - Jarvis's value is instant global reach for a
+      quick answer with auto-return, a sit-down conversation with history is
+      a different shape of interaction that would only get in the way of
+      that. Own menu entry; a picker lists "New chat" plus every saved
+      session by title (newest first), selecting one opens its transcript.
+      Reuses Jarvis's exact gesture shape (long press to start listening,
+      double-press to end) but scoped locally to Chat's own conversation
+      screen instead of reserved globally - the shell carves Chat out of the
+      global long-press-reaches-Jarvis reservation the same way it already
+      did for the dev-only Lab tool. Every exchange is saved to storage the
+      moment Gemini answers (features/chat/store.ts), and the full history
+      is resent on every follow-up so Gemini actually remembers the
+      conversation, not just the latest message - it has no memory of its
+      own between requests. One real, unavoidable platform constraint, not a
+      design choice: text containers have no programmatic scroll and any
+      content update resets scroll to the top (see docs/platform.md), so
+      "always see the latest message" can only be true if the newest message
+      is shown FIRST, with older history further down a swipe-down away -
+      the opposite of a typical chat app's bottom-anchored layout, confirmed
+      explicitly acceptable with RJ before building it this way. core/
+      gained three more shared modules supporting both Jarvis and Chat:
+      core/voiceCapture.ts (moved out of features/jarvis, generic mic
+      capture + transcription), core/geminiSettings.ts (moved out of
+      features/jarvis, the API key), and core/gemini.ts grew a converse()
+      function taking a full turn history, with ask() (Jarvis's one-shot
+      use) now a thin wrapper over it. Verified in the simulator: the
+      picker, the local long-press/double-press carve-out (confirmed via a
+      `long_press` automation action that works despite not being
+      documented in the simulator-automation skill), and the no-API-key
+      fallback message all behave correctly; a real multi-turn exchange with
+      an actual key has not been exercised yet - needs a real-hardware run
 - [ ] Live conversation captions ("Conversate"-inspired): continuously
       transcribe a conversation with another person and show live captions,
-      not a command. Distinct from Jarvis (a command executor) - raised
-      2026-09-28 as part of RJ's larger goal of a full AI companion
-      (transcription + commands + contextual cues, eventually). Deliberately
-      not started: the immediate ask (make Jarvis reachable without opening
-      it, see above) turned out to satisfy most of what prompted this, so it
-      is on hold until that is confirmed working well on real hardware.
-      Would reuse core/whisper.ts's engine (already relocated out of
-      features/jarvis specifically so more than one feature could use it).
-      AI cues/summarization (real Conversate's other half) needs an actual
-      LLM - a good one is realistically a cloud service, which means
-      revisiting the "no paid services" stance in D1 - or a much
-      lower-quality fully on-device one, at a package-size cost likely
-      dwarfing even Whisper's
+      not a command, distinct from both Jarvis (a command executor) and Chat
+      (a deliberate, explicitly-asked conversation) - raised 2026-09-28 as
+      part of RJ's larger goal of a full AI companion (transcription +
+      commands + contextual cues, eventually). Deliberately not started: the
+      immediate ask (an actual multi-turn chat, see above) turned out to
+      satisfy most of what prompted this, so it is on hold until that is
+      confirmed working well on real hardware. Would reuse core/whisper.ts's
+      engine. AI cues/summarization (real Conversate's other half) needs an
+      actual LLM - Gemini (now already integrated, see D4) could serve this
+      too, revisiting what "a much lower-quality fully on-device one" would
+      have meant before that was resolved
 - [ ] Photo viewer: album image on the glasses
 
 ## Decisions
@@ -277,4 +336,36 @@ then on hardware by RJ. Results go back into platform.md with a [HW] tag.
   see src/companion/main.ts), stored only in this device's own local
   storage. No key means Jarvis behaves exactly as before D4: local command
   parsing only, "Didn't recognise a command" for anything else - the
-  fallback is additive, never required.
+  fallback is additive, never required. Note: `gemini-2.5-flash` was
+  retired for new API keys shortly after this was written, replaced with
+  `gemini-3.8-flash` (G2-56) - see core/gemini.ts for the current model
+  name rather than trusting this decision log to stay current on it.
+  Chat (G2-58) reuses this same API key and the same core/gemini.ts client
+  (grown a converse() function for a full turn history, not just one
+  question) rather than needing its own separate setup. Renamed to
+  "Gemini" later in the same ticket, then (2026-10-15, still G2-58) merged
+  with the one-shot Jarvis into a single assistant named **Jarvis**, per
+  direct request: the launcher has one Jarvis (its conversation list),
+  long-press from anywhere opens a new Jarvis conversation, local commands
+  (the timer) run first and hand the wearer back, everything else goes to
+  Gemini as the model underneath. The old features/jarvis tool is deleted;
+  the merged tool's code still lives in features/chat. References above
+  and below to "Chat" or "Gemini" as a tool predate the merge.
+- D5 Jarvis acts, not just answers (2026-10-15, G2-58): per direct request
+  ("an alexa + gemini combine"), Jarvis controls Notes and the Timer by
+  voice. Gemini function calling decides WHAT to do; the action runs on the
+  phone and its confirmation is written by our code from what actually
+  happened, never by the model (core/assistantActions.ts). No second round
+  trip sends results back to Gemini, so stored history stays plain text.
+  Covered: add items to a list (creating it), read a list, name the lists,
+  check off, remove an item, clear finished items; start, cancel, pause,
+  resume and time-left for the timer. Short timer commands ("cancel the
+  timer") still run offline through the local parser first. Deliberately
+  not by voice: deleting a whole list (companion-only, principle 5).
+  "Remind me to X" adds to a Reminders list - timed reminders are not
+  built and need hardware testing first. A timer ending now shows a
+  full-screen "Time's up!" on any page until tapped (visual only, and
+  only while the app is in the foreground; a timer that ended while away
+  is announced on return). Verified: unit tests for matching and reply
+  parsing, the alert in the simulator. Not verified: a real Gemini
+  function call with a key, anything on hardware.
