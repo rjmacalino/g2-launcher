@@ -71,10 +71,9 @@ export async function askAssistant(
   const [actionContext, aboutMe, guide] = await Promise.all([
     actions.length > 0 ? assistantActionContext() : Promise.resolve(''),
     within(getAboutMe(), ABOUT_ME_TIMEOUT_MS, null),
-    // The wearer's brief for a model on their PC (G2-95).
-    llm.provider === 'local'
-      ? within(getLocalInstructions(), ABOUT_ME_TIMEOUT_MS, DEFAULT_LOCAL_INSTRUCTIONS)
-      : Promise.resolve(undefined),
+    // The wearer's instructions for Jarvis (G2-95, G2-138), for every model:
+    // who they are and how answers should be live in Settings, not here.
+    within(getLocalInstructions(), ABOUT_ME_TIMEOUT_MS, DEFAULT_LOCAL_INSTRUCTIONS),
   ])
   let timedOut = false
   const answer = askModel(llm, toTurns(history), {

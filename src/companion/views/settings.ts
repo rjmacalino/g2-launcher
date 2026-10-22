@@ -400,8 +400,8 @@ export function settingsView(ctx: AppContext): Page {
     label('Jarvis'),
     aiCard(ctx),
     textCard(
-      'Instructions for Jarvis on your PC',
-      "Like a CLAUDE.md: sent with every question to the model on your PC, which does better with a clear brief. Cloud AIs don't get it. Clear the box to go back to the default.",
+      'Instructions for Jarvis',
+      'Like a CLAUDE.md: who you are and how you want answers. Sent with every question to whichever AI answers. Edit it freely; clear the box to go back to the default.',
       DEFAULT_LOCAL_INSTRUCTIONS,
       LOCAL_INSTRUCTIONS_MAX_CHARS,
       getLocalInstructions,

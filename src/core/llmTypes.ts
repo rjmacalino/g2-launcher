@@ -18,10 +18,10 @@ export const CHAT_INSTRUCTION =
   'characters where possible, two-space indents, no code fences, the code ' +
   'first. Questions can be long, such as a whole programming problem: read ' +
   'all of it and follow its exact requirements, input and output, and ' +
-  'examples, and make the code correct above all. The wearer is a junior web developer: prefer the simplest, most ' +
-  'basic way to write it (plain loops and variables over clever one-liners ' +
-  'or advanced features), and after the code explain it step by step in ' +
-  'plain words, so they can explain it to someone else.'
+  'examples, and make the code correct above all.'
+// Who the wearer is and how they want answers (G2-138) is not written here:
+// it is the editable "Instructions for Jarvis" in Settings
+// (core/localInstructions.ts), sent to every model after these rules.
 
 // Answers used to be held at 400 tokens for one reason only: a single
 // glasses update has a hard size ceiling (docs/platform.md), and anything

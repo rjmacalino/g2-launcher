@@ -3,12 +3,12 @@ import { DEFAULT_LOCAL_INSTRUCTIONS } from '../shared/localBrief'
 
 export { DEFAULT_LOCAL_INSTRUCTIONS }
 
-// The wearer's standing instructions for a model on their own PC (G2-95),
-// like a CLAUDE.md: typed on the phone, sent with every question to that
-// model, after Jarvis's own rules. A small local model does noticeably
-// better with a narrow, explicit brief, and "say so when unsure" is the one
-// cheap lever against it inventing facts. Cloud models do not get it - they
-// do not need the narrowing.
+// The wearer's standing instructions for Jarvis (G2-95, G2-138), like a
+// CLAUDE.md: typed on the phone, sent with every question to whichever model
+// answers, after Jarvis's own display rules. Everything personal - who the
+// wearer is, how code and explanations should be - lives here and nowhere in
+// the code, so it is theirs to change. First written for the PC models
+// (hence the names and the storage key, kept so a saved text survives).
 const STORAGE_KEY = 'llm.local.instructions'
 
 export const LOCAL_INSTRUCTIONS_MAX_CHARS = 1500

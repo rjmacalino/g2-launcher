@@ -1,6 +1,7 @@
-// The default brief for a model on the wearer's PC (G2-95), kept apart
-// from core/localInstructions.ts (which reads the phone's storage) so the
-// PC benchmarks can use it too.
+// The default "Instructions for Jarvis" (G2-95, G2-138): what Settings
+// shows until the wearer saves their own. Kept apart from
+// core/localInstructions.ts (which reads the phone's storage) so the PC
+// benchmarks can use it too.
 
 // Used until the wearer saves their own; clearing the box goes back to it.
 export const DEFAULT_LOCAL_INSTRUCTIONS =
