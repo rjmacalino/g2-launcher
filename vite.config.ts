@@ -1,3 +1,4 @@
+import { writeFileSync } from 'node:fs'
 import { defineConfig, type Plugin } from 'vite'
 
 // Dev-only remote control for the phone page (G2-71), so the simulator can
@@ -13,6 +14,11 @@ function companionDevControl(): Plugin {
     name: 'companion-dev-control',
     apply: 'serve',
     configureServer(server) {
+      // The last recording's raw audio, sent by core/voiceCapture.ts in dev,
+      // saved for testing transcribers on the PC (G2-136).
+      server.ws.on('companion:audio', (data: string) => {
+        writeFileSync('bench/results/last-recording.pcm', Buffer.from(data, 'base64'))
+      })
       server.middlewares.use('/__dev/companion', (req, res) => {
         if (req.method !== 'POST' || !loopback.has(req.socket.remoteAddress ?? '')) {
           res.statusCode = 403

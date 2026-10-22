@@ -230,6 +230,16 @@ export async function stop(): Promise<VoiceResult> {
   }
   try {
     const audio = toFloat32(concat(chunks))
+    // Dev only: the raw recording to the PC (vite.config.ts), to test
+    // transcribers on exactly what the glasses sent.
+    if (import.meta.hot) {
+      const bytes = concat(chunks)
+      let binary = ''
+      for (let i = 0; i < bytes.length; i += 0x8000) {
+        binary += String.fromCharCode(...bytes.subarray(i, i + 0x8000))
+      }
+      import.meta.hot?.send('companion:audio', btoa(binary))
+    }
     const peak = peakLevel(audio)
     if (peak < SILENCE_PEAK) {
       stream?.close()
