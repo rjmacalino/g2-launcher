@@ -79,6 +79,7 @@ import {
 import { describeLists, notesActions } from '../features/notes/actions'
 import { notes } from '../features/notes/store'
 import { registerVoiceDispatch } from '../core/voiceDispatch'
+import { registerNavigator } from '../core/navigation'
 import { registerAssistantActions } from '../core/assistantActions'
 import { registerConversationDigest, registerConversationSaver } from '../core/assistantContext'
 import { newId } from '../platform/collection'
@@ -92,6 +93,7 @@ import {
   retry as retryJarvis,
   prepareOpen as prepareJarvisOpen,
   isAtPicker as isJarvisAtPicker,
+  isQuickAskEmpty as isJarvisQuickAskEmpty,
   onReturnRequested as onJarvisReturnRequested,
   armWakeListen as armJarvisWakeListen,
   isBusy as isJarvisBusy,
@@ -891,6 +893,72 @@ registerVoiceDispatch(async transcript => {
       return { handled: true, message: timerStatusAction() }
     case 'unrecognized':
       return { handled: false }
+  }
+})
+
+// Voice navigation (G2-150): "Hey Jarvis, go back / go home / open notes /
+// new interview chat / new note called X". Jarvis recognises the command
+// (shared/navCommands.ts) and hands it here, since moving between screens
+// is the shell's job. A wake from another screen opens Jarvis's quick ask
+// first, so "back" acts on the screen the wearer actually came from.
+function voiceBack() {
+  if (screen.kind !== 'tool') return
+  const from = screenBeforeJarvis
+  if (screen.index === JARVIS_INDEX && from && isJarvisQuickAskEmpty()) {
+    screenBeforeJarvis = null
+    if (from.kind !== 'tool') {
+      returnToMenu()
+      return
+    }
+    // One level up from where they were: a tool showing something inside
+    // it (a list in Notes) goes to that tool's top, a tool at its top goes
+    // to the launcher.
+    if (TOOLS[from.index].screenDetail?.() !== undefined) {
+      activeTool()?.onClose?.()
+      void openTool(from.index)
+    } else {
+      returnToMenu()
+    }
+    return
+  }
+  confirmExit(TOOLS[screen.index], screen.index)
+}
+
+function voiceOpen(index: number) {
+  screenBeforeJarvis = null
+  activeTool()?.onClose?.()
+  void openTool(index)
+}
+
+registerNavigator(command => {
+  status(`Voice: ${command.kind}`)
+  switch (command.kind) {
+    case 'back':
+      voiceBack()
+      return
+    case 'home':
+      returnToMenu()
+      return
+    case 'open': {
+      const index = TOOLS.findIndex(t => t.name === command.tool)
+      if (index < 0) return
+      if (index === JARVIS_INDEX) prepareJarvisOpen('picker')
+      voiceOpen(index)
+      return
+    }
+    case 'newChat':
+      prepareJarvisOpen('newChat', command.mode)
+      voiceOpen(JARVIS_INDEX)
+      return
+    case 'newList': {
+      const index = TOOLS.findIndex(t => t.name === 'Notes')
+      if (index < 0) return
+      void notes.create(command.name, []).then(note => {
+        TOOLS[index].showDetail?.({ noteId: note.id }, false)
+        voiceOpen(index)
+      })
+      return
+    }
   }
 })
 

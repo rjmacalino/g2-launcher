@@ -263,7 +263,7 @@ export async function stop(): Promise<VoiceResult> {
       // their way. Whisper is the fallback if the stream heard nothing.
       await stream.finish(LIVE_FINISH_MS)
       heard = stripNonSpeech(liveText())
-      status(`Jarvis: Gemini Live heard ${heard.length} chars`)
+      status(`Jarvis: Gemini Live heard ${heard.length} chars: "${heard.slice(0, 80)}"`)
     }
     if (!heard) heard = stripNonSpeech(await transcribe(audio))
     const transcribeMs = Math.round(performance.now() - transcribeStart)

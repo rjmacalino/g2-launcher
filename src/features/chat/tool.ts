@@ -1,6 +1,8 @@
 import { getCodeSize } from '../../core/codeSize'
 import { setStatusNote } from '../../core/statusNote'
 import { MODES, modeOf, type ModeId } from '../../core/modes'
+import { navigate } from '../../core/navigation'
+import { parseNavCommand, type NavCommand } from '../../shared/navCommands'
 import { positionLabel } from '../../shared/position'
 import { exchangesOf, historyRows } from './exchanges'
 import { questionLine } from '../../shared/questionKeywords'
@@ -98,8 +100,13 @@ let focus: { index: number; of: number } | null = null
 export type OpenMode = 'picker' | 'newChat' | 'quickAsk'
 let nextOpenMode: OpenMode = 'picker'
 
-export function prepareOpen(mode: OpenMode): void {
+// chatMode: the mode for a new chat opened this way ("Hey Jarvis, new
+// interview chat", G2-150); Auto when not given.
+let nextChatMode: ModeId = 'auto'
+
+export function prepareOpen(mode: OpenMode, chatMode: ModeId = 'auto'): void {
   nextOpenMode = mode
+  nextChatMode = chatMode
 }
 
 // This conversation was started by a long-press from another screen, so
@@ -108,6 +115,12 @@ let quickAsk = false
 
 export function isAtPicker(): boolean {
   return depth === 'picker'
+}
+
+// A conversation opened by a wake or long press from another screen that
+// has nothing in it yet (G2-150): "go back" then means the screen before.
+export function isQuickAskEmpty(): boolean {
+  return quickAsk && currentSessionId === null
 }
 
 // The shell's "take the wearer back to where they long-pressed from" -
@@ -368,7 +381,8 @@ async function refresh(): Promise<void> {
   depth = mode === 'picker' ? 'picker' : 'conversation'
   listenWhenReady = mode !== 'picker'
   currentSessionId = null
-  currentMode = 'auto'
+  currentMode = nextChatMode
+  nextChatMode = 'auto'
   currentMessages = []
   currentSessionTitle = null
   lastErrorQuestion = null
@@ -848,7 +862,12 @@ export function isBusy(): boolean {
   return !canListenNow()
 }
 
+// The page being read when a recording started over it, so "Hey Jarvis,
+// scroll down" can carry on from there (G2-150).
+let pageBeforeListening: { index: number; win: Win | null } | null = null
+
 async function beginListening() {
+  pageBeforeListening = pages.length > 0 ? { index: pageIndex, win: pageWin } : null
   codeView = null
   const mySession = ++sessionToken
   const viaWake = nextListenViaWake
@@ -1413,6 +1432,14 @@ export async function finishListening() {
     `Jarvis: heard ${result.transcript.length} chars, audio level ${result.peak.toFixed(3)}, ${result.audioSeconds.toFixed(1)}s of audio in ${(result.transcribeMs / 1000).toFixed(1)}s via ${engineDescription()}${result.levels === null ? '' : `, room ${result.levels.floor.toFixed(4)} loudest ${result.levels.loudest.toFixed(4)}`}`,
   )
 
+  // Navigation by voice (G2-150): "go back", "open notes", "scroll down"...
+  const nav = parseNavCommand(result.transcript)
+  if (nav) {
+    status(`Jarvis: voice command ${nav.kind}`)
+    runNavCommand(nav)
+    return
+  }
+
   // Commands first, locally - a timer needs no network, no API key, and no
   // Gemini round trip (see the voice dispatch registered in app/main.ts).
   // Anything that is not a command falls through to Gemini below.
@@ -1473,6 +1500,55 @@ export async function finishListening() {
   } finally {
     preparing--
   }
+}
+
+// Dev only (companion/devControl.ts): a voice command as if just heard, so
+// navigation can be tested without the simulator's faint speaker audio.
+// The page being read counts as the one a recording would have interrupted.
+export function devVoiceCommand(text: string): boolean {
+  const nav = parseNavCommand(text)
+  if (!nav) return false
+  pageBeforeListening = pages.length > 0 ? { index: pageIndex, win: pageWin } : null
+  runNavCommand(nav)
+  return true
+}
+
+// A voice navigation command, said instead of a question (G2-150).
+// Scrolling is Jarvis's own (it owns the pages); everything else is moving
+// between screens, which the shell does (core/navigation.ts).
+function runNavCommand(nav: NavCommand): void {
+  if (nav.kind !== 'scroll') {
+    navigate(nav)
+    return
+  }
+  const before = pageBeforeListening
+  pageBeforeListening = null
+  if (currentMessages.length === 0 || !before) {
+    // Nothing on screen to scroll: a wake from elsewhere opened an empty chat.
+    if (quickAsk && currentSessionId === null) {
+      returnHandler?.()
+      return
+    }
+    void showPage(currentMessages.length > 0 ? renderConversation() : 'Nothing to scroll here.')
+    return
+  }
+  renderConversation()
+  pageIndex = Math.min(before.index, pages.length - 1)
+  pageWin = before.win
+  const next = movePaged(
+    pages.map(p => p.text.split(/\n/).length),
+    { page: pageIndex, win: pageWin },
+    nav.delta,
+  )
+  if (next) {
+    pageIndex = next.page
+    pageWin = next.win
+  }
+  updatePositionNote()
+  const lines = pages[pageIndex].text.split(/\n/)
+  void showPage(
+    pageWin ? lines.slice(pageWin.start, pageWin.end).join('\n') : pages[pageIndex].text,
+  )
 }
 
 // Tries the SAME question again with no new recording, triggered by a

@@ -1,7 +1,7 @@
 import { status } from '../platform/bridge'
 import type { Route } from './app'
 import { chatSessions } from '../features/chat/store'
-import { devAsk } from '../features/chat/tool'
+import { devAsk, devVoiceCommand } from '../features/chat/tool'
 import { probeLongText } from '../platform/textProbe'
 
 // The page half of vite.config.ts's dev-only remote control (G2-71):
@@ -19,6 +19,8 @@ export type DevCommand =
   | { action: 'seedChat'; question: string; answer: string }
   // Asks a question on the glasses as if spoken (needs Jarvis open there).
   | { action: 'glassesAsk'; text: string }
+  // A "Hey Jarvis, go back"-style command as if just heard (G2-150).
+  | { action: 'voiceCommand'; text: string }
   // The long-text test of Settings > Diagnostics, from a script.
   | { action: 'probeText'; kind: 'single' | 'append' }
 
@@ -65,6 +67,9 @@ export function runDevCommand(command: DevCommand, navigate: (route: Route) => v
       return
     case 'glassesAsk':
       void devAsk(command.text).then(() => status('dev: asked on the glasses'))
+      return
+    case 'voiceCommand':
+      status(devVoiceCommand(command.text) ? 'dev: voice command run' : 'dev: not a command')
       return
     case 'seedChat': {
       const session = chatSessions.newSession({
