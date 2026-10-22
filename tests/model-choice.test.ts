@@ -70,6 +70,6 @@ describe('answer labels (G2-97)', () => {
     const { modelLabel } = await import('../src/core/llmProviders')
     expect(modelLabel('gemini', 'gemini-3.6-flash')).toBe('Gemini 3.6 Flash')
     expect(modelLabel('claude', 'claude-haiku-5-5')).toBe('Claude Haiku 5.5')
-    expect(modelLabel('local', 'jarvis-llama')).toBe('Jarvis Llama 3B')
+    expect(modelLabel('local', 'llama3.2:3b')).toBe('Llama 3.2 3B')
   })
 })

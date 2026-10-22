@@ -8,7 +8,7 @@ const QUESTIONS = [
   'What should I eat for dinner tonight?',
   'Write a JavaScript function that reverses a string.',
 ]
-for (const model of ['jarvis-llama', 'qwen2.5:3b', 'llama3.2:3b']) {
+for (const model of ['qwen2.5:3b', 'llama3.2:3b']) {
   for (const q of QUESTIONS) {
     const began = Date.now()
     const reply = await askModel(
