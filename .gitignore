@@ -27,3 +27,6 @@ pr-body.md
 issue-comment.md
 pr-comment.md
 reply.md
+
+# Personal Settings defaults (resume, employer), see src/shared/ownerDefaults.ts
+src/defaults/owner.local.json

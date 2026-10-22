@@ -4,6 +4,7 @@ import {
   DEFAULT_LOCAL_INSTRUCTIONS,
   LOCAL_INSTRUCTIONS_MAX_CHARS,
   getLocalInstructions,
+  resetLocalInstructions,
   setLocalInstructions,
 } from '../../core/localInstructions'
 import {
@@ -20,7 +21,13 @@ import {
 import { isWakeWordEnabled, setWakeWordEnabled } from '../../core/wakeSettings'
 import { CODE_SIZES, getCodeSize, loadCodeSize, setCodeSize } from '../../core/codeSize'
 import { isWakeListening, wakeDescription } from '../../core/wakeListener'
-import { MODES, MODE_PRESET_MAX_CHARS, getModePreset, setModePreset } from '../../core/modes'
+import {
+  MODES,
+  MODE_PRESET_MAX_CHARS,
+  getModePreset,
+  resetModePreset,
+  setModePreset,
+} from '../../core/modes'
 import {
   TRANSCRIBERS,
   getTranscriber,
@@ -322,6 +329,8 @@ function textCard(
   max: number,
   read: () => Promise<string | null>,
   write: (text: string) => Promise<boolean>,
+  // When given, a Reset to default button (G2-145).
+  reset?: () => Promise<boolean>,
 ): HTMLElement {
   const area = h('textarea', {
     class: 'field',
@@ -336,11 +345,20 @@ function textCard(
     const ok = await write(area.value.trim())
     toast(ok ? `${heading} saved` : 'Save failed - try again')
   })
+  const restore = reset ? h('button', { class: 'button' }, 'Reset to default') : null
+  restore?.addEventListener('click', async () => {
+    if (!reset || !(await reset())) {
+      toast('Reset failed - try again')
+      return
+    }
+    area.value = (await read()) ?? ''
+    toast(`${heading} reset to default`)
+  })
   return card(
     h('h2', {}, heading),
     h('p', { class: 'caption', style: 'margin: 0 0 12px' }, explain),
     area,
-    h('div', { class: 'button-row' }, save),
+    h('div', { class: 'button-row' }, save, restore),
   )
 }
 
@@ -402,11 +420,12 @@ export function settingsView(ctx: AppContext): Page {
     aiCard(ctx),
     textCard(
       'Instructions for Jarvis',
-      'Like a CLAUDE.md: who you are and how you want answers. Sent with every question to whichever AI answers. Edit it freely; clear the box to go back to the default.',
+      'Like a CLAUDE.md: who you are and how you want answers. Sent with every question to whichever AI answers. Edit it freely. Save an empty box to send no instructions; Reset to default brings the starting text back.',
       DEFAULT_LOCAL_INSTRUCTIONS,
       LOCAL_INSTRUCTIONS_MAX_CHARS,
       getLocalInstructions,
       setLocalInstructions,
+      resetLocalInstructions,
     ),
     textCard(
       'About you',
@@ -422,11 +441,12 @@ export function settingsView(ctx: AppContext): Page {
     ...MODES.filter(m => m.id !== 'auto').map(m =>
       textCard(
         `${m.label} mode`,
-        `Added to the instructions above in a "New chat: ${m.label}" chat. Clear the box to go back to the default.`,
+        `Added to the instructions above in a "New chat: ${m.label}" chat. Save an empty box to turn it off; Reset to default brings the starting text back.`,
         m.preset,
         MODE_PRESET_MAX_CHARS,
         () => getModePreset(m.id),
         text => setModePreset(m.id, text),
+        () => resetModePreset(m.id),
       ),
     ),
     label('Help'),

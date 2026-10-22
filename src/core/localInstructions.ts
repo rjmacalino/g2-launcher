@@ -1,4 +1,4 @@
-import { bridge, status } from '../platform/bridge'
+import { readEditable, resetEditable, writeEditable } from './editableText'
 import { DEFAULT_LOCAL_INSTRUCTIONS } from '../shared/localBrief'
 
 export { DEFAULT_LOCAL_INSTRUCTIONS }
@@ -13,25 +13,19 @@ const STORAGE_KEY = 'llm.local.instructions'
 
 export const LOCAL_INSTRUCTIONS_MAX_CHARS = 5000
 
-// What the wearer saved, or null when nothing is saved.
-export async function getSavedLocalInstructions(): Promise<string | null> {
-  try {
-    const saved = (await bridge.getLocalStorage(STORAGE_KEY)).trim()
-    return saved || null
-  } catch {
-    return null
-  }
-}
-
-export async function getLocalInstructions(): Promise<string> {
-  return (await getSavedLocalInstructions()) ?? DEFAULT_LOCAL_INSTRUCTIONS
+export function getLocalInstructions(): Promise<string> {
+  return readEditable(STORAGE_KEY, DEFAULT_LOCAL_INSTRUCTIONS)
 }
 
 export function setLocalInstructions(text: string): Promise<boolean> {
-  return bridge
-    .setLocalStorage(STORAGE_KEY, text.trim().slice(0, LOCAL_INSTRUCTIONS_MAX_CHARS))
-    .then(ok => {
-      if (!ok) status('Failed to save the instructions for your PC')
-      return ok
-    })
+  return writeEditable(
+    STORAGE_KEY,
+    text,
+    LOCAL_INSTRUCTIONS_MAX_CHARS,
+    'the instructions for Jarvis',
+  )
+}
+
+export function resetLocalInstructions(): Promise<boolean> {
+  return resetEditable(STORAGE_KEY, 'the instructions for Jarvis')
 }

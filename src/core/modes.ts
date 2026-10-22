@@ -1,10 +1,10 @@
-import { bridge, status } from '../platform/bridge'
+import { readEditable, resetEditable, writeEditable } from './editableText'
 
 // Jarvis's modes (G2-139): one assistant, with a style picked per chat.
 // A mode is only extra instructions, sent after "Instructions for Jarvis"
 // (core/localInstructions.ts), which every mode shares. Auto adds nothing:
 // a capable model adapts to the topic by itself. Each preset is the
-// wearer's to edit in Settings; clearing one goes back to its default here.
+// wearer's to edit, delete or reset in Settings (core/editableText.ts).
 
 import { MODES, modeOf, type ModeId } from '../shared/modePresets'
 
@@ -15,18 +15,15 @@ export const MODE_PRESET_MAX_CHARS = 5000
 
 const key = (id: ModeId) => `jarvis.mode.${id}`
 
-// The preset as the wearer saved it, or the default.
-export async function getModePreset(id: ModeId): Promise<string> {
-  try {
-    const saved = (await bridge.getLocalStorage(key(id))).trim()
-    return saved || modeOf(id).preset
-  } catch {
-    return modeOf(id).preset
-  }
+// The preset as the wearer saved it, deleted (empty), or the default.
+export function getModePreset(id: ModeId): Promise<string> {
+  return readEditable(key(id), modeOf(id).preset)
 }
 
-export async function setModePreset(id: ModeId, text: string): Promise<boolean> {
-  const ok = await bridge.setLocalStorage(key(id), text.trim().slice(0, MODE_PRESET_MAX_CHARS))
-  if (!ok) status(`Failed to save the ${modeOf(id).label} mode`)
-  return ok
+export function setModePreset(id: ModeId, text: string): Promise<boolean> {
+  return writeEditable(key(id), text, MODE_PRESET_MAX_CHARS, `the ${modeOf(id).label} mode`)
+}
+
+export function resetModePreset(id: ModeId): Promise<boolean> {
+  return resetEditable(key(id), `the ${modeOf(id).label} mode`)
 }

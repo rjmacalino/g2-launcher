@@ -1,3 +1,4 @@
+import defaults from '../defaults/instructions.json'
 // What every AI provider behind Jarvis shares (G2-68): the conversation
 // shape, the options a request takes, the result, and the system prompt
 // assembled from them. Gemini (core/gemini.ts), DeepSeek
@@ -8,30 +9,12 @@
 // they are full answers, not glance-length ones - per direct request. The
 // wearer calls the assistant Jarvis and the model answers as Jarvis; the
 // provider is only what is underneath.
-const JARVIS_IDENTITY =
-  'You are Jarvis, a conversational assistant on smart glasses with a ' +
-  'small text display the wearer pages through.'
-
-// Interview mode (G2-140): the answer is not Jarvis talking but the wearer,
-// who reads it aloud. With Jarvis's identity first, "tell me about
-// yourself" was answered about the AI, whatever the mode's preset said.
-const WEARER_IDENTITY =
-  'You write, word for word, what the wearer of smart glasses will say ' +
-  'next in an interview: they read your reply off their glasses and say it ' +
-  'aloud as their own. Every question is put to the wearer, so "you" and ' +
-  '"yourself" always mean the wearer, never an AI. Never mention being an ' +
-  'AI, an assistant or Jarvis.'
-
-export const DISPLAY_RULES =
-  'Answer fully and ' +
-  'naturally, the way you would in any chat conversation - do not cut ' +
-  'yourself short to save space. Finish your last sentence rather than ' +
-  'trailing off. Plain text only, no markdown, no bullet lists. When the ' +
-  'answer needs code, write it for a narrow screen: lines under 40 ' +
-  'characters where possible, two-space indents, no code fences, the code ' +
-  'first. Questions can be long, such as a whole programming problem: read ' +
-  'all of it and follow its exact requirements, input and output, and ' +
-  'examples, and make the code correct above all.'
+// Jarvis's identity and display rules, and the wearer's identity for
+// Interview mode (G2-140). The text itself lives in
+// src/defaults/instructions.json (G2-146): no prompt text in the code.
+const JARVIS_IDENTITY = defaults.jarvisIdentity
+const WEARER_IDENTITY = defaults.wearerIdentity
+export const DISPLAY_RULES = defaults.displayRules
 
 export const CHAT_INSTRUCTION = `${JARVIS_IDENTITY} ${DISPLAY_RULES}`
 export const WEARER_INSTRUCTION = `${WEARER_IDENTITY} ${DISPLAY_RULES}`
@@ -136,16 +119,7 @@ export type ConverseOptions = {
 // leave the edges to the model's guesswork; these are the ones that matter
 // on a voice assistant: acting only when actually asked, what "remind me"
 // can and cannot mean today, and not inventing a near-duplicate list.
-const ACTIONS_INSTRUCTION =
-  "You can act on the wearer's own checklists (notes) and their one " +
-  'countdown timer with the functions provided. Call a function only when ' +
-  'the wearer asks you to do that thing; a question about timers or lists ' +
-  'in general is answered normally. "Remind me to X" means adding X to the ' +
-  'list named Reminders - there are no timed reminders, so never promise ' +
-  "one. When the wearer's words clearly mean one of their existing lists " +
-  "(groceries for Shopping), use that list's exact name. A new list gets " +
-  'a short title-case name without the word "list". Keep list items short. ' +
-  'Several things asked at once are several function calls.'
+const ACTIONS_INSTRUCTION = defaults.actions
 
 // The system prompt every provider sends, from the same options.
 export function buildSystemPrompt({
