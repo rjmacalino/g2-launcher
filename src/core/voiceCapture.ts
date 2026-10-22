@@ -1,4 +1,8 @@
 import { transcribe } from './whisper'
+import { status } from '../platform/bridge'
+import { openLiveTranscriber, type LiveTranscriber } from './liveTranscribe'
+import { getTranscriber } from './transcriberSettings'
+import { getProviderKey } from './llmSettings'
 import { openMic } from './mic'
 import { SAMPLE_RATE, concat, toFloat32 } from '../shared/pcm'
 import { isSilenceHallucination, stripNonSpeech, stripWakePhrase } from '../shared/transcript'
@@ -50,6 +54,9 @@ export type CaptureOptions = {
   preroll?: readonly Uint8Array[]
   onEndpoint?: (decision: Exclude<EndpointDecision, 'listening'>) => void
   stripWake?: boolean
+  // Live captions (G2-136): the words so far, while the wearer speaks.
+  // Only with the Gemini Live transcriber.
+  onCaption?: (text: string) => void
 }
 
 // Driven by the caller's own long-press-to-start / double-press-to-end
@@ -90,6 +97,26 @@ let endpointer: ReturnType<typeof createEndpointer> | null = null
 let captureToken = 0
 // How the end-of-speech detector ended the last recording, if it did.
 let endpointDecision: EndpointDecision | null = null
+// Gemini Live during the recording (G2-136): the stream, its finished
+// stretches of speech and the words of the current one. The transcript is
+// then ready when the wearer taps, instead of starting Whisper only then.
+let live: LiveTranscriber | null = null
+let liveFinals: string[] = []
+let liveInterim = ''
+
+function liveText(): string {
+  return [...liveFinals, liveInterim].filter(Boolean).join(' ').trim()
+}
+
+// The Gemini key when Gemini Live is the chosen transcriber, else null.
+async function liveKey(): Promise<string | null> {
+  try {
+    if ((await getTranscriber()) !== 'gemini-live') return null
+    return await getProviderKey('gemini')
+  } catch {
+    return null
+  }
+}
 
 function levelsOf(parts: readonly Uint8Array[]): number[] {
   return parts.map(part => rmsLevel(toFloat32(part)))
@@ -118,9 +145,32 @@ export async function start(
     : null
   let endpointReported = false
   endpointDecision = null
+  live?.close()
+  live = null
+  liveFinals = []
+  liveInterim = ''
+  const key = await liveKey()
+  if (myCapture !== captureToken) return false
+  if (key) {
+    const caption = captureOptions.onCaption
+    live = openLiveTranscriber(key, {
+      onInterim: text => {
+        liveInterim = text
+        caption?.(liveText())
+      },
+      onFinal: text => {
+        liveFinals.push(text)
+        liveInterim = ''
+        caption?.(liveText())
+      },
+      onStatus: text => status(text),
+    })
+    for (const part of chunks) live.push(part)
+  }
   const release = await openMic(pcm => {
     if (myCapture !== captureToken) return
     chunks.push(pcm)
+    live?.push(pcm)
     if (!endpointer || !onEndpoint || endpointReported) return
     const decision = endpointer.push(rmsLevel(toFloat32(pcm)))
     if (decision === 'listening') return
@@ -157,6 +207,9 @@ function teardownCapture() {
 // transcription also saves the wait for it.
 const SILENCE_PEAK = 0.001
 
+// After the tap, how long to wait for Gemini Live's last words.
+const LIVE_FINISH_MS = 1500
+
 function peakLevel(samples: Float32Array): number {
   let peak = 0
   for (let i = 0; i < samples.length; i++) {
@@ -169,15 +222,29 @@ function peakLevel(samples: Float32Array): number {
 // Ends capture and runs one transcription over everything recorded.
 export async function stop(): Promise<VoiceResult> {
   teardownCapture()
-  if (chunks.length === 0) return { kind: 'error', message: 'no audio captured' }
+  const stream = live
+  live = null
+  if (chunks.length === 0) {
+    stream?.close()
+    return { kind: 'error', message: 'no audio captured' }
+  }
   try {
     const audio = toFloat32(concat(chunks))
     const peak = peakLevel(audio)
     if (peak < SILENCE_PEAK) {
+      stream?.close()
       return { kind: 'error', message: 'no sound picked up' }
     }
     const transcribeStart = performance.now()
-    const heard = stripNonSpeech(await transcribe(audio))
+    let heard = ''
+    if (stream) {
+      // The words are already written; only the last ones are still on
+      // their way. Whisper is the fallback if the stream heard nothing.
+      await stream.finish(LIVE_FINISH_MS)
+      heard = stripNonSpeech(liveText())
+      status(`Jarvis: Gemini Live heard ${heard.length} chars`)
+    }
+    if (!heard) heard = stripNonSpeech(await transcribe(audio))
     const transcribeMs = Math.round(performance.now() - transcribeStart)
     if (!heard || isSilenceHallucination(heard)) {
       return { kind: 'error', message: `heard nothing - audio level ${peak.toFixed(3)}` }
@@ -210,5 +277,7 @@ export async function stop(): Promise<VoiceResult> {
 // result on even if one were computed.
 export function cancel() {
   teardownCapture()
+  live?.close()
+  live = null
   chunks = []
 }

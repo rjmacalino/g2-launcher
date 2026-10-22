@@ -27,6 +27,9 @@ export type LiveTranscriber = {
   close(): void
 }
 
+// The most quiet audio is raised before it is sent (see amplify).
+const MAX_GAIN = 16
+
 // Audio kept while the session is still connecting: 10 s.
 const BACKLOG_BYTES = 320_000
 
@@ -56,6 +59,8 @@ export function openLiveTranscriber(apiKey: string, handlers: LiveHandlers): Liv
   let pendingBytes = 0
   let renewTimer: ReturnType<typeof setTimeout> | null = null
   let flushOnReady: (() => void) | null = null
+  let sentBytes = 0
+  let logged = 0
   // Waiting in finish() for the last final.
   let finalWaiter: (() => void) | null = null
 
@@ -95,6 +100,12 @@ export function openLiveTranscriber(apiKey: string, handlers: LiveHandlers): Liv
         handlers.onStatus?.('Captions: Gemini Live connected')
         flushOnReady?.()
         return
+      }
+      // The first few replies go to the diagnostics log as they came, so a
+      // session that hears nothing shows what the server said instead.
+      if (logged < 3) {
+        logged++
+        handlers.onStatus?.(`Captions: server said ${raw.slice(0, 160)}`)
       }
       const content = message.serverContent
       const interim = content?.interimInputTranscription?.text
@@ -157,6 +168,7 @@ export function openLiveTranscriber(apiKey: string, handlers: LiveHandlers): Liv
         realtimeInput: { audio: { data: base64(chunk), mimeType: 'audio/pcm;rate=16000' } },
       }),
     )
+    sentBytes += chunk.length
   }
   flushOnReady = flush
 
@@ -168,9 +180,38 @@ export function openLiveTranscriber(apiKey: string, handlers: LiveHandlers): Liv
     ws?.close()
   }
 
+  // Automatic gain: Gemini Live hears quiet speech badly (a recording at a
+  // 0.04 peak - what speaker-to-mic gives in the simulator - came back as
+  // three words), while Whisper copes. Each frame is raised towards a 0.5
+  // peak, judged on the loudest of the last couple of seconds so the level
+  // does not pump between words, and never more than MAX_GAIN, so a quiet
+  // room is not blown up into noise.
+  let recentPeak = 0
+
+  function amplify(pcm: Uint8Array): Uint8Array {
+    // A copy: a frame can start at an odd byte offset, which an Int16Array
+    // view cannot.
+    const samples = new Int16Array(pcm.slice(0, pcm.length - (pcm.length % 2)).buffer)
+    let peak = 0
+    for (let i = 0; i < samples.length; i++) {
+      const v = Math.abs(samples[i])
+      if (v > peak) peak = v
+    }
+    // Decays by about half over two seconds of 40 ms frames.
+    recentPeak = Math.max(peak, recentPeak * 0.985)
+    const gain = Math.min(MAX_GAIN, Math.max(1, (0.5 * 32767) / Math.max(1, recentPeak)))
+    if (gain === 1) return pcm
+    const out = new Int16Array(samples.length)
+    for (let i = 0; i < samples.length; i++) {
+      out[i] = Math.max(-32768, Math.min(32767, Math.round(samples[i] * gain)))
+    }
+    return new Uint8Array(out.buffer)
+  }
+
   return {
-    push(pcm: Uint8Array): void {
+    push(raw: Uint8Array): void {
       if (closed) return
+      const pcm = amplify(raw)
       pending.push(pcm)
       pendingBytes += pcm.length
       if (pendingBytes >= CHUNK_BYTES) flush()
@@ -178,6 +219,9 @@ export function openLiveTranscriber(apiKey: string, handlers: LiveHandlers): Liv
     async finish(waitMs: number): Promise<void> {
       if (closed) return
       flush()
+      handlers.onStatus?.(
+        `Captions: sent ${(sentBytes / 32000).toFixed(1)}s of audio${ready ? '' : ' (never connected)'}`,
+      )
       if (ready && socket?.readyState === WebSocket.OPEN) {
         socket.send(JSON.stringify({ realtimeInput: { audioStreamEnd: true } }))
         // The last words come back as a final once the stream has ended.

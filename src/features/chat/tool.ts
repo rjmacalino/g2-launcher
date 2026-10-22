@@ -28,6 +28,8 @@ import {
 } from './viewer'
 import {
   PAGE_INNER_WIDTH,
+  SCREEN_ROWS,
+  wrapLines,
   REBUILD_MAX_CHARS,
   fitsAsText,
   lowerPageLimit,
@@ -844,27 +846,36 @@ async function beginListening() {
   // longer what a tap should resend.
   lastErrorQuestion = null
   pages = []
+  heardSoFar = ''
   const ok = await start(
     () => {
       if (mySession !== sessionToken) return
       finishListening()
     },
-    viaWake
-      ? {
-          preroll: takePreroll(),
-          stripWake: true,
-          // Every ending is transcribed, "no-speech" included: the loudness
-          // check misses quiet speech [LAB-SIM: speaker-to-mic speech at
-          // 2.5x the room level], and a command said in one breath with
-          // "Hey Jarvis" sits in the preroll it never looks at. Whisper is
-          // the real judge; with nothing but "Hey Jarvis" it fails as
-          // 'heard only "Hey Jarvis"'.
-          onEndpoint: () => {
-            if (mySession !== sessionToken || !listening) return
-            void finishListening()
-          },
-        }
-      : {},
+    {
+      // Live captions (G2-136): what Gemini Live has heard so far.
+      onCaption: text => {
+        if (mySession !== sessionToken || !listening) return
+        heardSoFar = text
+        drawListening()
+      },
+      ...(viaWake
+        ? {
+            preroll: takePreroll(),
+            stripWake: true,
+            // Every ending is transcribed, "no-speech" included: the loudness
+            // check misses quiet speech [LAB-SIM: speaker-to-mic speech at
+            // 2.5x the room level], and a command said in one breath with
+            // "Hey Jarvis" sits in the preroll it never looks at. Whisper is
+            // the real judge; with nothing but "Hey Jarvis" it fails as
+            // 'heard only "Hey Jarvis"'.
+            onEndpoint: () => {
+              if (mySession !== sessionToken || !listening) return
+              void finishListening()
+            },
+          }
+        : {}),
+    },
   )
   if (mySession !== sessionToken) return
   if (!ok) {
@@ -879,8 +890,35 @@ async function beginListening() {
   status(viaWake ? 'Jarvis: recording (Hey Jarvis)' : 'Jarvis: recording')
   const hint = viaWake ? '(stops when you do, or tap)' : '(tap when done)'
   startLiveStatus(mySession, (dots, elapsedSeconds) => {
-    setContent(`Listening${dots} (${elapsedSeconds}s)\n\n${hint}`)
+    listenHeader = `Listening${dots} (${elapsedSeconds}s) ${hint}`
+    drawListening(true)
   })
+}
+
+// The listening screen: the counter line, then the live captions (G2-136),
+// only the last rows, so the newest words are always on screen and nothing
+// needs scrolling.
+let heardSoFar = ''
+let listenHeader = ''
+const CAPTION_MIN_GAP_MS = 300
+let lastListenDraw = 0
+let listenDrawTimer: ReturnType<typeof setTimeout> | null = null
+
+function drawListening(now = false): void {
+  const draw = () => {
+    listenDrawTimer = null
+    lastListenDraw = Date.now()
+    if (!listening) return
+    const rows = heardSoFar ? wrapLines(heardSoFar, PAGE_INNER_WIDTH).slice(-(SCREEN_ROWS - 2)) : []
+    void setContent(rows.length > 0 ? `${listenHeader}\n\n${rows.join('\n')}` : listenHeader)
+  }
+  if (now) {
+    if (listenDrawTimer !== null) clearTimeout(listenDrawTimer)
+    draw()
+    return
+  }
+  if (listenDrawTimer !== null) return
+  listenDrawTimer = setTimeout(draw, Math.max(0, lastListenDraw + CAPTION_MIN_GAP_MS - Date.now()))
 }
 
 // Sends currentMessages (already ending with the question to answer - see
