@@ -25,6 +25,8 @@ export type ChatSession = {
   title: string
   messages: ChatMessage[]
   updatedAt: number
+  // The chat's mode (G2-139, core/modes.ts); absent means Auto.
+  mode?: string
 }
 
 function isChatMessage(x: unknown): x is ChatMessage {
@@ -224,8 +226,14 @@ function titleFrom(text: string): string {
 
 // Builds a new session around its first message. No I/O - the caller saves
 // it, so it can start using the session (and its id) immediately.
-function newSession(first: ChatMessage): ChatSession {
-  return { id: newId(), title: titleFrom(first.text), messages: [first], updatedAt: Date.now() }
+function newSession(first: ChatMessage, mode?: string): ChatSession {
+  return {
+    id: newId(),
+    title: titleFrom(first.text),
+    messages: [first],
+    updatedAt: Date.now(),
+    ...(mode && mode !== 'auto' ? { mode } : {}),
+  }
 }
 
 // Inserts or replaces a whole session by id. Waits for the initial load
@@ -235,7 +243,10 @@ function newSession(first: ChatMessage): ChatSession {
 async function save(session: ChatSession): Promise<void> {
   await load()
   const others = (cache ?? []).filter(s => s.id !== session.id)
-  cache = bound([{ ...session, updatedAt: Date.now() }, ...others])
+  // A save that does not mention the mode keeps the one the chat has.
+  const before = (cache ?? []).find(s => s.id === session.id)
+  const mode = session.mode ?? before?.mode
+  cache = bound([{ ...session, ...(mode ? { mode } : {}), updatedAt: Date.now() }, ...others])
   persist()
   notify()
 }

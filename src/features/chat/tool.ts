@@ -1,5 +1,6 @@
 import { getCodeSize } from '../../core/codeSize'
 import { setStatusNote } from '../../core/statusNote'
+import { MODES, modeOf, type ModeId } from '../../core/modes'
 import { positionLabel } from '../../shared/position'
 import { exchangesOf, historyRows } from './exchanges'
 import { questionLine } from '../../shared/questionKeywords'
@@ -298,6 +299,7 @@ function showSession(id: string | null): void {
   if (!session) {
     depth = 'picker'
     currentSessionId = null
+    currentMode = 'auto'
     currentMessages = []
     currentSessionTitle = null
     pickerSessions = sortForPicker(chatSessions.peek() ?? [])
@@ -307,7 +309,17 @@ function showSession(id: string | null): void {
   currentSessionId = session.id
   currentMessages = session.messages
   currentSessionTitle = session.title
+  currentMode = modeOf(session.mode).id
 }
+
+// The chat's mode (G2-139, core/modes.ts): picked with "New chat: ..." in
+// the list, kept with the chat, shown next to the model's name.
+let currentMode: ModeId = 'auto'
+
+function withModeTag(model: string): string {
+  return currentMode === 'auto' ? model : `${modeOf(currentMode).label} - ${model}`
+}
+const NEW_CHAT_ROWS = MODES.map(m => (m.id === 'auto' ? 'New chat' : `New chat: ${m.label}`))
 
 // List containers have a firmware hard limit of 20 items (docs/platform.md).
 // "New chat" is always the first row, leaving 19 for saved sessions - after
@@ -317,7 +329,7 @@ function showSession(id: string | null): void {
 // needed trimming. Only the picker is capped; nothing is deleted, and the
 // companion page's own chat-view (see companion/main.ts) has no such limit
 // and still shows every session.
-const PICKER_MAX_SESSIONS = 19
+const PICKER_MAX_SESSIONS = 20 - MODES.length
 
 // Shorter than the 64-character list-item limit on purpose. Both open
 // Gemini bugs [HW] - failing to open, and "Yes" on the leave prompt not
@@ -356,6 +368,7 @@ async function refresh(): Promise<void> {
   depth = mode === 'picker' ? 'picker' : 'conversation'
   listenWhenReady = mode !== 'picker'
   currentSessionId = null
+  currentMode = 'auto'
   currentMessages = []
   currentSessionTitle = null
   lastErrorQuestion = null
@@ -708,6 +721,7 @@ function leaveToPicker(): void {
   syncPickerFromCurrent()
   depth = 'picker'
   currentSessionId = null
+  currentMode = 'auto'
   currentMessages = []
   currentSessionTitle = null
   lastErrorQuestion = null
@@ -1213,6 +1227,7 @@ async function askGeminiNow(question: string) {
   status(`Jarvis: asking ${describeModel(llm)}`)
   // The request itself is shared with the phone (assistant.ts, G2-70).
   const reply = await askAssistant(llm, messagesAtAsk, targetSessionId, {
+    mode: currentMode,
     onText,
     onRetry: (attempt, max) => {
       attemptsMade = attempt
@@ -1265,7 +1280,7 @@ async function askGeminiNow(question: string) {
     timestamp: Date.now(),
     ...(reply.kind === 'answer' && reply.sources ? { sources: reply.sources } : {}),
     ...(reply.kind === 'answer'
-      ? { model: modelLabel(llm.provider, reply.model ?? llm.model) }
+      ? { model: withModeTag(modelLabel(llm.provider, reply.model ?? llm.model)) }
       : {}),
   }
 
@@ -1278,6 +1293,7 @@ async function askGeminiNow(question: string) {
     void chatSessions.remove(targetSessionId)
     if (!stillRelevant()) return
     currentSessionId = null
+    currentMode = 'auto'
     currentSessionTitle = null
     currentMessages = []
     showCommandResult(messagesAtAsk[0], answer)
@@ -1403,7 +1419,7 @@ export async function finishListening() {
     // storage write here before asking Gemini, which is exactly the kind of
     // wait a slow or stuck host read turned into a frozen screen.
     if (currentSessionId === null) {
-      const created = chatSessions.newSession(question)
+      const created = chatSessions.newSession(question, currentMode)
       currentSessionId = created.id
       currentSessionTitle = created.title
       currentMessages = created.messages
@@ -1553,7 +1569,7 @@ export const chatTool: Tool = {
   listItems: () =>
     depth === 'history'
       ? historyRows(exchangesOf(currentMessages)).map(r => r.label)
-      : ['New chat', ...pickerSessions.map(s => pickerTitle(s.title))],
+      : [...NEW_CHAT_ROWS, ...pickerSessions.map(s => pickerTitle(s.title))],
   onListSelect: index => {
     if (depth === 'history') {
       const exchanges = exchangesOf(currentMessages)
@@ -1567,17 +1583,19 @@ export const chatTool: Tool = {
     }
     if (depth !== 'picker') return
     focus = null
-    listenWhenReady = index === 0
-    if (index === 0) {
+    listenWhenReady = index < NEW_CHAT_ROWS.length
+    if (index < NEW_CHAT_ROWS.length) {
       currentSessionId = null
       currentMessages = []
       currentSessionTitle = null
+      currentMode = MODES[index].id
     } else {
-      const picked = pickerSessions[index - 1]
+      const picked = pickerSessions[index - NEW_CHAT_ROWS.length]
       if (!picked) return
       currentSessionId = picked.id
       currentMessages = picked.messages
       currentSessionTitle = picked.title
+      currentMode = modeOf(picked.mode).id
     }
     depth = 'conversation'
     quickAsk = false
@@ -1647,6 +1665,7 @@ export const chatTool: Tool = {
     syncPickerFromCurrent()
     depth = 'picker'
     currentSessionId = null
+    currentMode = 'auto'
     currentMessages = []
     currentSessionTitle = null
     lastErrorQuestion = null

@@ -20,6 +20,7 @@ import {
 import { isWakeWordEnabled, setWakeWordEnabled } from '../../core/wakeSettings'
 import { CODE_SIZES, getCodeSize, loadCodeSize, setCodeSize } from '../../core/codeSize'
 import { isWakeListening, wakeDescription } from '../../core/wakeListener'
+import { MODES, MODE_PRESET_MAX_CHARS, getModePreset, setModePreset } from '../../core/modes'
 import {
   TRANSCRIBERS,
   getTranscriber,
@@ -416,6 +417,18 @@ export function settingsView(ctx: AppContext): Page {
       setAboutMe,
     ),
     transcriberCard(),
+    // One editable preset per mode (G2-139); picked per chat on the glasses
+    // with "New chat: Interview" and so on. Auto has none.
+    ...MODES.filter(m => m.id !== 'auto').map(m =>
+      textCard(
+        `${m.label} mode`,
+        `Added to the instructions above in a "New chat: ${m.label}" chat. Clear the box to go back to the default.`,
+        m.preset,
+        MODE_PRESET_MAX_CHARS,
+        () => getModePreset(m.id),
+        text => setModePreset(m.id, text),
+      ),
+    ),
     label('Help'),
     diagnostics.el,
   )

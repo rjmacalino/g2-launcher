@@ -6,6 +6,7 @@ import {
 import { dispatchVoiceCommand } from '../../core/voiceDispatch'
 import { getAboutMe } from '../../core/geminiSettings'
 import { DEFAULT_LOCAL_INSTRUCTIONS, getLocalInstructions } from '../../core/localInstructions'
+import { getModePreset, modeOf } from '../../core/modes'
 import { askModel } from '../../core/llm'
 import type { LlmResult, LlmTurn } from '../../core/llmTypes'
 import { getLlmConfig, providerInfo, type LlmConfig } from '../../core/llmSettings'
@@ -54,6 +55,8 @@ export type AskHooks = {
   timeoutMs?: number
   onText?: (textSoFar: string) => void
   onRetry?: (attempt: number, maxAttempts: number) => void
+  // The mode when the chat is not saved yet (G2-139); else the chat's own.
+  mode?: string
 }
 
 // One request: the conversation so far (ending with the question) to the
@@ -62,7 +65,7 @@ export async function askAssistant(
   llm: LlmConfig,
   history: readonly ChatMessage[],
   sessionId: string | null,
-  { onText, onRetry, timeoutMs = ANSWER_TIMEOUT_MS }: AskHooks = {},
+  { onText, onRetry, timeoutMs = ANSWER_TIMEOUT_MS, mode }: AskHooks = {},
 ): Promise<LlmResult> {
   // What Jarvis can do, not just answer (notes, timer - registered by
   // app/main.ts). The context is best effort and time-limited, so it never
@@ -75,6 +78,11 @@ export async function askAssistant(
     // who they are and how answers should be live in Settings, not here.
     within(getLocalInstructions(), ABOUT_ME_TIMEOUT_MS, DEFAULT_LOCAL_INSTRUCTIONS),
   ])
+  // The chat's mode adds its own instructions after the shared ones (G2-139).
+  const session = sessionId ? chatSessions.peek()?.find(s => s.id === sessionId) : undefined
+  const modeId = modeOf(mode ?? session?.mode).id
+  const preset = await within(getModePreset(modeId), ABOUT_ME_TIMEOUT_MS, modeOf(modeId).preset)
+  const fullGuide = [guide, preset].filter(Boolean).join('\n\n')
   let timedOut = false
   const answer = askModel(llm, toTurns(history), {
     onText: onText && (text => !timedOut && onText(text)),
@@ -86,7 +94,7 @@ export async function askAssistant(
     functions: actions.map(a => a.declaration),
     actionContext,
     aboutMe,
-    guide,
+    guide: fullGuide,
     // Questions about now - news, scores, prices, opening hours - need the
     // web; the model decides when (G2-76).
     webSearch: true,
