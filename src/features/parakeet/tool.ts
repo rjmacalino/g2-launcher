@@ -13,6 +13,9 @@ import { getAboutMe } from '../../core/geminiSettings'
 import { askModel } from '../../core/llm'
 import { getLlmConfig, type LlmConfig } from '../../core/llmSettings'
 import { requestRebuild } from '../../core/rebuild'
+import { openLiveTranscriber, type LiveTranscriber } from '../../core/liveTranscribe'
+import { getTranscriber, type Transcriber } from '../../core/transcriberSettings'
+import { getProviderKey } from '../../core/llmSettings'
 import { setStatusNote } from '../../core/statusNote'
 import {
   PAGE_INNER_WIDTH,
@@ -75,6 +78,11 @@ let profile = ''
 let asking = false
 // How many heard lines the model has already been asked about.
 let handled = 0
+// Gemini Live captions (G2-134): the key when that transcriber is chosen,
+// the open stream while listening, and the words of what is being said now.
+let liveKey: string | null = null
+let live: LiveTranscriber | null = null
+let interim = ''
 
 // Oldest first; the list shows them the other way round.
 let answered: Answered[] = []
@@ -187,7 +195,9 @@ function scheduleAsk(mySession: number): void {
     // Still being spoken or written down: wait for the end of it - but not
     // for ever. In a noisy room it is never quiet, and Parakeet sat on
     // "Listening for a question..." through five questions (G2-133).
-    const busy = transcribing || waiting.length > 0 || segmenter?.level().speaking
+    const busy = live
+      ? interim !== ''
+      : transcribing || waiting.length > 0 || segmenter?.level().speaking
     if (busy && Date.now() - waitingSince < MAX_WAIT_FOR_QUIET_MS) {
       scheduleAsk(mySession)
       return
@@ -207,10 +217,7 @@ function transcribeNext(mySession: number): void {
       if (mySession !== session) return
       const text = stripNonSpeech(raw)
       if (!text || isSilenceHallucination(text)) return
-      const line = { speaker: segment.speaker, text, at: segment.endedAt }
-      lines.push(line)
-      showCaptions()
-      if (triggersAnswer(line)) scheduleAsk(mySession)
+      addLine({ speaker: segment.speaker, text, at: segment.endedAt }, mySession)
     })
     .catch(e => status(`Parakeet: transcription failed (${e instanceof Error ? e.message : e})`))
     .finally(() => {
@@ -222,10 +229,15 @@ function transcribeNext(mySession: number): void {
 // Dev-only (companion/devControl.ts): a line as if heard and transcribed,
 // so the simulator, which has no conversation to hear, can test the rest.
 export function devHear(speaker: string, text: string): void {
-  const line = { speaker, text, at: Date.now() }
+  addLine({ speaker, text, at: Date.now() }, session)
+}
+
+// A finished stretch of speech, from either transcriber.
+function addLine(line: HeardLine, mySession: number): void {
+  if (mySession !== session) return
   lines.push(line)
   showCaptions()
-  if (triggersAnswer(line)) scheduleAsk(session)
+  if (triggersAnswer(line)) scheduleAsk(mySession)
 }
 
 function onSegment(segment: Segment, mySession: number): void {
@@ -236,7 +248,12 @@ function onSegment(segment: Segment, mySession: number): void {
 
 function listen(mySession: number): Promise<(() => void) | null> {
   return openMic((pcm, speaker) => {
-    if (mySession !== session || !segmenter) return
+    if (mySession !== session) return
+    if (live) {
+      live.push(pcm)
+      return
+    }
+    if (!segmenter) return
     const segment = segmenter.push(pcm, rmsLevel(toFloat32(pcm)), speaker, Date.now())
     if (segment) onSegment(segment, mySession)
   })
@@ -251,13 +268,30 @@ async function setListening(on: boolean): Promise<void> {
     releaseMic = null
     segmenter = null
     waiting = []
+    live?.close()
+    live = null
+    interim = ''
     if (askTimer !== null) clearTimeout(askTimer)
     askTimer = null
     waitingSince = 0
     return
   }
   if (releaseMic) return
-  segmenter = createSegmenter()
+  if (liveKey) {
+    live = openLiveTranscriber(liveKey, {
+      onStatus: status,
+      onInterim: text => {
+        interim = text
+        showCaptions()
+      },
+      onFinal: text => {
+        interim = ''
+        addLine({ speaker: 'unknown', text, at: Date.now() }, mySession)
+      },
+    })
+  } else {
+    segmenter = createSegmenter()
+  }
   const release = await listen(mySession)
   if (mySession !== session) {
     release?.()
@@ -282,10 +316,26 @@ async function start(): Promise<void> {
   handled = 0
   answered = []
   reading = null
-  ;[llm, aboutMe, profile] = await Promise.all([getLlmConfig('phone'), getAboutMe(), getProfile()])
+  let transcriber: Transcriber
+  let geminiKey: string | null
+  ;[llm, aboutMe, profile, transcriber, geminiKey] = await Promise.all([
+    getLlmConfig('phone'),
+    getAboutMe(),
+    getProfile(),
+    getTranscriber(),
+    getProviderKey('gemini'),
+  ])
   if (mySession !== session) return
+  liveKey = transcriber === 'gemini-live' ? geminiKey : null
+  if (transcriber === 'gemini-live' && !geminiKey) {
+    status('Parakeet: Gemini Live needs a Gemini key - using Whisper')
+  }
   await setListening(true)
-  if (releaseMic) status(`Parakeet: listening (Whisper via ${engineDescription()})`)
+  if (releaseMic) {
+    status(
+      `Parakeet: listening (${liveKey ? 'Gemini Live' : `Whisper via ${engineDescription()}`})`,
+    )
+  }
   updateNote()
 }
 
@@ -301,15 +351,30 @@ function stop(): void {
 // Live captions over the list (G2-133): what was heard, newest first, so the
 // wearer can see whether the questions are being heard right.
 function captions(): string {
-  const rows: string[] = []
+  const rows: string[] = interim
+    ? wrapLines(interim, PAGE_INNER_WIDTH).slice(-LIST_HEADER_ROWS)
+    : []
   for (let i = lines.length - 1; i >= 0 && rows.length < LIST_HEADER_ROWS; i--) {
     rows.push(...wrapLines(lines[i].text, PAGE_INNER_WIDTH))
   }
   return rows.slice(0, LIST_HEADER_ROWS).join('\n') || '(live captions appear here)'
 }
 
+// Interim words arrive several times a second; the glasses get at most a
+// few updates a second, the newest words always included.
+const CAPTION_MIN_GAP_MS = 300
+let captionTimer: ReturnType<typeof setTimeout> | null = null
+let lastCaptionAt = 0
+
 function showCaptions(): void {
-  if (reading === null) void setListHeader(captions())
+  if (reading === null && captionTimer === null) {
+    const wait = Math.max(0, lastCaptionAt + CAPTION_MIN_GAP_MS - Date.now())
+    captionTimer = setTimeout(() => {
+      captionTimer = null
+      lastCaptionAt = Date.now()
+      if (reading === null) void setListHeader(captions())
+    }, wait)
+  }
 }
 
 function listItems(): string[] {

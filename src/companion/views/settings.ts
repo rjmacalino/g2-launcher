@@ -23,6 +23,12 @@ import { CODE_SIZES, getCodeSize, loadCodeSize, setCodeSize } from '../../core/c
 import { isWakeListening, wakeDescription } from '../../core/wakeListener'
 import { getPrepNotes, setPrepNotes, PREP_NOTES_MAX_CHARS } from '../../features/live/settings'
 import { getProfile, setProfile, PROFILE_MAX_CHARS } from '../../features/parakeet/settings'
+import {
+  TRANSCRIBERS,
+  getTranscriber,
+  setTranscriber,
+  type Transcriber,
+} from '../../core/transcriberSettings'
 import type { AppContext, Page } from '../app'
 import { h, icon, toast } from '../dom'
 import { probeLongText } from '../../platform/textProbe'
@@ -158,6 +164,28 @@ const JOBS: { purpose: Purpose; title: string; hint: string }[] = [
       ]
     : []),
 ]
+
+// Which speech-to-text Parakeet listens with (G2-134).
+function transcriberCard(): HTMLElement {
+  const select = h(
+    'select',
+    { class: 'field', 'aria-label': 'Parakeet transcriber' },
+    TRANSCRIBERS.map(t => h('option', { value: t.id }, t.label)),
+  ) as HTMLSelectElement
+  void getTranscriber().then(choice => (select.value = choice))
+  select.addEventListener('change', async () => {
+    if (await setTranscriber(select.value as Transcriber)) toast('Transcriber saved')
+  })
+  return card(
+    h('h2', {}, 'Parakeet: transcriber'),
+    h(
+      'p',
+      { class: 'caption', style: 'margin: 4px 0 8px' },
+      'How Parakeet turns speech into text. Gemini Live shows words as they are spoken and is free on the Gemini free tier. Whisper works offline on this phone but runs a few seconds behind. Applies the next time you open Parakeet.',
+    ),
+    select,
+  )
+}
 
 // One job's model, from the providers there is a key for (G2-77).
 async function jobPicker(
@@ -408,6 +436,7 @@ export function settingsView(ctx: AppContext): Page {
       getProfile,
       setProfile,
     ),
+    transcriberCard(),
     WINGMAN_ENABLED
       ? textCard(
           'Wingman prep notes',

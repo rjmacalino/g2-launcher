@@ -2,7 +2,7 @@
   "package_id": "com.rjmacalino.g2launcher",
   "edition": "202601",
   "name": "G2 Launcher",
-  "version": "0.1.36",
+  "version": "0.1.37",
   "min_sdk_version": "0.0.15",
   "entrypoint": "index.html",
   "permissions": [
@@ -12,13 +12,14 @@
     },
     {
       "name": "network",
-      "desc": "Gets the weather forecast, downloads the speech recognition model once, and, only if you set one up, sends what you ask Jarvis to the AI you choose: Gemini, DeepSeek or Claude with your own key, or a model on your own computer.",
+      "desc": "Gets the weather forecast, streams live captions to Gemini if you choose it, downloads the speech recognition model once, and, only if you set one up, sends what you ask Jarvis to the AI you choose: Gemini, DeepSeek or Claude with your own key, or a model on your own computer.",
       "whitelist": [
         "https://api.open-meteo.com",
         "https://huggingface.co",
         "https://cdn-lfs.huggingface.co",
         "https://cdn-lfs-us-1.huggingface.co",
         "https://generativelanguage.googleapis.com",
+        "wss://generativelanguage.googleapis.com",
         "https://api.deepseek.com",
         "https://api.anthropic.com",
         "http://192.168.1.200:11434",
@@ -28,7 +29,7 @@
     },
     {
       "name": "g2-microphone",
-      "desc": "While the app is open, listens on the glasses microphone for \"Hey Jarvis\" (can be turned off) and records what you say to Jarvis. Listening happens on your phone; audio is never stored."
+      "desc": "While the app is open, listens on the glasses microphone for \"Hey Jarvis\" (can be turned off) and records what you say to Jarvis, and, while Parakeet is open, hears the conversation for captions and answers. Listening happens on your phone; audio is never stored."
     }
   ],
   "supported_languages": [
