@@ -5,7 +5,7 @@ import { positionLabel } from '../../shared/position'
 import { exchangesOf, historyRows } from './exchanges'
 import { questionLine } from '../../shared/questionKeywords'
 import { modelLabel } from '../../core/llmProviders'
-import { cancel, start, stop } from '../../core/voiceCapture'
+import { cancel, isLiveTranscribing, start, stop } from '../../core/voiceCapture'
 import { engineDescription } from '../../core/whisper'
 import { takePreroll } from '../../core/wakeListener'
 import { dispatchVoiceCommand } from '../../core/voiceDispatch'
@@ -845,7 +845,7 @@ export function armWakeListen(): void {
 // For the shell's "may Hey Jarvis start something now" check: never on top
 // of a recording, a transcription or a question still being answered.
 export function isBusy(): boolean {
-  return busy()
+  return !canListenNow()
 }
 
 async function beginListening() {
@@ -873,22 +873,16 @@ async function beginListening() {
         heardSoFar = text
         drawListening()
       },
-      ...(viaWake
-        ? {
-            preroll: takePreroll(),
-            stripWake: true,
-            // Every ending is transcribed, "no-speech" included: the loudness
-            // check misses quiet speech [LAB-SIM: speaker-to-mic speech at
-            // 2.5x the room level], and a command said in one breath with
-            // "Hey Jarvis" sits in the preroll it never looks at. Whisper is
-            // the real judge; with nothing but "Hey Jarvis" it fails as
-            // 'heard only "Hey Jarvis"'.
-            onEndpoint: () => {
-              if (mySession !== sessionToken || !listening) return
-              void finishListening()
-            },
-          }
-        : {}),
+      // Every recording ends by itself after a smart pause (G2-149,
+      // shared/endOfTurn.ts): short when the question sounds finished, long
+      // when it trails off. A tap still sends at once. Every ending is
+      // transcribed, "no-speech" included: the loudness check misses quiet
+      // speech [LAB-SIM], and Whisper or Gemini Live is the real judge.
+      onEndpoint: () => {
+        if (mySession !== sessionToken || !listening) return
+        void finishListening()
+      },
+      ...(viaWake ? { preroll: takePreroll(), stripWake: true } : {}),
     },
   )
   if (mySession !== sessionToken) return
@@ -902,7 +896,7 @@ async function beginListening() {
   // on an interruption), so a report of "stuck" says exactly which step
   // it stopped at - see the companion page's status line.
   status(viaWake ? 'Jarvis: recording (Hey Jarvis)' : 'Jarvis: recording')
-  const hint = viaWake ? '(stops when you do, or tap)' : '(tap when done)'
+  const hint = '(pause to send, or tap)'
   startLiveStatus(mySession, (dots, elapsedSeconds) => {
     listenHeader = `Listening${dots} (${elapsedSeconds}s) ${hint}`
     drawListening(true)
@@ -1132,13 +1126,38 @@ function showThinking(question: string): void {
   )
 }
 
+// The request now out, so a follow-up asked over it (G2-149) can wait for
+// its answer before going out itself.
+let answering: Promise<void> | null = null
+
 async function askGemini(question: string) {
   preparing++
+  const run = askGeminiNow(question)
+  answering = run
   try {
-    await askGeminiNow(question)
+    await run
   } finally {
     preparing--
+    if (answering === run) answering = null
   }
+}
+
+// A new question may start: not while recording or transcribing one, but
+// while an answer is still coming it may (G2-149) - "Hey Jarvis" or a long
+// press during an answer asks a follow-up in the same chat.
+function canListenNow(): boolean {
+  return !listening && !transcribing && (preparing === 0 || waitingHere())
+}
+
+// Stops showing the answer being typed so the next question can be
+// recorded. The request keeps going: its answer is still saved to the chat
+// and is part of the follow-up's history.
+function interruptAnswer(): void {
+  if (!waitingHere()) return
+  if (stream) endStream(stream)
+  stopThinking?.()
+  stopThinking = null
+  status('Jarvis: answer continues in the background - listening for a follow-up')
 }
 
 async function askGeminiNow(question: string) {
@@ -1257,7 +1276,7 @@ async function askGeminiNow(question: string) {
   )
 
   if (reply.kind === 'error') {
-    if (!stillRelevant()) return
+    if (!stillRelevant() || listening || transcribing) return
     lastErrorQuestion = question
     const triedNote = attemptsMade > 1 ? ` after ${attemptsMade} tries` : ''
     setContent(
@@ -1314,6 +1333,9 @@ async function askGeminiNow(question: string) {
   })
   if (!stillRelevant()) return
   currentMessages = answeredMessages
+  // A follow-up is being recorded over this answer (G2-149): keep its
+  // screen; the answer is in the chat for when the wearer looks back.
+  if (listening || transcribing) return
   const firstPage = renderConversation()
   if (typed.outcome === 'caught-up' && typed.mode === 'follow') {
     // The typing caught up by itself: the wearer is reading the last lines,
@@ -1361,7 +1383,12 @@ export async function finishListening() {
   // recorded is real, and it tells the wearer roughly how long to expect.
   const recordedSeconds = Math.max(1, Math.round((Date.now() - listeningStartedAt) / 1000))
   status(`Jarvis: transcribing ${recordedSeconds}s of audio`)
-  setContent(`Transcribing ${recordedSeconds}s of speech...\n\n(this can take a moment)`)
+  // With Gemini Live the words are already written: no transcribing wait.
+  setContent(
+    isLiveTranscribing()
+      ? 'Sending...'
+      : `Transcribing ${recordedSeconds}s of speech...\n\n(this can take a moment)`,
+  )
   transcribing = true
   const result = await stop()
   transcribing = false
@@ -1413,6 +1440,17 @@ export async function finishListening() {
     if (depth !== 'conversation' || currentSessionId !== sessionIdBeforeAsking || listening) {
       status('Jarvis: question dropped - the screen changed before asking')
       return
+    }
+
+    // A follow-up asked over an answer still coming (G2-149): that answer
+    // goes into the chat first, so this question's history includes it.
+    if (answering) {
+      setContent('Sending... (the last answer is still arriving)')
+      await answering
+      if (depth !== 'conversation' || currentSessionId !== sessionIdBeforeAsking || listening) {
+        status('Jarvis: question dropped - the screen changed while waiting')
+        return
+      }
     }
 
     // Added in memory right away, no await - the old version awaited a
@@ -1645,9 +1683,10 @@ export const chatTool: Tool = {
       })
       return
     }
-    // Not while this conversation is still recording, transcribing or
-    // waiting on Gemini - see busy().
-    if (depth !== 'conversation' || busy()) return
+    // Not while this conversation is still recording or transcribing; over
+    // an answer still coming, it asks a follow-up (G2-149).
+    if (depth !== 'conversation' || !canListenNow()) return
+    interruptAnswer()
     void beginListening()
   },
   // Confirming "leave" backs up exactly one level, matching what "back"

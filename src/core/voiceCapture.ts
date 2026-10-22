@@ -6,7 +6,8 @@ import { getProviderKey } from './llmSettings'
 import { openMic } from './mic'
 import { SAMPLE_RATE, concat, toFloat32 } from '../shared/pcm'
 import { isSilenceHallucination, stripNonSpeech, stripWakePhrase } from '../shared/transcript'
-import { createEndpointer, endsInSpeech, rmsLevel, type EndpointDecision } from '../shared/endpoint'
+import { endsInSpeech, rmsLevel, type EndpointDecision } from '../shared/endpoint'
+import { createTurnDetector } from '../shared/endOfTurn'
 
 // Browser SpeechRecognition looked available (Lab's presence-check probe
 // constructed it without throwing) but actually using it fails with
@@ -91,7 +92,8 @@ let chunks: Uint8Array[] = []
 let releaseMic: (() => void) | null = null
 let safetyTimer: ReturnType<typeof setTimeout> | null = null
 let options: CaptureOptions = {}
-let endpointer: ReturnType<typeof createEndpointer> | null = null
+// Smart-pause end of the question (G2-149, shared/endOfTurn.ts).
+let endpointer: ReturnType<typeof createTurnDetector> | null = null
 // Bumped by every start and teardown, so audio from a recording that has
 // already ended never reaches the next one's endpointer.
 let captureToken = 0
@@ -103,6 +105,12 @@ let endpointDecision: EndpointDecision | null = null
 let live: LiveTranscriber | null = null
 let liveFinals: string[] = []
 let liveInterim = ''
+
+// Whether the current recording is being written down live (Gemini Live),
+// so the question is ready at once when it ends (G2-149).
+export function isLiveTranscribing(): boolean {
+  return live !== null
+}
 
 function liveText(): string {
   return [...liveFinals, liveInterim].filter(Boolean).join(' ').trim()
@@ -138,7 +146,7 @@ export async function start(
   const onEndpoint = captureOptions.onEndpoint
   const prerollLevels = levelsOf(captureOptions.preroll ?? [])
   endpointer = onEndpoint
-    ? createEndpointer({
+    ? createTurnDetector({
         initialFloor: prerollLevels.length > 0 ? Math.min(...prerollLevels) : undefined,
         alreadySpeaking: endsInSpeech(prerollLevels),
       })
@@ -172,7 +180,8 @@ export async function start(
     chunks.push(pcm)
     live?.push(pcm)
     if (!endpointer || !onEndpoint || endpointReported) return
-    const decision = endpointer.push(rmsLevel(toFloat32(pcm)))
+    // With Gemini Live, what has been said decides how long a pause may be.
+    const decision = endpointer.push(rmsLevel(toFloat32(pcm)), live ? liveText() : null)
     if (decision === 'listening') return
     endpointReported = true
     endpointDecision = decision
