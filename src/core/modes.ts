@@ -11,7 +11,7 @@ import { MODES, modeOf, type ModeId } from '../shared/modePresets'
 export { MODES, modeOf }
 export type { Mode, ModeId } from '../shared/modePresets'
 
-export const MODE_PRESET_MAX_CHARS = 1500
+export const MODE_PRESET_MAX_CHARS = 5000
 
 const key = (id: ModeId) => `jarvis.mode.${id}`
 

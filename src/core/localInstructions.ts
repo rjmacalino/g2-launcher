@@ -11,7 +11,7 @@ export { DEFAULT_LOCAL_INSTRUCTIONS }
 // (hence the names and the storage key, kept so a saved text survives).
 const STORAGE_KEY = 'llm.local.instructions'
 
-export const LOCAL_INSTRUCTIONS_MAX_CHARS = 1500
+export const LOCAL_INSTRUCTIONS_MAX_CHARS = 5000
 
 // What the wearer saved, or null when nothing is saved.
 export async function getSavedLocalInstructions(): Promise<string | null> {
