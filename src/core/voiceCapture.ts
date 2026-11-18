@@ -1,7 +1,14 @@
 import { transcribe } from './whisper'
 import { status } from '../platform/bridge'
-import { openLiveTranscriber, type LiveTranscriber } from './liveTranscribe'
-import { getTranscriber } from './transcriberSettings'
+import { openLiveTranscriber, type LiveHandlers, type LiveTranscriber } from './liveTranscribe'
+import { openDeepgramTranscriber } from './deepgramTranscribe'
+import {
+  TRANSCRIBER_NAMES,
+  getDeepgramKey,
+  getTranscriber,
+  type Transcriber,
+} from './transcriberSettings'
+import defaults from '../defaults/instructions.json'
 import { getProviderKey } from './llmSettings'
 import { openMic } from './mic'
 import { SAMPLE_RATE, concat, toFloat32 } from '../shared/pcm'
@@ -38,6 +45,9 @@ export type VoiceResult =
       peak: number
       audioSeconds: number
       transcribeMs: number
+      // Which engine wrote the transcript: "Gemini Live", "Deepgram",
+      // "Whisper", or "Whisper (fallback)" when the live one heard nothing.
+      engine: string
       // The room's quiet level and the loudest moment as the end-of-speech
       // detector saw them, for tuning it on hardware. Only for recordings
       // that end on silence.
@@ -106,24 +116,52 @@ let live: LiveTranscriber | null = null
 let liveFinals: string[] = []
 let liveInterim = ''
 
-// Whether the current recording is being written down live (Gemini Live),
-// so the question is ready at once when it ends (G2-149).
+// The live engine of the current recording, and whether it is connected.
+let liveEngine: Transcriber | null = null
+let liveConnected = false
+// Chosen, but there was no key for it: Whisper listens instead.
+let missingKeyFor: Transcriber | null = null
+
+// Whether the current recording is being written down live (Gemini Live or
+// Deepgram), so the question is ready at once when it ends (G2-149).
 export function isLiveTranscribing(): boolean {
   return live !== null
+}
+
+// Who is listening right now, for the listening screen (G2-157): the live
+// engine, flagged while it is not connected (Whisper then writes the
+// question after the tap), or Whisper.
+export function listeningEngine(): string {
+  if (live && liveEngine) {
+    return liveConnected
+      ? TRANSCRIBER_NAMES[liveEngine]
+      : `${TRANSCRIBER_NAMES[liveEngine]} (not connected)`
+  }
+  if (missingKeyFor) return `Whisper (no ${TRANSCRIBER_NAMES[missingKeyFor]} key)`
+  return TRANSCRIBER_NAMES.whisper
 }
 
 function liveText(): string {
   return [...liveFinals, liveInterim].filter(Boolean).join(' ').trim()
 }
 
-// The Gemini key when Gemini Live is the chosen transcriber, else null.
-async function liveKey(): Promise<string | null> {
+// The chosen live engine and its key; null for Whisper. A live engine with
+// no key falls back to Whisper and says so (missingKeyFor).
+async function liveChoice(): Promise<{ engine: Transcriber; key: string | null } | null> {
   try {
-    if ((await getTranscriber()) !== 'gemini-live') return null
-    return await getProviderKey('gemini')
+    const engine = await getTranscriber()
+    if (engine === 'gemini-live') return { engine, key: await getProviderKey('gemini') }
+    if (engine === 'deepgram') return { engine, key: await getDeepgramKey() }
+    return null
   } catch {
     return null
   }
+}
+
+function openLive(engine: Transcriber, key: string, handlers: LiveHandlers): LiveTranscriber {
+  return engine === 'deepgram'
+    ? openDeepgramTranscriber(key, defaults.transcriptionTerms, handlers)
+    : openLiveTranscriber(key, handlers)
 }
 
 function levelsOf(parts: readonly Uint8Array[]): number[] {
@@ -157,11 +195,19 @@ export async function start(
   live = null
   liveFinals = []
   liveInterim = ''
-  const key = await liveKey()
+  liveEngine = null
+  liveConnected = false
+  missingKeyFor = null
+  const choice = await liveChoice()
   if (myCapture !== captureToken) return false
-  if (key) {
+  if (choice && !choice.key) missingKeyFor = choice.engine
+  if (choice?.key) {
     const caption = captureOptions.onCaption
-    live = openLiveTranscriber(key, {
+    liveEngine = choice.engine
+    live = openLive(choice.engine, choice.key, {
+      onConnected: connected => {
+        if (myCapture === captureToken) liveConnected = connected
+      },
       onInterim: text => {
         liveInterim = text
         caption?.(liveText())
@@ -258,12 +304,16 @@ export async function stop(): Promise<VoiceResult> {
     }
     const transcribeStart = performance.now()
     let heard = ''
+    const liveName = liveEngine ? TRANSCRIBER_NAMES[liveEngine] : null
+    let engine = TRANSCRIBER_NAMES.whisper
     if (stream) {
       // The words are already written; only the last ones are still on
       // their way. Whisper is the fallback if the stream heard nothing.
       await stream.finish(LIVE_FINISH_MS)
       heard = stripNonSpeech(liveText())
-      status(`Jarvis: Gemini Live heard ${heard.length} chars: "${heard.slice(0, 80)}"`)
+      status(`Jarvis: ${liveName} heard ${heard.length} chars: "${heard.slice(0, 80)}"`)
+      if (heard) engine = liveName ?? engine
+      else engine = `${TRANSCRIBER_NAMES.whisper} (fallback)`
     }
     if (!heard) heard = stripNonSpeech(await transcribe(audio))
     const transcribeMs = Math.round(performance.now() - transcribeStart)
@@ -286,6 +336,7 @@ export async function stop(): Promise<VoiceResult> {
       peak,
       audioSeconds: audio.length / SAMPLE_RATE,
       transcribeMs,
+      engine,
       levels: endpointer ? { floor: endpointer.floor(), loudest: endpointer.loudest() } : null,
     }
   } catch (e) {

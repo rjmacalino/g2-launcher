@@ -7,7 +7,7 @@ import { positionLabel } from '../../shared/position'
 import { exchangesOf, historyRows } from './exchanges'
 import { questionLine } from '../../shared/questionKeywords'
 import { modelLabel } from '../../core/llmProviders'
-import { cancel, isLiveTranscribing, start, stop } from '../../core/voiceCapture'
+import { cancel, isLiveTranscribing, listeningEngine, start, stop } from '../../core/voiceCapture'
 import { engineDescription } from '../../core/whisper'
 import { takePreroll } from '../../core/wakeListener'
 import { dispatchVoiceCommand } from '../../core/voiceDispatch'
@@ -961,9 +961,10 @@ async function beginListening() {
   // on an interruption), so a report of "stuck" says exactly which step
   // it stopped at - see the companion page's status line.
   status(viaWake ? 'Jarvis: recording (Hey Jarvis)' : 'Jarvis: recording')
-  const hint = '(pause to send, or tap)'
+  // Who is listening (G2-157), redrawn every second, so a live engine that
+  // drops or never connects shows up on the glasses as it happens.
   startLiveStatus(mySession, (dots, elapsedSeconds) => {
-    listenHeader = `Listening${dots} (${elapsedSeconds}s) ${hint}`
+    listenHeader = `${listeningEngine()} listening${dots} (${elapsedSeconds}s)\nPause to send, or tap`
     drawListening(true)
   })
 }
@@ -982,7 +983,8 @@ function drawListening(now = false): void {
     listenDrawTimer = null
     lastListenDraw = Date.now()
     if (!listening) return
-    const rows = heardSoFar ? wrapLines(heardSoFar, PAGE_INNER_WIDTH).slice(-(SCREEN_ROWS - 2)) : []
+    // Two header rows (engine and counter, then the hint) and a blank one.
+    const rows = heardSoFar ? wrapLines(heardSoFar, PAGE_INNER_WIDTH).slice(-(SCREEN_ROWS - 3)) : []
     void setContent(rows.length > 0 ? `${listenHeader}\n\n${rows.join('\n')}` : listenHeader)
   }
   if (now) {
@@ -1454,7 +1456,7 @@ export async function finishListening() {
   setContent(
     isLiveTranscribing()
       ? 'Sending...'
-      : `Transcribing ${recordedSeconds}s of speech...\n\n(this can take a moment)`,
+      : `Whisper is transcribing ${recordedSeconds}s of speech...\n\n(this can take a moment)`,
   )
   transcribing = true
   const result = await stop()
@@ -1477,7 +1479,7 @@ export async function finishListening() {
 
   const question: ChatMessage = { role: 'user', text: result.transcript, timestamp: Date.now() }
   status(
-    `Jarvis: heard ${result.transcript.length} chars, audio level ${result.peak.toFixed(3)}, ${result.audioSeconds.toFixed(1)}s of audio in ${(result.transcribeMs / 1000).toFixed(1)}s via ${engineDescription()}${result.levels === null ? '' : `, room ${result.levels.floor.toFixed(4)} loudest ${result.levels.loudest.toFixed(4)}`}`,
+    `Jarvis: heard ${result.transcript.length} chars, audio level ${result.peak.toFixed(3)}, ${result.audioSeconds.toFixed(1)}s of audio in ${(result.transcribeMs / 1000).toFixed(1)}s via ${result.engine.startsWith('Whisper') ? `${result.engine} on ${engineDescription()}` : result.engine}${result.levels === null ? '' : `, room ${result.levels.floor.toFixed(4)} loudest ${result.levels.loudest.toFixed(4)}`}`,
   )
 
   // Navigation by voice (G2-150): "go back", "open notes", "scroll down"...

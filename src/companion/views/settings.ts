@@ -30,7 +30,9 @@ import {
 } from '../../core/modes'
 import {
   TRANSCRIBERS,
+  getDeepgramKey,
   getTranscriber,
+  setDeepgramKey,
   setTranscriber,
   type Transcriber,
 } from '../../core/transcriberSettings'
@@ -167,8 +169,40 @@ function transcriberCard(): HTMLElement {
     { class: 'field', 'aria-label': 'Transcriber' },
     TRANSCRIBERS.map(t => h('option', { value: t.id }, t.label)),
   ) as HTMLSelectElement
-  void getTranscriber().then(choice => (select.value = choice))
+  // The Deepgram key (G2-157): shown only while Deepgram is the choice.
+  const keyField = h('input', {
+    class: 'field',
+    type: 'password',
+    placeholder: 'Deepgram API key',
+    autocomplete: 'off',
+    'aria-label': 'Deepgram API key',
+  }) as HTMLInputElement
+  const saveKey = h('button', { class: 'button primary' }, 'Save Deepgram key')
+  saveKey.addEventListener('click', async () => {
+    const typed = keyField.value.trim()
+    if (!(await setDeepgramKey(typed))) toast('Save failed - try again')
+    else toast(typed ? 'Deepgram key saved' : 'Cleared')
+  })
+  const keyBox = h(
+    'div',
+    { style: 'margin-top: 12px' },
+    h('div', { class: 'section-label' }, 'Deepgram key'),
+    h(
+      'div',
+      { class: 'caption', style: 'margin: 0 0 6px' },
+      'From console.deepgram.com. Stored on this phone only.',
+    ),
+    keyField,
+    h('div', { style: 'margin-top: 8px' }, saveKey),
+  )
+  const showKeyBox = () => (keyBox.style.display = select.value === 'deepgram' ? '' : 'none')
+  void Promise.all([getTranscriber(), getDeepgramKey()]).then(([choice, key]) => {
+    select.value = choice
+    keyField.value = key ?? ''
+    showKeyBox()
+  })
   select.addEventListener('change', async () => {
+    showKeyBox()
     if (await setTranscriber(select.value as Transcriber)) toast('Transcriber saved')
   })
   return card(
@@ -176,9 +210,10 @@ function transcriberCard(): HTMLElement {
     h(
       'p',
       { class: 'caption', style: 'margin: 4px 0 8px' },
-      'How Jarvis turns what you say into text. Gemini Live writes the words while you speak, so the question is ready the moment you tap, and it is free on the Gemini free tier. Whisper works offline on this phone but transcribes only after you tap, which is slower.',
+      'How Jarvis turns what you say into text. Gemini Live and Deepgram write the words while you speak, so the question is ready the moment you tap; the listening screen on the glasses shows which one is listening. Deepgram is tuned for coding terms. Whisper works offline on this phone but transcribes only after you tap, which is slower.',
     ),
     select,
+    keyBox,
   )
 }
 

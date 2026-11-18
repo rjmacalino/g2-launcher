@@ -11,6 +11,8 @@
 //   final text of a stretch of speech;
 // - a session lasts at most 10 minutes, so it is replaced before then.
 
+import { createAutoGain } from '../shared/gain'
+
 const URL_BASE =
   'wss://generativelanguage.googleapis.com/ws/google.ai.generativelanguage.v1beta.GenerativeService.BidiGenerateContent'
 export const LIVE_TRANSCRIBE_MODEL = 'gemini-3.5-transcribe-live'
@@ -27,11 +29,8 @@ export type LiveTranscriber = {
   close(): void
 }
 
-// The most quiet audio is raised before it is sent (see amplify).
-const MAX_GAIN = 16
-
 // Audio kept while the session is still connecting: 10 s.
-const BACKLOG_BYTES = 320_000
+export const BACKLOG_BYTES = 320_000
 
 export type LiveHandlers = {
   // The words so far of what is being said right now (replaces the last).
@@ -41,6 +40,10 @@ export type LiveHandlers = {
   // Connection news for the diagnostics log. A handler rather than an import
   // of the bridge, so the PC can run this too (bench/liveCaptions.ts).
   onStatus?(text: string): void
+  // Whether the stream is connected, for the listening screen: a live
+  // engine that never connects (no quota, a wrong key) is then visible on
+  // the glasses, not only in Diagnostics.
+  onConnected?(connected: boolean): void
 }
 
 function base64(bytes: Uint8Array): string {
@@ -98,6 +101,7 @@ export function openLiveTranscriber(apiKey: string, handlers: LiveHandlers): Liv
       if (message.setupComplete !== undefined) {
         ready = true
         handlers.onStatus?.('Captions: Gemini Live connected')
+        handlers.onConnected?.(true)
         flushOnReady?.()
         return
       }
@@ -127,6 +131,7 @@ export function openLiveTranscriber(apiKey: string, handlers: LiveHandlers): Liv
       handlers.onStatus?.(
         `Captions: Gemini Live closed (${event.code}${event.reason ? ` ${event.reason}` : ''})`,
       )
+      handlers.onConnected?.(false)
       setTimeout(connect, RETRY_MS)
     }
     if (renewTimer !== null) clearTimeout(renewTimer)
@@ -180,33 +185,7 @@ export function openLiveTranscriber(apiKey: string, handlers: LiveHandlers): Liv
     ws?.close()
   }
 
-  // Automatic gain: Gemini Live hears quiet speech badly (a recording at a
-  // 0.04 peak - what speaker-to-mic gives in the simulator - came back as
-  // three words), while Whisper copes. Each frame is raised towards a 0.5
-  // peak, judged on the loudest of the last couple of seconds so the level
-  // does not pump between words, and never more than MAX_GAIN, so a quiet
-  // room is not blown up into noise.
-  let recentPeak = 0
-
-  function amplify(pcm: Uint8Array): Uint8Array {
-    // A copy: a frame can start at an odd byte offset, which an Int16Array
-    // view cannot.
-    const samples = new Int16Array(pcm.slice(0, pcm.length - (pcm.length % 2)).buffer)
-    let peak = 0
-    for (let i = 0; i < samples.length; i++) {
-      const v = Math.abs(samples[i])
-      if (v > peak) peak = v
-    }
-    // Decays by about half over two seconds of 40 ms frames.
-    recentPeak = Math.max(peak, recentPeak * 0.985)
-    const gain = Math.min(MAX_GAIN, Math.max(1, (0.5 * 32767) / Math.max(1, recentPeak)))
-    if (gain === 1) return pcm
-    const out = new Int16Array(samples.length)
-    for (let i = 0; i < samples.length; i++) {
-      out[i] = Math.max(-32768, Math.min(32767, Math.round(samples[i] * gain)))
-    }
-    return new Uint8Array(out.buffer)
-  }
+  const amplify = createAutoGain()
 
   return {
     push(raw: Uint8Array): void {
