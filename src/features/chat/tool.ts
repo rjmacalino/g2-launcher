@@ -1,6 +1,6 @@
 import { getCodeSize } from '../../core/codeSize'
 import { setStatusNote } from '../../core/statusNote'
-import { MODES, modeOf, type ModeId } from '../../core/modes'
+import { modeOf, type ModeId } from '../../core/modes'
 import { navigate } from '../../core/navigation'
 import { parseNavCommand, type NavCommand } from '../../shared/navCommands'
 import { positionLabel } from '../../shared/position'
@@ -49,6 +49,7 @@ import { askAssistant } from './assistant'
 import { setCurrentScreen } from '../../core/currentScreen'
 import { requestRebuild } from '../../core/rebuild'
 import type { Tool } from '../../core/tool'
+import { LANGUAGES, type Language } from '../../shared/languages'
 
 // JARVIS - the one assistant. Per direct request, what used to be two tools
 // (Jarvis, the quick long-press-from-anywhere command runner, and Gemini,
@@ -103,10 +104,16 @@ let nextOpenMode: OpenMode = 'picker'
 // chatMode: the mode for a new chat opened this way ("Hey Jarvis, new
 // interview chat", G2-150); Auto when not given.
 let nextChatMode: ModeId = 'auto'
+let nextLanguage: string | null = null
 
-export function prepareOpen(mode: OpenMode, chatMode: ModeId = 'auto'): void {
+export function prepareOpen(
+  mode: OpenMode,
+  chatMode: ModeId = 'auto',
+  language: string | null = null,
+): void {
   nextOpenMode = mode
   nextChatMode = chatMode
+  nextLanguage = language
 }
 
 // This conversation was started by a long-press from another screen, so
@@ -181,7 +188,7 @@ export async function devAsk(text: string): Promise<void> {
     updatedAt: Date.now(),
   })
   publishScreen()
-  requestRebuild(chatTool, () => void askGemini(text))
+  requestRebuild(entry ?? chatTool, () => void askGemini(text))
 }
 
 function saveCurrent(): void {
@@ -313,6 +320,7 @@ function showSession(id: string | null): void {
     depth = 'picker'
     currentSessionId = null
     currentMode = 'auto'
+    currentLanguage = null
     currentMessages = []
     currentSessionTitle = null
     pickerSessions = sortForPicker(chatSessions.peek() ?? [])
@@ -323,6 +331,7 @@ function showSession(id: string | null): void {
   currentMessages = session.messages
   currentSessionTitle = session.title
   currentMode = modeOf(session.mode).id
+  currentLanguage = session.language ?? null
 }
 
 // The chat's mode (G2-139, core/modes.ts): picked with "New chat: ..." in
@@ -330,9 +339,35 @@ function showSession(id: string | null): void {
 let currentMode: ModeId = 'auto'
 
 function withModeTag(model: string): string {
+  if (currentMode === 'coding' && currentLanguage) return `Code (${currentLanguage}) - ${model}`
   return currentMode === 'auto' ? model : `${modeOf(currentMode).label} - ${model}`
 }
-const NEW_CHAT_ROWS = MODES.map(m => (m.id === 'auto' ? 'New chat' : `New chat: ${m.label}`))
+// Launcher entries (G2-152): Jarvis, Interview and Code are this one engine
+// with a scope each - the new-chat rows its list starts with, and which saved
+// chats it shows. Jarvis is general Q and A (Auto adapts to any topic).
+export type Scope = 'jarvis' | 'interview' | 'code'
+type NewRow = { label: string; mode: ModeId; language?: Language }
+const NEW_ROWS: Record<Scope, NewRow[]> = {
+  jarvis: [{ label: 'New chat', mode: 'auto' }],
+  interview: [{ label: 'New interview', mode: 'interview' }],
+  code: LANGUAGES.map(language => ({
+    label: `New: ${language}`,
+    mode: 'coding' as const,
+    language,
+  })),
+}
+let scope: Scope = 'jarvis'
+const newRows = (): NewRow[] => NEW_ROWS[scope]
+
+function inScope(session: ChatSession): boolean {
+  const mode = modeOf(session.mode).id
+  if (scope === 'interview') return mode === 'interview'
+  if (scope === 'code') return mode === 'coding'
+  return mode !== 'interview' && mode !== 'coding'
+}
+
+// A Code chat's language (G2-152).
+let currentLanguage: string | null = null
 
 // List containers have a firmware hard limit of 20 items (docs/platform.md).
 // "New chat" is always the first row, leaving 19 for saved sessions - after
@@ -342,7 +377,7 @@ const NEW_CHAT_ROWS = MODES.map(m => (m.id === 'auto' ? 'New chat' : `New chat: 
 // needed trimming. Only the picker is capped; nothing is deleted, and the
 // companion page's own chat-view (see companion/main.ts) has no such limit
 // and still shows every session.
-const PICKER_MAX_SESSIONS = 20 - MODES.length
+const pickerMax = (): number => 20 - newRows().length
 
 // Shorter than the 64-character list-item limit on purpose. Both open
 // Gemini bugs [HW] - failing to open, and "Yes" on the leave prompt not
@@ -361,7 +396,10 @@ function pickerTitle(title: string): string {
 }
 
 function sortForPicker(sessions: ChatSession[]): ChatSession[] {
-  return [...sessions].sort((a, b) => b.updatedAt - a.updatedAt).slice(0, PICKER_MAX_SESSIONS)
+  return [...sessions]
+    .filter(inScope)
+    .sort((a, b) => b.updatedAt - a.updatedAt)
+    .slice(0, pickerMax())
 }
 
 // No storage read on this path any more - it reads the store's in-memory
@@ -383,6 +421,8 @@ async function refresh(): Promise<void> {
   currentSessionId = null
   currentMode = nextChatMode
   nextChatMode = 'auto'
+  currentLanguage = nextLanguage
+  nextLanguage = null
   currentMessages = []
   currentSessionTitle = null
   lastErrorQuestion = null
@@ -400,7 +440,7 @@ async function refresh(): Promise<void> {
       // Only the list needs redrawing; the shell ignores this unless
       // Jarvis is actually the page on screen (see app/main.ts's rebuild
       // handler).
-      if (depth === 'picker') requestRebuild(chatTool, fillSection)
+      if (depth === 'picker') requestRebuild(entry ?? chatTool, fillSection)
     })
   }
 }
@@ -421,12 +461,12 @@ function syncPickerFromCurrent(): void {
   const index = pickerSessions.findIndex(s => s.id === currentSessionId)
   const withoutCurrent =
     index === -1 ? pickerSessions : pickerSessions.filter((_, i) => i !== index)
-  // Capped the same way refresh() is (see PICKER_MAX_SESSIONS above) - a
+  // Capped the same way refresh() is (see pickerMax above) - a
   // brand new session landing here via "New chat" could otherwise push the
   // in-memory list back past the firmware's 20-item limit without a full
   // tool reopen (which is the only other place this gets capped) ever
   // running to catch it.
-  pickerSessions = [updated, ...withoutCurrent].slice(0, PICKER_MAX_SESSIONS)
+  pickerSessions = [updated, ...withoutCurrent].slice(0, pickerMax())
 }
 
 // THE FULL ANSWER, PAGED - per direct request: show all of it on the
@@ -689,7 +729,7 @@ function openCodeView(): void {
   viewBlock(0, 0)
   updatePositionNote()
   status(`Jarvis: code view (${codeView?.screens.length} screens)`)
-  requestRebuild(chatTool, () => void drawCode())
+  requestRebuild(entry ?? chatTool, () => void drawCode())
 }
 
 // Forward or back one screen, moving on to the next block at the end.
@@ -715,7 +755,7 @@ function closeCodeView(): void {
   if (!codeView) return
   codeView = null
   updatePositionNote()
-  requestRebuild(chatTool, fillSection)
+  requestRebuild(entry ?? chatTool, fillSection)
 }
 
 // The conversation as a list of its exchanges, newest first; tapping one
@@ -728,7 +768,7 @@ function openHistory(): void {
   depth = 'history'
   pages = []
   publishScreen()
-  requestRebuild(chatTool)
+  requestRebuild(entry ?? chatTool)
 }
 
 function leaveToPicker(): void {
@@ -736,13 +776,14 @@ function leaveToPicker(): void {
   depth = 'picker'
   currentSessionId = null
   currentMode = 'auto'
+  currentLanguage = null
   currentMessages = []
   currentSessionTitle = null
   lastErrorQuestion = null
   pages = []
   focus = null
   publishScreen()
-  requestRebuild(chatTool)
+  requestRebuild(entry ?? chatTool)
 }
 
 const STATUS_FRAMES = ['.', '..', '...']
@@ -1266,6 +1307,7 @@ async function askGeminiNow(question: string) {
   // The request itself is shared with the phone (assistant.ts, G2-70).
   const reply = await askAssistant(llm, messagesAtAsk, targetSessionId, {
     mode: currentMode,
+    language: currentLanguage,
     onText,
     onRetry: (attempt, max) => {
       attemptsMade = attempt
@@ -1332,6 +1374,7 @@ async function askGeminiNow(question: string) {
     if (!stillRelevant()) return
     currentSessionId = null
     currentMode = 'auto'
+    currentLanguage = null
     currentSessionTitle = null
     currentMessages = []
     showCommandResult(messagesAtAsk[0], answer)
@@ -1484,7 +1527,7 @@ export async function finishListening() {
     // storage write here before asking Gemini, which is exactly the kind of
     // wait a slow or stuck host read turned into a frozen screen.
     if (currentSessionId === null) {
-      const created = chatSessions.newSession(question, currentMode)
+      const created = chatSessions.newSession(question, currentMode, currentLanguage)
       currentSessionId = created.id
       currentSessionTitle = created.title
       currentMessages = created.messages
@@ -1630,14 +1673,14 @@ chatSessions.onChange(() => {
   const sessions = chatSessions.peek() ?? []
   if (depth === 'picker') {
     pickerSessions = sortForPicker(sessions)
-    requestRebuild(chatTool, fillSection)
+    requestRebuild(entry ?? chatTool, fillSection)
     return
   }
   if (currentSessionId === null || busy()) return
   const session = sessions.find(s => s.id === currentSessionId)
   if (!session) {
     showSession(null)
-    requestRebuild(chatTool, fillSection)
+    requestRebuild(entry ?? chatTool, fillSection)
     publishScreen()
     return
   }
@@ -1651,7 +1694,7 @@ chatSessions.onChange(() => {
   currentMessages = session.messages
   currentSessionTitle = session.title
   pages = []
-  requestRebuild(chatTool, fillSection)
+  requestRebuild(entry ?? chatTool, fillSection)
 })
 
 // After a rebuild showed only rebuildSafe's start of a long section, put
@@ -1677,13 +1720,20 @@ export const chatTool: Tool = {
   // Teleprompter's own pair of these two: one describes what pressing Yes
   // says, the other is what it does.
   confirmPrompt: () =>
-    depth === 'conversation' && !quickAsk ? 'Leave this conversation?' : 'Leave Jarvis?',
-  beforeOpen: refresh,
+    depth === 'conversation' && !quickAsk
+      ? 'Leave this conversation?'
+      : `Leave ${(entry ?? chatTool).name}?`,
+  beforeOpen: () => openAs('jarvis', chatTool),
   contentKind: () => (depth !== 'conversation' ? 'list' : codeView ? 'tiles' : 'text'),
   listItems: () =>
     depth === 'history'
       ? historyRows(exchangesOf(currentMessages)).map(r => r.label)
-      : [...NEW_CHAT_ROWS, ...pickerSessions.map(s => pickerTitle(s.title))],
+      : [
+          ...newRows().map(r => r.label),
+          ...pickerSessions.map(s =>
+            pickerTitle(scope === 'code' && s.language ? `${s.language}: ${s.title}` : s.title),
+          ),
+        ],
   onListSelect: index => {
     if (depth === 'history') {
       const exchanges = exchangesOf(currentMessages)
@@ -1697,19 +1747,22 @@ export const chatTool: Tool = {
     }
     if (depth !== 'picker') return
     focus = null
-    listenWhenReady = index < NEW_CHAT_ROWS.length
-    if (index < NEW_CHAT_ROWS.length) {
+    const rows = newRows()
+    listenWhenReady = index < rows.length
+    if (index < rows.length) {
       currentSessionId = null
       currentMessages = []
       currentSessionTitle = null
-      currentMode = MODES[index].id
+      currentMode = rows[index].mode
+      currentLanguage = rows[index].language ?? null
     } else {
-      const picked = pickerSessions[index - NEW_CHAT_ROWS.length]
+      const picked = pickerSessions[index - rows.length]
       if (!picked) return
       currentSessionId = picked.id
       currentMessages = picked.messages
       currentSessionTitle = picked.title
       currentMode = modeOf(picked.mode).id
+      currentLanguage = picked.language ?? null
     }
     depth = 'conversation'
     quickAsk = false
@@ -1743,7 +1796,7 @@ export const chatTool: Tool = {
       // size, so long press no longer resizes) - back to the text page
       // first, then record.
       codeView = null
-      requestRebuild(chatTool, () => {
+      requestRebuild(entry ?? chatTool, () => {
         if (depth === 'conversation' && !busy()) void beginListening()
       })
       return
@@ -1754,7 +1807,7 @@ export const chatTool: Tool = {
       depth = 'conversation'
       focus = null
       pages = []
-      requestRebuild(chatTool, () => {
+      requestRebuild(entry ?? chatTool, () => {
         if (depth === 'conversation' && !busy()) void beginListening()
       })
       return
@@ -1781,6 +1834,7 @@ export const chatTool: Tool = {
     depth = 'picker'
     currentSessionId = null
     currentMode = 'auto'
+    currentLanguage = null
     currentMessages = []
     currentSessionTitle = null
     lastErrorQuestion = null
@@ -1928,4 +1982,34 @@ export const chatTool: Tool = {
     pageWin = null
     return rebuildSafe(pages.length > 0 ? pages[pageIndex].text : renderConversation())
   },
+}
+
+// The launcher entry on screen (G2-152): the shell rebuilds a page only for
+// the tool it shows, so rebuilds ask for this entry, not always chatTool.
+let entry: Tool | null = null
+
+function openAs(next: Scope, tool: Tool): Promise<void> {
+  scope = next
+  entry = tool
+  return refresh()
+}
+
+export const interviewTool: Tool = {
+  ...chatTool,
+  name: 'Interview',
+  beforeOpen: () => openAs('interview', interviewTool),
+}
+
+export const codeTool: Tool = {
+  ...chatTool,
+  name: 'Code',
+  beforeOpen: () => openAs('code', codeTool),
+}
+
+const ENTRIES: ReadonlySet<Tool> = new Set([chatTool, interviewTool, codeTool])
+
+// For the shell: whether a launcher entry is Jarvis's engine, so "Hey
+// Jarvis" and long press inside Interview or Code ask a follow-up there.
+export function isJarvisEntry(tool: Tool | undefined): boolean {
+  return tool !== undefined && ENTRIES.has(tool)
 }

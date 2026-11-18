@@ -7,6 +7,7 @@ import { dispatchVoiceCommand } from '../../core/voiceDispatch'
 import { getAboutMe } from '../../core/geminiSettings'
 import { DEFAULT_LOCAL_INSTRUCTIONS, getLocalInstructions } from '../../core/localInstructions'
 import { getModePreset, modeOf } from '../../core/modes'
+import defaults from '../../defaults/instructions.json'
 import { CHAT_INSTRUCTION, WEARER_INSTRUCTION } from '../../core/llmTypes'
 import { askModel } from '../../core/llm'
 import type { LlmResult, LlmTurn } from '../../core/llmTypes'
@@ -58,6 +59,8 @@ export type AskHooks = {
   onRetry?: (attempt: number, maxAttempts: number) => void
   // The mode when the chat is not saved yet (G2-139); else the chat's own.
   mode?: string
+  // A Code chat's language (G2-152), the same way.
+  language?: string | null
 }
 
 // One request: the conversation so far (ending with the question) to the
@@ -66,7 +69,7 @@ export async function askAssistant(
   llm: LlmConfig,
   history: readonly ChatMessage[],
   sessionId: string | null,
-  { onText, onRetry, timeoutMs = ANSWER_TIMEOUT_MS, mode }: AskHooks = {},
+  { onText, onRetry, timeoutMs = ANSWER_TIMEOUT_MS, mode, language }: AskHooks = {},
 ): Promise<LlmResult> {
   // What Jarvis can do, not just answer (notes, timer - registered by
   // app/main.ts). The context is best effort and time-limited, so it never
@@ -83,7 +86,9 @@ export async function askAssistant(
   const session = sessionId ? chatSessions.peek()?.find(s => s.id === sessionId) : undefined
   const modeId = modeOf(mode ?? session?.mode).id
   const preset = await within(getModePreset(modeId), ABOUT_ME_TIMEOUT_MS, modeOf(modeId).preset)
-  const fullGuide = [guide, preset].filter(Boolean).join('\n\n')
+  const lang = language ?? session?.language
+  const rule = lang ? defaults.languageRule.split('{language}').join(lang) : ''
+  const fullGuide = [guide, preset, rule].filter(Boolean).join('\n\n')
   let timedOut = false
   const answer = askModel(llm, toTurns(history), {
     onText: onText && (text => !timedOut && onText(text)),
@@ -96,8 +101,10 @@ export async function askAssistant(
     actionContext,
     aboutMe,
     guide: fullGuide,
-    // Interview mode speaks as the wearer, not as Jarvis (G2-140).
-    instruction: modeId === 'interview' ? WEARER_INSTRUCTION : CHAT_INSTRUCTION,
+    // Interview (behavioural) and Code (technical interview) speak as the
+    // wearer, not as Jarvis (G2-140, G2-152).
+    instruction:
+      modeId === 'interview' || modeId === 'coding' ? WEARER_INSTRUCTION : CHAT_INSTRUCTION,
     // Questions about now - news, scores, prices, opening hours - need the
     // web; the model decides when (G2-76).
     webSearch: true,

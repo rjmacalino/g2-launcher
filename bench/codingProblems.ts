@@ -3,7 +3,7 @@ import { mkdtempSync, writeFileSync } from 'node:fs'
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
 import { askModel } from '../src/core/llm'
-import { CHAT_INSTRUCTION, WEARER_INSTRUCTION } from '../src/core/llmTypes'
+import { WEARER_INSTRUCTION } from '../src/core/llmTypes'
 import { splitAnswer } from '../src/shared/answerBlocks'
 import { DEFAULT_LOCAL_INSTRUCTIONS } from '../src/shared/localBrief'
 import { MODES, type ModeId } from '../src/shared/modePresets'
@@ -160,13 +160,13 @@ if (!config || config.provider !== provider) {
 let passed = 0
 let total = 0
 const log: unknown[] = []
-for (const modeId of (onlyMode ? [onlyMode] : ['coding', 'interview']) as ModeId[]) {
+for (const modeId of [onlyMode ?? 'coding'] as ModeId[]) {
   const mode = MODES.find(m => m.id === modeId)!
   const preset = modeId === 'interview' ? `${mode.preset}\n\n${SAMPLE_PROFILE}` : mode.preset
   for (const problem of PROBLEMS) {
     const began = Date.now()
     const reply = await askModel(config, [{ role: 'user', text: problem.spoken }], {
-      instruction: modeId === 'interview' ? WEARER_INSTRUCTION : CHAT_INSTRUCTION,
+      instruction: WEARER_INSTRUCTION,
       guide: [DEFAULT_LOCAL_INSTRUCTIONS, preset].filter(Boolean).join('\n\n'),
     })
     const seconds = ((Date.now() - began) / 1000).toFixed(1)

@@ -15,15 +15,15 @@ export const MODES: readonly Mode[] = [
   {
     id: 'interview',
     label: 'Interview',
-    // The coding-problem rules (G2-151) and the owner's facts follow the
-    // preset, so coding questions are solved properly and the rest are theirs.
-    preset: [defaults.modes.interview, defaults.codingProblems, OWNER.profile]
-      .filter(Boolean)
-      .join('\n\n'),
+    // Behavioural (G2-152): the owner's facts follow the preset, so the
+    // answers are theirs.
+    preset: [defaults.modes.interview, OWNER.profile].filter(Boolean).join('\n\n'),
   },
   {
     id: 'coding',
     label: 'Coding',
+    // The technical interview: the think-aloud script plus the LeetCode and
+    // HackerRank rules (G2-151, G2-152).
     preset: [defaults.modes.coding, defaults.codingProblems].join('\n\n'),
   },
   { id: 'general', label: 'General', preset: defaults.modes.general },

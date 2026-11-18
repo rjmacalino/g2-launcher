@@ -1,5 +1,5 @@
 import type { Tool } from '../core/tool'
-import { chatTool } from '../features/chat/tool'
+import { chatTool, codeTool, interviewTool } from '../features/chat/tool'
 import { notesTool } from '../features/notes/tool'
 import { LAB_ENABLED } from '../shared/features'
 
@@ -29,7 +29,8 @@ import { LAB_ENABLED } from '../shared/features'
 // hiding a menu entry that is still sitting in the package.
 // Wingman (G2-65) and Parakeet (G2-128) were removed (G2-135): RJ chose to
 // make Jarvis fast, with live captions, instead of keeping listening modes.
-const tools: Tool[] = [chatTool, notesTool]
+// Jarvis, Interview and Code are one engine with a scope each (G2-152).
+const tools: Tool[] = [chatTool, interviewTool, codeTool, notesTool]
 
 if (import.meta.env.DEV && LAB_ENABLED) {
   const { labTool } = await import('../features/lab/tool')

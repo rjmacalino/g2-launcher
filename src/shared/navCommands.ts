@@ -1,3 +1,5 @@
+import { languageOf, type Language } from './languages'
+
 // Voice navigation (G2-150): "Hey Jarvis, go back", "... open notes",
 // "... scroll down". Recognised here, locally and instantly, from the whole
 // transcript - only a short utterance that IS a command counts, so "how do I
@@ -8,8 +10,12 @@ export type NavCommand =
   | { kind: 'back' }
   | { kind: 'home' }
   | { kind: 'scroll'; delta: 1 | -1 }
-  | { kind: 'open'; tool: 'Jarvis' | 'Notes' }
-  | { kind: 'newChat'; mode: 'auto' | 'interview' | 'coding' | 'general' }
+  | { kind: 'open'; tool: 'Jarvis' | 'Notes' | 'Interview' | 'Code' }
+  | {
+      kind: 'newChat'
+      mode: 'auto' | 'interview' | 'coding' | 'general'
+      language?: Language
+    }
   | { kind: 'newList'; name: string }
 
 // Politeness and fillers around a command, dropped before matching.
@@ -37,9 +43,9 @@ const HOME =
 const DOWN = /^(scroll down|page down|next page|go down|down|scroll|more|show more|keep going)$/
 const UP = /^(scroll up|page up|previous page|last page|go up|up|back up)$/
 const OPEN =
-  /^(open|go to|show|show me|start|launch) (my |the )?(jarvis|notes|note|lists|list|checklists)$/
+  /^(open|go to|show|show me|start|launch) (my |the )?(jarvis|notes|note|lists|list|checklists|interview|interviews|code|coding)$/
 const NEW_CHAT =
-  /^(?:(?:start|open) (?:a )?)?new (interview |coding |general )?(?:chat|conversation)$/
+  /^(?:(?:start|open) (?:a )?)?new (interview |coding |code |general |python |javascript |typescript |c sharp |c# |js |ts )?(?:chat|conversation)$/
 const NEW_LIST =
   /^(create|make|start|add|new)( a)?( new)? (note|list|checklist)( called| named| for)? (.+)$/
 
@@ -51,10 +57,25 @@ export function parseNavCommand(transcript: string): NavCommand | null {
   if (DOWN.test(text)) return { kind: 'scroll', delta: 1 }
   if (UP.test(text)) return { kind: 'scroll', delta: -1 }
   const open = OPEN.exec(text)
-  if (open) return { kind: 'open', tool: open[3] === 'jarvis' ? 'Jarvis' : 'Notes' }
+  if (open) {
+    const t = open[3]
+    const tool =
+      t === 'jarvis'
+        ? 'Jarvis'
+        : t.startsWith('interview')
+          ? 'Interview'
+          : t.startsWith('cod')
+            ? 'Code'
+            : 'Notes'
+    return { kind: 'open', tool }
+  }
   const chat = NEW_CHAT.exec(text)
   if (chat) {
-    const mode = (chat[1]?.trim() || 'auto') as 'auto' | 'interview' | 'coding' | 'general'
+    const word = chat[1]?.trim() ?? ''
+    const language = languageOf(word)
+    if (language) return { kind: 'newChat', mode: 'coding', language }
+    const mode = (word === 'code' ? 'coding' : word || 'auto') as
+      'auto' | 'interview' | 'coding' | 'general'
     return { kind: 'newChat', mode }
   }
   const list = NEW_LIST.exec(text)

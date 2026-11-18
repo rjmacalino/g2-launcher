@@ -10,10 +10,9 @@ vi.mock('../src/platform/bridge', () => ({
 }))
 
 describe('launcher tools (G2-100)', () => {
-  it('has only Jarvis and Notes', async () => {
+  it('has Jarvis, Interview, Code and Notes (G2-152)', async () => {
     const { TOOL_NAMES } = await import('../src/app/registry')
-    expect(TOOL_NAMES).toContain('Jarvis')
-    expect(TOOL_NAMES).toContain('Notes')
+    expect(TOOL_NAMES).toEqual(['Jarvis', 'Interview', 'Code', 'Notes'])
     expect(TOOL_NAMES).not.toContain('Wingman')
     expect(TOOL_NAMES).not.toContain('Parakeet')
     expect(TOOL_NAMES).not.toContain('Lab')

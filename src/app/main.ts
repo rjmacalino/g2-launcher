@@ -93,6 +93,7 @@ import {
   retry as retryJarvis,
   prepareOpen as prepareJarvisOpen,
   isAtPicker as isJarvisAtPicker,
+  isJarvisEntry,
   isQuickAskEmpty as isJarvisQuickAskEmpty,
   onReturnRequested as onJarvisReturnRequested,
   armWakeListen as armJarvisWakeListen,
@@ -248,7 +249,7 @@ function confirmExit(tool: Tool, index: number) {
   if (destination === 'menu') {
     // Leaving a Jarvis conversation that a long-press started from another
     // screen goes back to that screen, not the menu.
-    if (index === JARVIS_INDEX && screenBeforeJarvis) {
+    if (isJarvisIndex(index) && screenBeforeJarvis) {
       returnFromJarvis()
       return
     }
@@ -552,6 +553,9 @@ function menuContainers() {
 // would be a registry.ts bug, not something to silently tolerate here.
 const JARVIS_INDEX = TOOLS.findIndex(t => t.name === 'Jarvis')
 
+// Jarvis, Interview or Code (G2-152): one engine, so the same rules apply.
+const isJarvisIndex = (index: number) => isJarvisEntry(TOOLS[index])
+
 // A long-press from any screen other than Jarvis: straight into a new
 // Jarvis conversation, recording, remembering where to hand the wearer back
 // to afterward (see returnFromJarvis).
@@ -571,10 +575,10 @@ function enterJarvis() {
 // conversation it asks the next question there (Jarvis's own onLongPress).
 // Anywhere else: a new conversation, handing back afterward.
 function askJarvis() {
-  if (screen.kind === 'tool' && screen.index === JARVIS_INDEX) {
+  if (screen.kind === 'tool' && isJarvisIndex(screen.index)) {
     if (isJarvisAtPicker()) {
       prepareJarvisOpen('newChat')
-      openTool(JARVIS_INDEX)
+      openTool(screen.index)
     } else {
       activeTool()?.onLongPress?.()
     }
@@ -904,7 +908,7 @@ registerVoiceDispatch(async transcript => {
 function voiceBack() {
   if (screen.kind !== 'tool') return
   const from = screenBeforeJarvis
-  if (screen.index === JARVIS_INDEX && from && isJarvisQuickAskEmpty()) {
+  if (isJarvisIndex(screen.index) && from && isJarvisQuickAskEmpty()) {
     screenBeforeJarvis = null
     if (from.kind !== 'tool') {
       returnToMenu()
@@ -942,14 +946,24 @@ registerNavigator(command => {
     case 'open': {
       const index = TOOLS.findIndex(t => t.name === command.tool)
       if (index < 0) return
-      if (index === JARVIS_INDEX) prepareJarvisOpen('picker')
+      if (isJarvisIndex(index)) prepareJarvisOpen('picker')
       voiceOpen(index)
       return
     }
-    case 'newChat':
-      prepareJarvisOpen('newChat', command.mode)
-      voiceOpen(JARVIS_INDEX)
+    case 'newChat': {
+      // The entry that lists that kind of chat (G2-152).
+      const name =
+        command.mode === 'interview' ? 'Interview' : command.mode === 'coding' ? 'Code' : 'Jarvis'
+      const index = TOOLS.findIndex(t => t.name === name)
+      if (index < 0) return
+      prepareJarvisOpen(
+        'newChat',
+        command.mode,
+        command.mode === 'coding' ? (command.language ?? 'Python') : null,
+      )
+      voiceOpen(index)
       return
+    }
     case 'newList': {
       const index = TOOLS.findIndex(t => t.name === 'Notes')
       if (index < 0) return
@@ -1095,7 +1109,7 @@ chatSessions.preload()
 onJarvisReturnRequested(() => {
   // Leaving now would replace a "Time's up!" the wearer has not seen yet.
   if (alerting) return
-  if (!(screen.kind === 'tool' && screen.index === JARVIS_INDEX)) return
+  if (!(screen.kind === 'tool' && isJarvisIndex(screen.index))) return
   if (!screenBeforeJarvis) return
   returnFromJarvis()
 })
@@ -1242,7 +1256,7 @@ const unsubscribe = bridge.onEvenHubEvent(event => {
   const isSingleTap =
     !isDoubleTap &&
     (sysType === OsEventTypeList.CLICK_EVENT || textType === OsEventTypeList.CLICK_EVENT)
-  if (isSingleTap && screen.kind === 'tool' && screen.index === JARVIS_INDEX) {
+  if (isSingleTap && screen.kind === 'tool' && isJarvisIndex(screen.index)) {
     if (isJarvisListening()) {
       finishJarvisListening()
       return
@@ -1355,7 +1369,7 @@ const unsubscribe = bridge.onEvenHubEvent(event => {
   // report holding the whole time a question was spoken ended the
   // recording too early. LONG_PRESS_RELEASE_EVENT is deliberately unhandled.
   if (sysType === OsEventTypeList.LONG_PRESS_EVENT) {
-    if (screen.kind === 'tool' && screen.index === JARVIS_INDEX) askJarvis()
+    if (screen.kind === 'tool' && isJarvisIndex(screen.index)) askJarvis()
     else activeTool()?.onLongPress?.()
     return
   }

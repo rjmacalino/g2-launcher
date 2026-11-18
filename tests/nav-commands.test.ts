@@ -42,6 +42,26 @@ describe('parseNavCommand (G2-150)', () => {
     expect(parseNavCommand('New coding chat.')).toEqual({ kind: 'newChat', mode: 'coding' })
   })
 
+  it('opens the Interview and Code entries, and a new chat in a language (G2-152)', () => {
+    expect(parseNavCommand('Open interview.')).toEqual({ kind: 'open', tool: 'Interview' })
+    expect(parseNavCommand('Open code.')).toEqual({ kind: 'open', tool: 'Code' })
+    expect(parseNavCommand('New Python chat.')).toEqual({
+      kind: 'newChat',
+      mode: 'coding',
+      language: 'Python',
+    })
+    expect(parseNavCommand('New TypeScript chat')).toEqual({
+      kind: 'newChat',
+      mode: 'coding',
+      language: 'TypeScript',
+    })
+    expect(parseNavCommand('New C sharp chat')).toEqual({
+      kind: 'newChat',
+      mode: 'coding',
+      language: 'C#',
+    })
+  })
+
   it('reads a new list and its name', () => {
     expect(parseNavCommand('New note called groceries.')).toEqual({
       kind: 'newList',
