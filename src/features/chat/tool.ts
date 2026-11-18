@@ -170,7 +170,13 @@ let currentSessionTitle: string | null = null
 // question on the glasses as if it had just been spoken and transcribed, so
 // the typing view can be tested without a microphone. Jarvis must be open.
 export async function devAsk(text: string): Promise<void> {
-  const created = chatSessions.newSession({ role: 'user', text, timestamp: Date.now() })
+  // In the chat's own mode and language, as a spoken question would be.
+  stopListeningIfAny()
+  const created = chatSessions.newSession(
+    { role: 'user', text, timestamp: Date.now() },
+    currentMode,
+    currentLanguage,
+  )
   depth = 'conversation'
   focus = null
   codeView = null
