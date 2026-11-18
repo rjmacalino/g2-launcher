@@ -30,12 +30,15 @@ import {
 } from '../../core/modes'
 import {
   TRANSCRIBERS,
+  getAutoSendSeconds,
   getDeepgramKey,
   getTranscriber,
+  setAutoSendSeconds,
   setDeepgramKey,
   setTranscriber,
   type Transcriber,
 } from '../../core/transcriberSettings'
+import { AUTO_SEND_SECONDS } from '../../shared/autoSend'
 import type { AppContext, Page } from '../app'
 import { h, icon, toast } from '../dom'
 import { probeLongText } from '../../platform/textProbe'
@@ -214,6 +217,31 @@ function transcriberCard(): HTMLElement {
     ),
     select,
     keyBox,
+    autoSendBox(),
+  )
+}
+
+// Auto-send when quiet (G2-158): off by default, so a question is never
+// sent half-said and an AI request is not wasted.
+function autoSendBox(): HTMLElement {
+  const select = h('select', { class: 'field', 'aria-label': 'Auto-send when quiet' }, [
+    h('option', { value: '0' }, 'Off - tap to send'),
+    ...AUTO_SEND_SECONDS.map(s => h('option', { value: String(s) }, `After ${s} seconds of quiet`)),
+  ]) as HTMLSelectElement
+  void getAutoSendSeconds().then(seconds => (select.value = String(seconds)))
+  select.addEventListener('change', async () => {
+    if (await setAutoSendSeconds(Number(select.value))) toast('Auto-send saved')
+  })
+  return h(
+    'div',
+    { style: 'margin-top: 12px' },
+    h('div', { class: 'section-label' }, 'Auto-send when quiet'),
+    h(
+      'div',
+      { class: 'caption', style: 'margin: 0 0 6px' },
+      'Off: the question is sent when you tap. On: it is also sent after you stay quiet this long. A recording where nothing is said still stops after a few seconds.',
+    ),
+    select,
   )
 }
 

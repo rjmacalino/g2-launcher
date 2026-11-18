@@ -4,6 +4,7 @@ import { openLiveTranscriber, type LiveHandlers, type LiveTranscriber } from './
 import { openDeepgramTranscriber } from './deepgramTranscribe'
 import {
   TRANSCRIBER_NAMES,
+  getAutoSendSeconds,
   getDeepgramKey,
   getTranscriber,
   type Transcriber,
@@ -128,6 +129,13 @@ export function isLiveTranscribing(): boolean {
   return live !== null
 }
 
+// The current recording's auto-send pause in seconds, 0 when off (G2-158).
+let recordingAutoSend = 0
+
+export function autoSendSeconds(): number {
+  return recordingAutoSend
+}
+
 // Who is listening right now, for the listening screen (G2-157): the live
 // engine, flagged while it is not connected (Whisper then writes the
 // question after the tap), or Whisper.
@@ -183,12 +191,7 @@ export async function start(
   chunks = [...(captureOptions.preroll ?? [])]
   const onEndpoint = captureOptions.onEndpoint
   const prerollLevels = levelsOf(captureOptions.preroll ?? [])
-  endpointer = onEndpoint
-    ? createTurnDetector({
-        initialFloor: prerollLevels.length > 0 ? Math.min(...prerollLevels) : undefined,
-        alreadySpeaking: endsInSpeech(prerollLevels),
-      })
-    : null
+  endpointer = null
   let endpointReported = false
   endpointDecision = null
   live?.close()
@@ -198,8 +201,22 @@ export async function start(
   liveEngine = null
   liveConnected = false
   missingKeyFor = null
-  const choice = await liveChoice()
+  const [choice, autoSend] = await Promise.all([liveChoice(), getAutoSendSeconds()])
   if (myCapture !== captureToken) return false
+  recordingAutoSend = autoSend
+  // Auto-send when quiet (G2-158): off ends the recording only on a tap, so
+  // no question goes out half-said. "Nothing said at all" still ends it
+  // either way, so a false "Hey Jarvis" does not leave the mic streaming
+  // to a live engine for ten minutes.
+  const pauseMs = autoSend > 0 ? autoSend * 1000 : Infinity
+  endpointer = onEndpoint
+    ? createTurnDetector({
+        initialFloor: prerollLevels.length > 0 ? Math.min(...prerollLevels) : undefined,
+        alreadySpeaking: endsInSpeech(prerollLevels),
+        completePauseMs: pauseMs,
+        incompletePauseMs: pauseMs,
+      })
+    : null
   if (choice && !choice.key) missingKeyFor = choice.engine
   if (choice?.key) {
     const caption = captureOptions.onCaption
@@ -226,7 +243,8 @@ export async function start(
     chunks.push(pcm)
     live?.push(pcm)
     if (!endpointer || !onEndpoint || endpointReported) return
-    // With Gemini Live, what has been said decides how long a pause may be.
+    // With a live engine, new words count as speech even when the level
+    // missed them.
     const decision = endpointer.push(rmsLevel(toFloat32(pcm)), live ? liveText() : null)
     if (decision === 'listening') return
     endpointReported = true

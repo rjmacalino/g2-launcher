@@ -5,6 +5,7 @@ import {
   createTurnDetector,
   soundsFinished,
 } from '../src/shared/endOfTurn'
+import { parseAutoSend } from '../src/shared/autoSend'
 
 const LOUD = 0.2
 const QUIET = 0.002
@@ -56,6 +57,48 @@ describe('createTurnDetector (G2-149)', () => {
     let ms = 0
     while (turn.push(QUIET, 'Write a function that sums an array.') !== 'finished') ms += 100
     expect(ms + 100).toBe(COMPLETE_PAUSE_MS)
+  })
+
+  // Auto-send as voiceCapture sets it up (G2-158): one pause for every
+  // question, and Infinity when it is off.
+  function quietUntilSent(pauseMs: number): number {
+    const turn = createTurnDetector({
+      initialFloor: QUIET,
+      completePauseMs: pauseMs,
+      incompletePauseMs: pauseMs,
+    })
+    for (let i = 0; i < 10; i++) turn.push(LOUD, 'What is a closure?')
+    for (let ms = 100; ms <= 60_000; ms += 100) {
+      if (turn.push(QUIET, 'What is a closure?') !== 'listening') return ms
+    }
+    return -1
+  }
+
+  it('auto-send after 10 s waits 10 s of quiet even for a finished question', () => {
+    expect(quietUntilSent(10_000)).toBe(10_000)
+  })
+
+  it('auto-send off never sends on quiet; only a tap ends the recording', () => {
+    expect(quietUntilSent(Infinity)).toBe(-1)
+  })
+
+  it('auto-send off still stops a recording where nothing is said', () => {
+    const turn = createTurnDetector({
+      initialFloor: QUIET,
+      completePauseMs: Infinity,
+      incompletePauseMs: Infinity,
+    })
+    let decision = 'listening'
+    for (let i = 0; i < 60 && decision === 'listening'; i++) decision = turn.push(QUIET, '')
+    expect(decision).toBe('no-speech')
+  })
+
+  it('reads the saved auto-send choice, anything unknown as off', () => {
+    expect(parseAutoSend('10')).toBe(10)
+    expect(parseAutoSend('20')).toBe(20)
+    expect(parseAutoSend('')).toBe(0)
+    expect(parseAutoSend('7')).toBe(0)
+    expect(parseAutoSend('0')).toBe(0)
   })
 
   it('gives up when nothing is said at all', () => {

@@ -1,4 +1,5 @@
 import { bridge, status } from '../platform/bridge'
+import { parseAutoSend } from '../shared/autoSend'
 
 // Which speech-to-text Jarvis uses (G2-134, G2-135, G2-157), chosen on the
 // companion page:
@@ -40,6 +41,23 @@ export async function getTranscriber(): Promise<Transcriber> {
 export async function setTranscriber(choice: Transcriber): Promise<boolean> {
   const ok = await bridge.setLocalStorage(STORAGE_KEY, choice)
   if (!ok) status('Failed to save the transcriber setting')
+  return ok
+}
+
+// Auto-send when quiet (G2-158, shared/autoSend.ts). 0 means off.
+const AUTO_SEND_KEY = 'jarvis.autoSendSeconds'
+
+export async function getAutoSendSeconds(): Promise<number> {
+  try {
+    return parseAutoSend(await bridge.getLocalStorage(AUTO_SEND_KEY))
+  } catch {
+    return 0
+  }
+}
+
+export async function setAutoSendSeconds(seconds: number): Promise<boolean> {
+  const ok = await bridge.setLocalStorage(AUTO_SEND_KEY, String(parseAutoSend(String(seconds))))
+  if (!ok) status('Failed to save the auto-send setting')
   return ok
 }
 

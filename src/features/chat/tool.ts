@@ -7,7 +7,14 @@ import { positionLabel } from '../../shared/position'
 import { exchangesOf, historyRows } from './exchanges'
 import { questionLine } from '../../shared/questionKeywords'
 import { modelLabel } from '../../core/llmProviders'
-import { cancel, isLiveTranscribing, listeningEngine, start, stop } from '../../core/voiceCapture'
+import {
+  autoSendSeconds,
+  cancel,
+  isLiveTranscribing,
+  listeningEngine,
+  start,
+  stop,
+} from '../../core/voiceCapture'
 import { engineDescription } from '../../core/whisper'
 import { takePreroll } from '../../core/wakeListener'
 import { dispatchVoiceCommand } from '../../core/voiceDispatch'
@@ -938,11 +945,11 @@ async function beginListening() {
         heardSoFar = text
         drawListening()
       },
-      // Every recording ends by itself after a smart pause (G2-149,
-      // shared/endOfTurn.ts): short when the question sounds finished, long
-      // when it trails off. A tap still sends at once. Every ending is
-      // transcribed, "no-speech" included: the loudness check misses quiet
-      // speech [LAB-SIM], and Whisper or Gemini Live is the real judge.
+      // A recording ends on a tap, or by itself after the quiet time set in
+      // Settings (G2-158, off by default), or when nothing is said at all.
+      // Every ending is transcribed, "no-speech" included: the loudness
+      // check misses quiet speech [LAB-SIM], and the transcriber is the
+      // real judge.
       onEndpoint: () => {
         if (mySession !== sessionToken || !listening) return
         void finishListening()
@@ -962,9 +969,12 @@ async function beginListening() {
   // it stopped at - see the companion page's status line.
   status(viaWake ? 'Jarvis: recording (Hey Jarvis)' : 'Jarvis: recording')
   // Who is listening (G2-157), redrawn every second, so a live engine that
-  // drops or never connects shows up on the glasses as it happens.
+  // drops or never connects shows up on the glasses as it happens; then
+  // how the question is sent (G2-158).
+  const quiet = autoSendSeconds()
+  const hint = quiet > 0 ? `Tap to send, or stay quiet ${quiet}s` : 'Tap to send'
   startLiveStatus(mySession, (dots, elapsedSeconds) => {
-    listenHeader = `${listeningEngine()} listening${dots} (${elapsedSeconds}s)\nPause to send, or tap`
+    listenHeader = `${listeningEngine()} listening${dots} (${elapsedSeconds}s)\n${hint}`
     drawListening(true)
   })
 }
