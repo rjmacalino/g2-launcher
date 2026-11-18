@@ -185,9 +185,8 @@ export async function devAsk(text: string): Promise<void> {
   currentSessionId = created.id
   currentSessionTitle = created.title
   currentMessages = created.messages
-  // Saved before it is announced: the phone page looks the chat up, and
-  // sends the glasses back to the list if it is not there yet.
-  await chatSessions.save({
+  // Not awaited, exactly like a spoken first question (finishListening).
+  void chatSessions.save({
     id: created.id,
     title: created.title,
     messages: created.messages,

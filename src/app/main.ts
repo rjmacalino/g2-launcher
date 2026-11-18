@@ -93,6 +93,7 @@ import {
   retry as retryJarvis,
   prepareOpen as prepareJarvisOpen,
   isAtPicker as isJarvisAtPicker,
+  chatTool,
   isJarvisEntry,
   isQuickAskEmpty as isJarvisQuickAskEmpty,
   onReturnRequested as onJarvisReturnRequested,
@@ -506,7 +507,13 @@ onScreenRequest(request => {
     if (screen.kind !== 'menu' || confirming || alerting) returnToMenu()
     return
   }
-  const index = TOOLS.findIndex(t => t.name === request.name)
+  // The phone names every chat "Jarvis" (the engine), so a chat request
+  // while Interview or Code is open stays in that entry instead of
+  // closing it for the Jarvis one.
+  const index =
+    request.name === chatTool.name && screen.kind === 'tool' && isJarvisIndex(screen.index)
+      ? screen.index
+      : TOOLS.findIndex(t => t.name === request.name)
   if (index < 0) return
   const tool = TOOLS[index]
   if (screen.kind === 'tool' && screen.index === index && !confirming && !alerting) {

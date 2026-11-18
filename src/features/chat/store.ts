@@ -243,8 +243,10 @@ function newSession(first: ChatMessage, mode?: string, language?: string | null)
 // before touching anything, so it can never overwrite history it has not
 // seen yet - which also means a caller should not await it on any path the
 // wearer is waiting on.
+// Once loaded, the cache changes before save returns, so a chat announced
+// right after saving it is already there for the phone page to find.
 async function save(session: ChatSession): Promise<void> {
-  await load()
+  if (cache === null) await load()
   const others = (cache ?? []).filter(s => s.id !== session.id)
   // A save that does not mention the mode keeps the one the chat has.
   const before = (cache ?? []).find(s => s.id === session.id)

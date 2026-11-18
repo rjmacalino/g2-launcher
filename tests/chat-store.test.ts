@@ -99,6 +99,16 @@ describe('chatSessions', () => {
     expect(ids).toHaveLength(2)
   })
 
+  it('once loaded, a new chat is in peek as soon as save is called, before it is awaited', async () => {
+    // A new chat's id goes to the phone page right after an unawaited save;
+    // if peek missed it, the page sent the glasses back to the list (G2-156).
+    const store = await freshStore()
+    await store.readAll()
+    const session = store.newSession(message('user', 'first question'))
+    void store.save(session)
+    expect(store.peek()?.map(s => s.id)).toEqual([session.id])
+  })
+
   it('save replaces a session by id rather than duplicating it', async () => {
     const store = await freshStore()
     const session = store.newSession(message('user', 'q'))
