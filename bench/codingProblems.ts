@@ -313,6 +313,25 @@ print('PASS')`,
 
 const SAMPLE_PROFILE = 'ABOUT ME (sample). I am a full-stack web developer learning Python.'
 
+// Python shorthand a beginner would have to decode (G2-154): the Code mode
+// rules ask for none of it unless there is no simple alternative.
+const SHORTHAND: [string, RegExp][] = [
+  ['comprehension', /[[{(][^\n\]})]* for [^\n]* in [^\n]*[\]})]/],
+  ['lambda', /\blambda\b/],
+  ['inline if-else', /^(?!\s*(if|elif|else)\b).*\S.* if .+ else /m],
+  ['Counter', /\bCounter\(/],
+  ['defaultdict', /\bdefaultdict\(/],
+  ['[::-1]', /\[::-1\]/],
+  ['map/filter/reduce', /\b(map|filter|reduce)\(/],
+  ['zip', /\bzip\(/],
+  ['key=', /\bkey\s*=/],
+  ['walrus', /:=/],
+]
+
+function shorthandIn(code: string): string[] {
+  return SHORTHAND.filter(([, pattern]) => pattern.test(code)).map(([name]) => name)
+}
+
 // The solution: the longest code block. A walk-through line that merely
 // looks like code ("primary += arr[0][0] = 11") is a block of its own and
 // would break the program if joined in.
@@ -357,6 +376,7 @@ if (!config || config.provider !== provider) {
 }
 let passed = 0
 let total = 0
+let shorthand = 0
 const log: unknown[] = []
 for (const modeId of [onlyMode ?? 'coding'] as ModeId[]) {
   const mode = MODES.find(m => m.id === modeId)!
@@ -376,9 +396,12 @@ for (const modeId of [onlyMode ?? 'coding'] as ModeId[]) {
     })
     const seconds = ((Date.now() - began) / 1000).toFixed(1)
     const text = reply.kind === 'answer' ? reply.text : JSON.stringify(reply)
-    const result = grade(problem, codeOf(text))
+    const code = codeOf(text)
+    const result = grade(problem, code)
+    const tricks = shorthandIn(code)
     total++
     if (result === 'PASS') passed++
+    shorthand += tricks.length
     log.push({
       provider,
       model: config.model,
@@ -386,15 +409,17 @@ for (const modeId of [onlyMode ?? 'coding'] as ModeId[]) {
       problem: problem.name,
       seconds,
       result,
+      shorthand: tricks,
       text,
     })
     console.log(
-      `${result.startsWith('PASS') ? 'PASS' : 'FAIL'} ${mode.label} | ${problem.name} | ${seconds}s`,
+      `${result.startsWith('PASS') ? 'PASS' : 'FAIL'} ${mode.label} | ${problem.name} | ${seconds}s` +
+        (tricks.length > 0 ? ` | shorthand: ${tricks.join(', ')}` : ''),
     )
     if (result !== 'PASS') console.log(`     ${result}`)
   }
 }
 const file = `bench/results/coding-${new Date().toISOString().replace(/[:.]/g, '-')}.json`
 writeFileSync(file, JSON.stringify(log, null, 2))
-console.log(`\n${passed}/${total} passed. Full answers: ${file}`)
+console.log(`\n${passed}/${total} passed, ${shorthand} shorthand uses. Full answers: ${file}`)
 process.exit(0)
