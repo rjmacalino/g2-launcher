@@ -554,14 +554,64 @@ function diagnosticsCard(): { el: HTMLElement; stop: () => void } {
   }
 }
 
+// Settings in three tabs (G2-181) instead of one long scroll: what you set
+// once for listening, what answers, and the text and diagnostics behind it.
+type SettingsTab = 'voice' | 'answers' | 'advanced'
+const SETTINGS_TABS: { id: SettingsTab; label: string }[] = [
+  { id: 'voice', label: 'Voice' },
+  { id: 'answers', label: 'Answers' },
+  { id: 'advanced', label: 'Advanced' },
+]
+let settingsTab: SettingsTab = 'voice'
+
 export function settingsView(ctx: AppContext): Page {
+  const tabs = h(
+    'div',
+    { class: 'segmented', role: 'tablist', style: 'margin-bottom: 12px' },
+    SETTINGS_TABS.map(t =>
+      h(
+        'button',
+        {
+          class: t.id === settingsTab ? 'on' : '',
+          role: 'tab',
+          'aria-selected': String(t.id === settingsTab),
+          onclick: () => {
+            if (t.id === settingsTab) return
+            settingsTab = t.id
+            ctx.refresh()
+          },
+        },
+        t.label,
+      ),
+    ),
+  )
+  if (settingsTab === 'voice') {
+    return { title: 'Settings', body: h('div', {}, tabs, glassesCard(ctx), transcriberCard()) }
+  }
+  if (settingsTab === 'answers') {
+    return {
+      title: 'Settings',
+      body: h(
+        'div',
+        {},
+        tabs,
+        aiCard(ctx),
+        textCard(
+          'About you',
+          'A sentence or two Jarvis knows about you, so answers fit you.',
+          "e.g. I'm a product manager learning to code - keep answers short and skip basics I know.",
+          ABOUT_ME_MAX_CHARS,
+          getAboutMe,
+          setAboutMe,
+        ),
+      ),
+    }
+  }
   const diagnostics = diagnosticsCard()
   const body = h(
     'div',
     {},
-    glassesCard(ctx),
-    label('Jarvis'),
-    aiCard(ctx),
+    tabs,
     textCard(
       'Instructions for Jarvis',
       'Like a CLAUDE.md: who you are and how you want answers. Sent with every question to whichever AI answers. Edit it freely. Save an empty box to send no instructions; Reset to default brings the starting text back.',
@@ -571,15 +621,6 @@ export function settingsView(ctx: AppContext): Page {
       setLocalInstructions,
       resetLocalInstructions,
     ),
-    textCard(
-      'About you',
-      'A sentence or two Jarvis knows about you, so answers fit you.',
-      "e.g. I'm a product manager learning to code - keep answers short and skip basics I know.",
-      ABOUT_ME_MAX_CHARS,
-      getAboutMe,
-      setAboutMe,
-    ),
-    transcriberCard(),
     // One editable preset per mode (G2-139); picked per chat on the glasses
     // with "New chat: Interview" and so on. Auto has none.
     ...MODES.filter(m => m.id !== 'auto').map(m =>
