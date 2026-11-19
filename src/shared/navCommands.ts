@@ -17,6 +17,8 @@ export type NavCommand =
       language?: Language
     }
   | { kind: 'newList'; name: string }
+  // The gesture card (G2-183).
+  | { kind: 'help' }
 
 // Politeness and fillers around a command, dropped before matching.
 const FILLER =
@@ -46,6 +48,8 @@ const OPEN =
   /^(open|go to|show|show me|start|launch) (my |the )?(jarvis|notes|note|lists|list|checklists|interview|interviews|code|coding)$/
 const NEW_CHAT =
   /^(?:(?:start|open) (?:a )?)?new (interview |coding |code |general |python |javascript |typescript |c sharp |c# |js |ts )?(?:chat|conversation)$/
+const HELP =
+  /^(help|help me|what can i do|what can you do|how does this work|show (me )?(the )?(help|gestures|controls)|gestures|controls)$/
 const NEW_LIST =
   /^(create|make|start|add|new)( a)?( new)? (note|list|checklist)( called| named| for)? (.+)$/
 
@@ -54,6 +58,7 @@ export function parseNavCommand(transcript: string): NavCommand | null {
   if (!text || text.split(' ').length > 8) return null
   if (BACK.test(text)) return { kind: 'back' }
   if (HOME.test(text)) return { kind: 'home' }
+  if (HELP.test(text)) return { kind: 'help' }
   if (DOWN.test(text)) return { kind: 'scroll', delta: 1 }
   if (UP.test(text)) return { kind: 'scroll', delta: -1 }
   const open = OPEN.exec(text)

@@ -85,3 +85,15 @@ describe('parseNavCommand (G2-150)', () => {
     }
   })
 })
+
+describe('help (G2-183)', () => {
+  it('understands asking for the gestures', () => {
+    for (const said of ['Help', 'Hey Jarvis, help me.', 'What can I do?', 'Show me the controls']) {
+      expect(parseNavCommand(said)).toEqual({ kind: 'help' })
+    }
+  })
+
+  it('does not take a real question about help for the command', () => {
+    expect(parseNavCommand('How do I help a friend who is stressed?')).toBeNull()
+  })
+})

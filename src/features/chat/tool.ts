@@ -3,6 +3,7 @@ import {
   FOLLOW_UP_CONFIRM_MS,
   canListen,
   isBusy as isFlowBusy,
+  GESTURE_CARD,
   hintFor,
   type HintScreen,
   onLongPress as decideLongPress,
@@ -1391,6 +1392,13 @@ export function devVoiceCommand(text: string): boolean {
 // Scrolling is Jarvis's own (it owns the pages); everything else is moving
 // between screens, which the shell does (core/navigation.ts).
 function runNavCommand(nav: NavCommand): void {
+  // The gesture card on this screen (G2-183): not saved, gone on the next
+  // question, double-tap goes back as from any answer.
+  if (nav.kind === 'help') {
+    pages = []
+    void setContent(GESTURE_CARD)
+    return
+  }
   if (nav.kind !== 'scroll') {
     navigate(nav)
     return

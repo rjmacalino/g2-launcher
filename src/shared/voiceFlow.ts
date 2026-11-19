@@ -136,6 +136,18 @@ export function hintFor(h: HintInput): string {
   }
 }
 
+// The gesture card (G2-183): "Hey Jarvis, help". The same gestures the hint
+// row names, all on one screen.
+export const GESTURE_CARD = [
+  'Gestures',
+  'hold: ask a question (hold twice over an answer)',
+  'tap: send / pause / continue / open code',
+  'swipe: read on; swipe up at the top: earlier questions',
+  'double-tap: back (answer, list, launcher)',
+  '"Hey Jarvis": ask without touching',
+  'say "go back", "go home", "scroll down", "new python chat"',
+].join('\n')
+
 // Length in ms of a 16-bit mono PCM frame (G2-162): measured, never assumed.
 export function frameMs(bytes: number, sampleRate: number): number {
   return (bytes / 2 / sampleRate) * 1000

@@ -4,6 +4,7 @@ import {
   autoSendCountdown,
   canListen,
   frameMs,
+  GESTURE_CARD,
   hintFor,
   isBusy,
   onLongPress,
@@ -174,5 +175,13 @@ describe('hint row (G2-178)', () => {
         hint({ screen, countdown: 20, hasCode: true, earlier: true }).length,
       ).toBeLessThanOrEqual(52)
     }
+  })
+})
+
+describe('gesture card (G2-183)', () => {
+  it('fits one screen of the glasses', () => {
+    const lines = GESTURE_CARD.split('\n')
+    expect(lines.length).toBeLessThanOrEqual(8)
+    for (const line of lines) expect(line.length).toBeLessThanOrEqual(60)
   })
 })
