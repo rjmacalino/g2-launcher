@@ -5,7 +5,6 @@ import {
   ListItemContainerProperty,
   MenuContainerProperty,
   MenuItemProperty,
-  OsEventTypeList,
   RebuildPageContainer,
   TextContainerProperty,
 } from '@evenrealities/even_hub_sdk'
@@ -47,6 +46,20 @@ import {
 import { registerRebuildHandler } from '../core/rebuild'
 import { registerStatusNoteHandler } from '../core/statusNote'
 import { trace } from '../shared/trace'
+import {
+  isAnyTap,
+  isDoubleTap as isDoubleTapOf,
+  isExit,
+  isForegroundEnter,
+  isForegroundExit,
+  isLifecycle,
+  isListChoice,
+  isListClick,
+  isLongPress,
+  isSingleTap as isSingleTapOf,
+  scrollDelta,
+  typesOf,
+} from '../shared/gesture'
 import { onScreenRequest, publishToolScreen, setCurrentScreen } from '../core/currentScreen'
 import { persistScreen, readStoredScreen, type Screen } from './screen'
 import { TOOLS, TOOL_NAMES } from './registry'
@@ -1126,16 +1139,6 @@ onJarvisReturnRequested(() => {
 
 // Reads the event type out of one envelope.
 //
-// CLICK_EVENT is 0, and protobuf omits zero-value fields on the wire, so a single
-// tap arrives as an envelope whose `eventType` is `undefined`. The default has to
-// be resolved INSIDE the envelope check. Writing
-// `event.sysEvent?.eventType ?? CLICK_EVENT` instead would read CLICK on events
-// that carry no `sysEvent` at all, so every scroll, exit and audio frame would
-// fire the tap handler.
-function eventTypeOf(envelope?: { eventType?: OsEventTypeList }): OsEventTypeList | null {
-  if (!envelope) return null
-  return envelope.eventType ?? OsEventTypeList.CLICK_EVENT
-}
 
 // Event routing. Three envelopes, and the order below is load-bearing:
 //
@@ -1193,9 +1196,8 @@ const unsubscribe = bridge.onEvenHubEvent(event => {
   // be pinned down for this to be the right fix.
   startStatusBar()
 
-  const sysType = eventTypeOf(event.sysEvent)
-  const textType = eventTypeOf(event.textEvent)
-  const listType = eventTypeOf(event.listEvent)
+  // What the event means as a gesture: shared/gesture.ts (G2-175, tested).
+  const types = typesOf(event)
   const listEvent = event.listEvent
   // Hardware trace (G2-171): the raw type, before a missing one becomes a
   // click, so a stray "tap" shows up as null. No text or item names.
@@ -1219,10 +1221,7 @@ const unsubscribe = bridge.onEvenHubEvent(event => {
     })
   }
 
-  const isDoubleTap =
-    sysType === OsEventTypeList.DOUBLE_CLICK_EVENT ||
-    textType === OsEventTypeList.DOUBLE_CLICK_EVENT ||
-    listType === OsEventTypeList.DOUBLE_CLICK_EVENT
+  const isDoubleTap = isDoubleTapOf(types)
 
   // The "Time's up!" alert covers the page: any tap or double-tap dismisses
   // it - a double-tap must not also count as "back" on the page underneath,
@@ -1230,19 +1229,11 @@ const unsubscribe = bridge.onEvenHubEvent(event => {
   // nothing while it is up. Foreground enter/exit still fall through: the
   // clock, weather and the tool underneath need them regardless.
   if (alerting) {
-    const isTap =
-      isDoubleTap ||
-      sysType === OsEventTypeList.CLICK_EVENT ||
-      textType === OsEventTypeList.CLICK_EVENT ||
-      listType === OsEventTypeList.CLICK_EVENT
-    if (isTap) {
+    if (isAnyTap(types)) {
       dismissTimerAlert()
       return
     }
-    const isLifecycle =
-      sysType === OsEventTypeList.FOREGROUND_ENTER_EVENT ||
-      sysType === OsEventTypeList.FOREGROUND_EXIT_EVENT
-    if (!isLifecycle) return
+    if (!isLifecycle(types)) return
   }
 
   // The leave prompt. A native list (see confirmContainers), so scroll and
@@ -1255,10 +1246,7 @@ const unsubscribe = bridge.onEvenHubEvent(event => {
   // what stops an accidental double-tap while the prompt is open from falling
   // through to the exit/back logic meant for when no prompt is showing.
   if (confirming && screen.kind === 'tool') {
-    if (
-      listEvent &&
-      (listType === OsEventTypeList.CLICK_EVENT || listType === OsEventTypeList.DOUBLE_CLICK_EVENT)
-    ) {
+    if (listEvent && isListChoice(types)) {
       const tool = TOOLS[screen.index]
       const choice = listEvent.currentSelectItemIndex ?? CONFIRM_NO
       if (choice === CONFIRM_YES) {
@@ -1282,9 +1270,7 @@ const unsubscribe = bridge.onEvenHubEvent(event => {
   // double-tap still falls through to the normal leave-confirmation
   // behaviour below. (The old one-shot Jarvis ended a recording with a
   // double-press instead; that tool is gone, merged into this one.)
-  const isSingleTap =
-    !isDoubleTap &&
-    (sysType === OsEventTypeList.CLICK_EVENT || textType === OsEventTypeList.CLICK_EVENT)
+  const isSingleTap = isSingleTapOf(types)
   if (isSingleTap && screen.kind === 'tool' && isJarvisIndex(screen.index)) {
     if (isJarvisListening()) {
       // Which event counted as the tap (G2-163): a recording reported as
@@ -1331,7 +1317,7 @@ const unsubscribe = bridge.onEvenHubEvent(event => {
   // Foreground return. The clock is stale by however long we were away and is on
   // screen on every page, so it gets corrected first. The active tool may have
   // had a subscription stopped under it by the OS.
-  if (sysType === OsEventTypeList.FOREGROUND_ENTER_EVENT) {
+  if (isForegroundEnter(types)) {
     inForeground = true
     micResumed()
     startStatusBar()
@@ -1342,7 +1328,7 @@ const unsubscribe = bridge.onEvenHubEvent(event => {
   }
 
   // Going to background. Stop what the wearer cannot see.
-  if (sysType === OsEventTypeList.FOREGROUND_EXIT_EVENT) {
+  if (isForegroundExit(types)) {
     inForeground = false
     micSuspended()
     activeTool()?.onSuspend?.()
@@ -1356,7 +1342,7 @@ const unsubscribe = bridge.onEvenHubEvent(event => {
   // values, so tapping the first row can arrive as `undefined`. Resolve the
   // default INSIDE the branch where we already know listEvent exists and the
   // event is a click.
-  if (listEvent && listType === OsEventTypeList.CLICK_EVENT && screen.kind === 'menu') {
+  if (listEvent && isListClick(types) && screen.kind === 'menu') {
     openTool(listEvent.currentSelectItemIndex ?? 0)
     return
   }
@@ -1370,7 +1356,7 @@ const unsubscribe = bridge.onEvenHubEvent(event => {
   // listItems or initialContent now return. This is a fresh page the wearer
   // has not started reading yet, not a scrolled document, so a rebuild here
   // costs nothing the way it would inside an open teleprompter.
-  if (listEvent && listType === OsEventTypeList.CLICK_EVENT && screen.kind === 'tool') {
+  if (listEvent && isListClick(types) && screen.kind === 'tool') {
     const tool = TOOLS[screen.index]
     if ((tool.contentKind?.() ?? 'text') === 'list') {
       const index = listEvent.currentSelectItemIndex ?? 0
@@ -1400,7 +1386,7 @@ const unsubscribe = bridge.onEvenHubEvent(event => {
   // matching LONG_PRESS_RELEASE_EVENT - tried release first, and per direct
   // report holding the whole time a question was spoken ended the
   // recording too early. LONG_PRESS_RELEASE_EVENT is deliberately unhandled.
-  if (sysType === OsEventTypeList.LONG_PRESS_EVENT) {
+  if (isLongPress(types)) {
     if (screen.kind === 'tool' && isJarvisIndex(screen.index)) askJarvis()
     else activeTool()?.onLongPress?.()
     return
@@ -1409,15 +1395,10 @@ const unsubscribe = bridge.onEvenHubEvent(event => {
   // Scroll on a tool page. SCROLL_TOP_EVENT and SCROLL_BOTTOM_EVENT are 1 and 2,
   // both non-zero, so the zero-elision trap does not apply here.
   const tool = activeTool()
-  if (tool?.onScroll) {
-    if (textType === OsEventTypeList.SCROLL_BOTTOM_EVENT) {
-      tool.onScroll(1)
-      return
-    }
-    if (textType === OsEventTypeList.SCROLL_TOP_EVENT) {
-      tool.onScroll(-1)
-      return
-    }
+  const delta = scrollDelta(types)
+  if (tool?.onScroll && delta !== null) {
+    tool.onScroll(delta)
+    return
   }
 
   // Contextual menu item click. Only reachable when the active tool declared
@@ -1432,10 +1413,7 @@ const unsubscribe = bridge.onEvenHubEvent(event => {
   // OS-initiated exit. Best-effort: the WebView may be torn down before the event
   // reaches us, so this is not guaranteed to run. If it does, it saves the host
   // from continuing to stream after we are gone.
-  if (
-    sysType === OsEventTypeList.SYSTEM_EXIT_EVENT ||
-    sysType === OsEventTypeList.ABNORMAL_EXIT_EVENT
-  ) {
+  if (isExit(types)) {
     activeTool()?.onClose?.()
     stopStatusBar()
     unsubscribe()
