@@ -45,8 +45,8 @@ function newRowsOf(pages: { text: string }[]): string[] {
 
 describe('paginate', () => {
   it('uses the real screen, and sections as long as an in-place update allows', () => {
-    // Eight rows: the hint row under Jarvis's text takes one (G2-178).
-    expect(SCREEN_ROWS).toBe(8)
+    // Nine rows: the hint is in the status bar, not a row (G2-184).
+    expect(SCREEN_ROWS).toBe(9)
     expect(PAGE_MAX_CHARS).toBeLessThan(2000)
   })
 
@@ -79,12 +79,11 @@ describe('paginate', () => {
     }
   })
 
-  it('makes a page three screens at most, and 100 numbers five pages (G2-116, G2-178)', () => {
+  it('makes a page three screens at most, and 100 numbers four pages (G2-116)', () => {
     expect(PAGE_ROWS).toBe(SCREEN_ROWS * 3)
     const numbers = Array.from({ length: 100 }, (_, i) => String(i + 1)).join('\n')
     const pages = paginate(numbers, PAGE_INNER_WIDTH)
-    // Three screens of eight rows (the hint row takes one): 24 a page.
-    expect(pages).toHaveLength(5)
+    expect(pages).toHaveLength(4)
     for (const [i, page] of pages.entries()) {
       expect(rowsWithoutHint(page.text, i, pages.length).length).toBeLessThanOrEqual(PAGE_ROWS)
     }

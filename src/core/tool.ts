@@ -66,11 +66,6 @@ export type Tool = {
   // for drawing what the glasses' own text cannot - code, in Jarvis.
   contentKind?(): 'text' | 'list' | 'image' | 'tiles'
 
-  // The hint row under a 'text' page (G2-178, platform/page.ts): what the
-  // gestures do right now. A tool that has this gets a content area one row
-  // shorter with the hint below it; null leaves the row blank.
-  hint?(): string | null
-
   // Item labels shown when contentKind() is 'list'. Native firmware selection
   // and highlight, the same widget the launcher menu itself uses.
   listItems?(): string[]

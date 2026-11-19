@@ -103,12 +103,13 @@ export type HintInput = {
   armed: boolean
 }
 
-const GAP = '   '
-
+// Short enough for the status bar's centre slot (G2-184, 216 px, checked in
+// tests/voice-flow.test.ts with the glasses' own font metrics): the one or
+// two gestures that matter most right now. "Hey Jarvis, help" has them all.
 export function hintFor(h: HintInput): string {
   switch (h.screen) {
     case 'listening':
-      return h.countdown !== null ? `sending in ${h.countdown}s${GAP}tap: send now` : 'tap: send'
+      return h.countdown !== null ? `sends in ${h.countdown}s, tap: now` : 'tap: send'
     // Nothing works while transcribing (canListen is false): say so.
     case 'transcribing':
       return 'one moment...'
@@ -116,23 +117,18 @@ export function hintFor(h: HintInput): string {
     case 'thinking':
       return 'hold: ask'
     case 'typing':
-      return `tap: pause${GAP}swipe down: skip to end`
+      return 'tap: pause, down: end'
     case 'paused':
-      return `tap: continue${GAP}swipe: read`
+      return 'tap: continue'
     case 'error':
-      return `tap: retry${GAP}hold: ask again`
+      return 'tap: retry, hold: ask'
     case 'empty':
       return 'hold: ask'
     case 'answer':
-      if (h.armed) return 'hold again: ask a follow-up'
-      return [
-        h.hasCode ? 'tap: code' : null,
-        'hold: ask',
-        h.earlier ? 'up: earlier' : null,
-        'double-tap: back',
-      ]
-        .filter(Boolean)
-        .join(h.hasCode && h.earlier ? '  ' : GAP)
+      if (h.armed) return 'hold again: follow-up'
+      if (h.hasCode) return 'tap: code, hold: ask'
+      if (h.earlier) return 'hold: ask, up: earlier'
+      return 'hold: ask, 2x tap: back'
   }
 }
 

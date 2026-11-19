@@ -1,4 +1,4 @@
-import { CANVAS_WIDTH, HINTED_CONTENT_HEIGHT, PADDING, ROW_HEIGHT_PX } from '../../platform/page'
+import { CANVAS_WIDTH, CONTENT_HEIGHT, PADDING, ROW_HEIGHT_PX } from '../../platform/page'
 import { getTextWidth } from '../../platform/text'
 
 // Lays text out into pages so an answer of any length can be shown in full
@@ -26,7 +26,7 @@ import { getTextWidth } from '../../platform/text'
 // the edge can never be wrapped again by the firmware.
 export const PAGE_INNER_WIDTH = CANVAS_WIDTH - 2 * PADDING - 8
 // Rows visible on one screen.
-export const SCREEN_ROWS = Math.floor((HINTED_CONTENT_HEIGHT - 2 * PADDING) / ROW_HEIGHT_PX)
+export const SCREEN_ROWS = Math.floor((CONTENT_HEIGHT - 2 * PADDING) / ROW_HEIGHT_PX)
 // One continuous scroll, like the Teleprompter, per direct request (code in
 // particular reads badly when split): a section is as long as one in-place
 // update allows (2000-character firmware ceiling, docs/platform.md), so most

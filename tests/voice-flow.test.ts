@@ -12,6 +12,10 @@ import {
   type VoiceState,
 } from '../src/shared/voiceFlow'
 import { createTurnDetector } from '../src/shared/endOfTurn'
+import { getTextWidth } from '@evenrealities/pretext'
+
+// The status bar's centre slot (app/statusBar.ts), less a little margin.
+const CENTRE_SLOT_PX = 216 - 8
 
 // The voice flow's decisions (G2-169), each one a bug first found on the
 // glasses this week.
@@ -123,7 +127,7 @@ describe('auto-send countdown over real mic frames (G2-162, G2-164)', () => {
   })
 })
 
-describe('hint row (G2-178)', () => {
+describe('status bar hint (G2-178, G2-184)', () => {
   const hint = (over: Partial<Parameters<typeof hintFor>[0]>) =>
     hintFor({
       screen: 'answer',
@@ -136,30 +140,24 @@ describe('hint row (G2-178)', () => {
 
   it('says what a tap does in every state, and nothing that would not work', () => {
     expect(hint({ screen: 'listening' })).toBe('tap: send')
-    expect(hint({ screen: 'listening', countdown: 17 })).toBe('sending in 17s   tap: send now')
+    expect(hint({ screen: 'listening', countdown: 17 })).toBe('sends in 17s, tap: now')
     // A long press is ignored while transcribing (canListen is false).
     expect(hint({ screen: 'transcribing' })).not.toMatch(/hold|tap/)
     expect(hint({ screen: 'thinking' })).toBe('hold: ask')
-    expect(hint({ screen: 'typing' })).toBe('tap: pause   swipe down: skip to end')
-    expect(hint({ screen: 'paused' })).toBe('tap: continue   swipe: read')
-    expect(hint({ screen: 'error' })).toBe('tap: retry   hold: ask again')
+    expect(hint({ screen: 'typing' })).toBe('tap: pause, down: end')
+    expect(hint({ screen: 'paused' })).toBe('tap: continue')
+    expect(hint({ screen: 'error' })).toBe('tap: retry, hold: ask')
     expect(hint({ screen: 'empty' })).toBe('hold: ask')
   })
 
-  it('offers the code view only when the answer has one, and the confirmation when armed', () => {
-    expect(hint({})).toBe('hold: ask   double-tap: back')
-    expect(hint({ hasCode: true })).toBe('tap: code   hold: ask   double-tap: back')
-    expect(hint({ armed: true, hasCode: true })).toBe('hold again: ask a follow-up')
+  it('over an answer: code first, then earlier questions, then back', () => {
+    expect(hint({})).toBe('hold: ask, 2x tap: back')
+    expect(hint({ earlier: true })).toBe('hold: ask, up: earlier')
+    expect(hint({ hasCode: true, earlier: true })).toBe('tap: code, hold: ask')
+    expect(hint({ armed: true, hasCode: true })).toBe('hold again: follow-up')
   })
 
-  it('points to earlier questions when the chat has them (G2-179)', () => {
-    expect(hint({ earlier: true })).toBe('hold: ask   up: earlier   double-tap: back')
-    expect(hint({ earlier: true, hasCode: true })).toBe(
-      'tap: code  hold: ask  up: earlier  double-tap: back',
-    )
-  })
-
-  it('fits on one row', () => {
+  it("fits the status bar's centre slot in the glasses' own font", () => {
     const screens = [
       'listening',
       'transcribing',
@@ -170,11 +168,13 @@ describe('hint row (G2-178)', () => {
       'error',
       'empty',
     ] as const
-    for (const screen of screens) {
-      expect(
-        hint({ screen, countdown: 20, hasCode: true, earlier: true }).length,
-      ).toBeLessThanOrEqual(52)
-    }
+    const all = screens.flatMap(screen => [
+      hint({ screen, countdown: 20 }),
+      hint({ screen, hasCode: true }),
+      hint({ screen, earlier: true }),
+      hint({ screen, armed: true }),
+    ])
+    for (const text of all) expect(getTextWidth(text)).toBeLessThanOrEqual(CENTRE_SLOT_PX)
   })
 })
 

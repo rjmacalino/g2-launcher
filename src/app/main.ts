@@ -25,12 +25,6 @@ import {
   CONTAINER_NAME_LIST_HEADER,
   LIST_HEADER_HEIGHT,
   CONTENT_HEIGHT,
-  CANVAS_HEIGHT,
-  CONTAINER_ID_HINT,
-  CONTAINER_NAME_HINT,
-  HINT_HEIGHT,
-  HINTED_CONTENT_HEIGHT,
-  hintShown,
   CONTENT_Y,
   IMAGE_MAX_HEIGHT,
   IMAGE_MAX_WIDTH,
@@ -38,11 +32,13 @@ import {
   PADDING,
   TILE_COUNT,
   tileContainers,
+  setCovered,
 } from '../platform/page'
 import { readWithTimeout } from '../platform/storage'
 import {
   hydrate as hydrateStatusBar,
   setNote as setStatusBarNote,
+  setPosition as setStatusBarPosition,
   setTimer as setStatusBarTimer,
   setWeather as setStatusBarWeather,
   startStatusBar,
@@ -50,7 +46,7 @@ import {
   stopStatusBar,
 } from './statusbar'
 import { registerRebuildHandler } from '../core/rebuild'
-import { registerStatusNoteHandler } from '../core/statusNote'
+import { registerStatusNoteHandler, registerStatusPositionHandler } from '../core/statusNote'
 import { trace } from '../shared/trace'
 import {
   isAnyTap,
@@ -225,6 +221,7 @@ function enterConfirm(tool: Tool) {
   bridge.rebuildPageContainer(new RebuildPageContainer(confirmContainers(tool))).then(ok => {
     if (ok) {
       confirming = true
+      setCovered(true)
     } else {
       status('Failed to open leave prompt')
     }
@@ -237,6 +234,7 @@ function cancelConfirm(index: number) {
   bridge.rebuildPageContainer(new RebuildPageContainer(toolContainers(index))).then(ok => {
     if (ok) {
       confirming = false
+      setCovered(false)
     } else {
       requestExit()
     }
@@ -266,6 +264,7 @@ function rebuildToolInPlace(tool: Tool, index: number) {
 // internal state is already updated by the time the rebuild reads it.
 function confirmExit(tool: Tool, index: number) {
   confirming = false
+  setCovered(false)
   const destination = tool.onConfirmedExit?.() ?? 'menu'
   if (destination === 'menu') {
     // Leaving a Jarvis conversation that a long-press started from another
@@ -388,8 +387,7 @@ function toolTextContent(tool: Tool): TextContainerProperty {
     xPosition: 0,
     yPosition: CONTENT_Y,
     width: CANVAS_WIDTH,
-    // One row shorter for the hint row under it (G2-178).
-    height: tool.hint ? HINTED_CONTENT_HEIGHT : CONTENT_HEIGHT,
+    height: CONTENT_HEIGHT,
     borderWidth: 0,
     paddingLength: PADDING,
     containerID: CONTAINER_ID_CONTENT,
@@ -505,31 +503,6 @@ function toolContainers(index: number) {
     }
   }
 
-  // The hint row (G2-178): what the gestures do right now, under the text.
-  if (tool.hint) {
-    const hint = tool.hint() ?? ''
-    hintShown(hint)
-    return {
-      containerTotalNum: bar.length + 2,
-      textObject: [
-        ...bar,
-        toolTextContent(tool),
-        new TextContainerProperty({
-          xPosition: 0,
-          yPosition: CANVAS_HEIGHT - HINT_HEIGHT,
-          width: CANVAS_WIDTH,
-          height: HINT_HEIGHT,
-          borderWidth: 0,
-          paddingLength: 0,
-          containerID: CONTAINER_ID_HINT,
-          containerName: CONTAINER_NAME_HINT,
-          content: hint,
-          isEventCapture: 0,
-        }),
-      ],
-      menuObject,
-    }
-  }
   return {
     containerTotalNum: bar.length + 1,
     textObject: [...bar, toolTextContent(tool)],
@@ -580,6 +553,7 @@ onScreenRequest(request => {
 })
 
 registerStatusNoteHandler(setStatusBarNote)
+registerStatusPositionHandler(setStatusBarPosition)
 
 registerRebuildHandler((tool, after) => {
   if (confirming || alerting) return
@@ -698,6 +672,7 @@ async function openTool(index: number) {
   // The page is rebuilt below, which draws a fresh empty modal container, so
   // there is nothing left over to clear. Same for the timer alert.
   confirming = false
+  setCovered(false)
   alerting = false
   const tool = TOOLS[index]
 
@@ -739,6 +714,7 @@ async function openTool(index: number) {
 
 function returnToMenu() {
   confirming = false
+  setCovered(false)
   alerting = false
   // Back at the top: nothing left to hand the wearer back to.
   screenBeforeJarvis = null
@@ -1105,6 +1081,7 @@ function showTimerAlert(lateMs: number) {
       // A leave prompt that was open is gone now - dismissing returns to
       // the page itself, not to the question.
       confirming = false
+      setCovered(false)
       alerting = true
       status("Timer: time's up")
     } else {

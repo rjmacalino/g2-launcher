@@ -84,7 +84,12 @@ function formatClock(now: Date): string {
   return `${h12}:${m} ${h24 < 12 ? 'AM' : 'PM'}`
 }
 
+// A tool's position in what it shows ("2/3"), in the date's slot while it
+// lasts (G2-184): the centre slot is the tool's hint now.
+let positionText: string | null = null
+
 function formatDate(now: Date): string {
+  if (positionText) return positionText
   return `${DAY_NAMES[now.getDay()]} ${now.getDate()} ${MONTH_NAMES[now.getMonth()]}`
 }
 
@@ -310,6 +315,11 @@ export function setWeather(next: CurrentWeather | null) {
 // setWeather above. null hands the centre slot back to weather.
 export function setNote(text: string | null) {
   noteText = text
+  refresh()
+}
+
+export function setPosition(text: string | null) {
+  positionText = text
   refresh()
 }
 

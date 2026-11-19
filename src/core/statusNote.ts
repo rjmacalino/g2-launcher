@@ -11,3 +11,15 @@ export function registerStatusNoteHandler(fn: (text: string | null) => void): vo
 export function setStatusNote(text: string | null): void {
   handler?.(text)
 }
+
+// Where the wearer is ("2/3"), in the left slot in place of the date
+// (G2-184); the centre note above is then the hint of what the gestures do.
+let positionHandler: ((text: string | null) => void) | null = null
+
+export function registerStatusPositionHandler(fn: (text: string | null) => void): void {
+  positionHandler = fn
+}
+
+export function setStatusPosition(text: string | null): void {
+  positionHandler?.(text)
+}

@@ -10,7 +10,7 @@ import {
   onPhoneRequest,
   type VoiceState,
 } from '../../shared/voiceFlow'
-import { setStatusNote } from '../../core/statusNote'
+import { setStatusNote, setStatusPosition } from '../../core/statusNote'
 import { modeOf, type ModeId } from '../../core/modes'
 import { navigate } from '../../core/navigation'
 import { parseNavCommand, type NavCommand } from '../../shared/navCommands'
@@ -34,7 +34,7 @@ import { runAssistantActions } from '../../core/assistantActions'
 import { describeModel } from '../../core/llm'
 import { getLlmConfig, providerInfo } from '../../core/llmSettings'
 import { chatSessions, type ChatMessage, type ChatSession } from './store'
-import { setContent as setText, setHint } from '../../platform/page'
+import { setContent as setText } from '../../platform/page'
 import { status } from '../../platform/bridge'
 import { TYPING_TICK_MS } from './typing'
 import { chat, chatAsSession, clearChat, loadChat } from './currentChat'
@@ -320,9 +320,10 @@ function currentHint(): string | null {
   })
 }
 
+// The hint goes in the status bar's centre (G2-184), where it costs no row
+// of the answer; null hands the slot back to the weather.
 function updateHint(): void {
-  const hint = currentHint()
-  if (hint !== null) void setHint(hint)
+  setStatusNote(currentHint())
 }
 
 function setContent(text: string): Promise<boolean> {
@@ -390,12 +391,12 @@ function updatePositionNote(): void {
   updateHint()
   const stream = currentStream()
   if (stream && stream.timer !== null) {
-    setStatusNote(streamNote(stream))
+    setStatusPosition(streamNote(stream))
     return
   }
   // Not over the code view: it has its own screens to count (G2-172).
   if (tailView && !codeView) {
-    setStatusNote(viewLabel(tailView.rows, tailView.win))
+    setStatusPosition(viewLabel(tailView.rows, tailView.win))
     return
   }
   let note: string | null = null
@@ -404,7 +405,7 @@ function updatePositionNote(): void {
       ? positionLabel(codeView.screen, codeView.screens.length)
       : positionLabel(pageIndex, pages.length)
   }
-  setStatusNote(note)
+  setStatusPosition(note)
 }
 
 // A saved conversation the companion page asked for before Jarvis was open
@@ -987,7 +988,7 @@ let thinkingRetryNote = ''
 useScreen({
   setContent: text => setContent(text),
   setNote: note => {
-    setStatusNote(note)
+    setStatusPosition(note)
     updateHint()
   },
   showWindow: (rows, win, setWin) =>
@@ -1540,6 +1541,8 @@ chatSessions.onChange(() => {
 // After a rebuild showed only rebuildSafe's start of a long section, put
 // the whole section up.
 function fillSection(): void {
+  // Every rebuild of this page, however it came (G2-184): hint and position.
+  updatePositionNote()
   if (codeView) {
     void drawCode()
     return
@@ -1568,7 +1571,6 @@ export const chatTool: Tool = {
       : `Leave ${(entry ?? chatTool).name}?`,
   beforeOpen: () => openAs('jarvis', chatTool),
   contentKind: () => (depth !== 'conversation' ? 'list' : codeView ? 'tiles' : 'text'),
-  hint: () => currentHint(),
   listItems: () =>
     depth === 'history'
       ? historyRows(exchangesOf(chat.messages)).map(r => r.label)
@@ -1695,6 +1697,7 @@ export const chatTool: Tool = {
   onClose: () => {
     codeView = null
     setStatusNote(null)
+    setStatusPosition(null)
     stopListeningIfAny()
   },
   onTap: () => {
@@ -1759,6 +1762,7 @@ export const chatTool: Tool = {
   onSuspend: () => {
     stopListeningIfAny()
     setStatusNote(null)
+    setStatusPosition(null)
   },
   onResume: () => {
     resume()

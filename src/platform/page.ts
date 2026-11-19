@@ -83,37 +83,6 @@ export const LIST_HEADER_HEIGHT = LIST_HEADER_ROWS * ROW_HEIGHT_PX + 2 * PADDING
 
 // Replaces the header text in place: no rebuild, so the list below keeps its
 // highlighted row.
-// THE HINT ROW (G2-178): one row under a tool's text that says what the
-// gestures do right now. Same compact style as the status bar. A tool that
-// has one (Tool.hint) gets a content area one row shorter. Id 5 is shared
-// with the list header and the leave prompt's title, which are never on a
-// text page.
-export const HINT_HEIGHT = STATUS_BAR_HEIGHT
-export const HINTED_CONTENT_HEIGHT = CONTENT_HEIGHT - HINT_HEIGHT
-export const CONTAINER_ID_HINT = 5
-export const CONTAINER_NAME_HINT = 'tool.hint'
-
-let shownHint: string | null = null
-
-// After a rebuild put this hint on screen.
-export function hintShown(text: string): void {
-  shownHint = text
-}
-
-// Updates the hint row only when its text changes: an update is a round
-// trip to the glasses, and the hint is redrawn on every state change.
-export function setHint(text: string): Promise<boolean> {
-  if (text === shownHint) return Promise.resolve(true)
-  shownHint = text
-  return bridge.textContainerUpgrade(
-    new TextContainerUpgrade({
-      containerID: CONTAINER_ID_HINT,
-      containerName: CONTAINER_NAME_HINT,
-      content: text,
-    }),
-  )
-}
-
 export function setListHeader(text: string): Promise<boolean> {
   return bridge.textContainerUpgrade(
     new TextContainerUpgrade({
@@ -220,7 +189,19 @@ export const CONFIRM_LIST_Y = CONFIRM_TITLE_Y + CONFIRM_TITLE_HEIGHT
 // needs to know a container ID. A tool that guessed one wrong would write over the
 // status bar, and the whole reason the IDs are fixed is that nothing should be
 // relying on getting that right.
+// While the leave prompt covers the page (G2-184), the tool's content
+// container is not on screen: a Listening or Thinking counter kept sending
+// updates every second, each refused. They are skipped instead and count as
+// shown, so a tool does not take them for a too-long update; "No" rebuilds
+// the page from the tool's current state anyway.
+let covered = false
+
+export function setCovered(next: boolean): void {
+  covered = next
+}
+
 export function setContent(text: string): Promise<boolean> {
+  if (covered) return Promise.resolve(true)
   return bridge
     .textContainerUpgrade(
       new TextContainerUpgrade({
