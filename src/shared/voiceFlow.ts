@@ -139,7 +139,7 @@ export function hintFor(h: HintInput): string {
 // row names, all on one screen.
 export const GESTURE_CARD = [
   'Gestures',
-  'hold: ask a question (hold twice over an answer)',
+  'hold: ask (twice over an answer; not in code)',
   'tap: send / pause / continue / open code',
   'swipe: read on; swipe up at the top: earlier questions',
   'double-tap: back (answer, list, launcher)',

@@ -58,7 +58,7 @@ export function footerFor(blocks: readonly string[], view: CodeLayout, screen: n
   const total = blocks[view.block].split('\n').length
   const where = blocks.length > 1 ? `Code ${view.block + 1}/${blocks.length} - ` : ''
   const more = screen < view.screens.length - 1 ? 'swipe for more, ' : ''
-  return `${where}lines ${first}-${last} of ${total} - ${more}hold: ask, double-tap: text`
+  return `${where}lines ${first}-${last} of ${total} - ${more}double-tap: text`
 }
 
 // Drawing a screen of code took about 4 s on the phone (G2-91), and every

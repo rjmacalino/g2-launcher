@@ -1663,11 +1663,12 @@ export const chatTool: Tool = {
   // handles a long-press itself, by opening a new conversation - see
   // app/main.ts.)
   onLongPress: () => {
+    // No asking from the code view by holding (G2-187, RJ's preference):
+    // double-tap back to the text first. "Hey Jarvis" still works there.
+    if (codeView && !nextListenViaWake) return
     if (depth !== 'picker' && canListenNow() && !confirmFollowUp()) return
     if (codeView) {
-      // Ask the next question, same as from the text (G2-93: one code
-      // size, so long press no longer resizes) - back to the text page
-      // first, then record.
+      // "Hey Jarvis" over the code: back to the text page first, then record.
       codeView = null
       requestRebuild(entry ?? chatTool, () => {
         if (depth === 'conversation' && !busy()) void beginListening()
