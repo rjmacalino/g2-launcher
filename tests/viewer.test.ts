@@ -33,14 +33,16 @@ describe('viewer pages (G2-107, G2-116)', () => {
     const all = rows(TOTAL)
     const pages = viewPages(all)
     // From the typed tail (the last screenful of page 4) up to the rest of it.
+    // Up from the typed tail: a screen above it, through to the page's end
+    // so it still scrolls down natively (G2-189).
     let win = moveView(all, tailWin(all), -1)
-    expect(win).toEqual({ start: tailWin(all).start - SCREEN_ROWS, end: tailWin(all).start })
+    expect(win).toEqual({ start: tailWin(all).start - SCREEN_ROWS, end: pages[3].end })
     // From the top of page 4: the last screenful of page 3.
     win = moveView(all, pages[3], -1)
     expect(win).toEqual({ start: pages[2].end - SCREEN_ROWS, end: pages[2].end })
-    // And again: the screenful before that.
+    // And again: a screen further up, still to the end of page 3.
     win = moveView(all, win!, -1)
-    expect(win).toEqual({ start: pages[2].end - 2 * SCREEN_ROWS, end: pages[2].end - SCREEN_ROWS })
+    expect(win).toEqual({ start: pages[2].end - 2 * SCREEN_ROWS, end: pages[2].end })
     expect(moveView(all, pages[0], -1)).toBeNull()
   })
 
@@ -84,8 +86,18 @@ describe('movePaged (G2-124)', () => {
   it('lands on the last screenful of the page above, then steps back by screenfuls', () => {
     let at = movePaged(lengths, { page: 1, win: null }, -1)
     expect(at).toEqual({ page: 0, win: { start: 27 - SCREEN_ROWS, end: 27 } })
+    // Each step up still runs to the page's end, so it scrolls natively
+    // down past where the wearer was (G2-189).
     at = movePaged(lengths, at!, -1)
-    expect(at).toEqual({ page: 0, win: { start: 27 - 2 * SCREEN_ROWS, end: 27 - SCREEN_ROWS } })
+    expect(at).toEqual({ page: 0, win: { start: 27 - 2 * SCREEN_ROWS, end: 27 } })
+    // At the page's top the whole page shows.
+    expect(movePaged(lengths, at!, -1)).toEqual({ page: 0, win: null })
+  })
+
+  it('after stepping up, a swipe down at the end goes on to the next page (G2-189)', () => {
+    const up = movePaged(lengths, { page: 0, win: { start: 18, end: 27 } }, -1)
+    expect(up).toEqual({ page: 0, win: { start: 9, end: 27 } })
+    expect(movePaged(lengths, up!, 1)).toEqual({ page: 1, win: null })
   })
 
   it('shows a short page above whole', () => {

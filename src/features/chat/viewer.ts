@@ -54,11 +54,12 @@ export function movePaged(
     if (cur.end < length) return { page: at.page, win: { start: cur.end, end: length } }
     return at.page + 1 < lengths.length ? { page: at.page + 1, win: null } : null
   }
+  // Up within a page (G2-189): one screen above the current top, through to
+  // the page's end, so the text shown still scrolls natively down past where
+  // the wearer was, instead of a single screen that cannot scroll at all.
   if (cur.start > 0) {
-    return {
-      page: at.page,
-      win: { start: Math.max(0, cur.start - SCREEN_ROWS), end: cur.start },
-    }
+    const start = Math.max(0, cur.start - SCREEN_ROWS)
+    return { page: at.page, win: start === 0 ? null : { start, end: length } }
   }
   if (at.page === 0) return null
   const before = lengths[at.page - 1]
