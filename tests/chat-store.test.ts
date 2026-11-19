@@ -32,6 +32,18 @@ function message(role: 'user' | 'model', text: string) {
   return { role, text, timestamp: 1 }
 }
 
+// The saved history as one string, read the way the store reads it
+// (G2-170): the chunks of the set the pointer names.
+function storedBlob(): string {
+  const pointer = /^(a|b):(\d+)$/.exec(stored.get('chat.sessions.current') ?? '')
+  if (!pointer) return stored.get('chat.sessions') ?? ''
+  let text = ''
+  for (let i = 0; i < Number(pointer[2]); i++) {
+    text += stored.get(`chat.sessions.${pointer[1]}.${i}`) ?? ''
+  }
+  return text
+}
+
 // Lets queued background writes run.
 const settle = () => new Promise(resolve => setTimeout(resolve, 0))
 
@@ -58,7 +70,7 @@ describe('chatSessions', () => {
     const session = store.newSession(message('user', text))
     await store.save(session)
     await settle()
-    const raw = stored.get('chat.sessions') ?? ''
+    const raw = storedBlob()
     expect([...raw].every(c => c.charCodeAt(0) < 0x7f)).toBe(true)
     const reread = await freshStore()
     expect((await reread.readAll())[0].messages[0].text).toBe(text)
@@ -73,8 +85,8 @@ describe('chatSessions', () => {
     const store = await freshStore()
     await store.readAll()
     await settle()
-    expect(stored.get('chat.sessions')).not.toContain(curly)
-    expect(stored.get('chat.sessions')).toContain('\\u2019')
+    expect(storedBlob()).not.toContain(curly)
+    expect(storedBlob()).toContain('\\u2019')
   })
 
   it('a save made while the load is still unanswered never overwrites saved history', async () => {
@@ -89,12 +101,12 @@ describe('chatSessions', () => {
     void store.save(store.newSession(message('user', 'new question')))
     await settle()
     // Still waiting on the host: nothing written yet, old history intact.
-    expect(JSON.parse(stored.get('chat.sessions') ?? '[]')).toHaveLength(1)
+    expect(JSON.parse(storedBlob() ?? '[]')).toHaveLength(1)
     release()
     hold = null
     await store.readAll()
     await settle()
-    const ids = (JSON.parse(stored.get('chat.sessions') ?? '[]') as { id: string }[]).map(s => s.id)
+    const ids = (JSON.parse(storedBlob() ?? '[]') as { id: string }[]).map(s => s.id)
     expect(ids).toContain('old')
     expect(ids).toHaveLength(2)
   })
@@ -126,22 +138,62 @@ describe('chatSessions', () => {
     await store.remove(session.id)
     await settle()
     expect(await store.readAll()).toHaveLength(0)
-    expect(JSON.parse(stored.get('chat.sessions') ?? '[]')).toHaveLength(0)
+    expect(JSON.parse(storedBlob() ?? '[]')).toHaveLength(0)
   })
 
   it('keeps stored history under the size budget, dropping the oldest first', async () => {
     const store = await freshStore()
-    const long = 'x'.repeat(3000)
+    const long = 'x'.repeat(40_000)
     for (let i = 0; i < 10; i++) {
       const s = store.newSession(message('user', `q${i}`))
       await store.save({ ...s, messages: [...s.messages, message('model', long)] })
     }
     await settle()
-    const raw = stored.get('chat.sessions') ?? ''
-    expect(raw.length).toBeLessThanOrEqual(20_000)
+    const raw = storedBlob()
+    expect(raw.length).toBeLessThanOrEqual(300_000)
     const titles = (await store.readAll()).map(s => s.title)
     expect(titles).toContain('q9')
     expect(titles).not.toContain('q0')
+  })
+
+  it('keeps 30 coding-length chats, stored in chunks, and reads them all back (G2-170)', async () => {
+    const store = await freshStore()
+    const answer = 'x'.repeat(3000)
+    for (let i = 0; i < 30; i++) {
+      const s = store.newSession(message('user', `q${i}`))
+      await store.save({ ...s, messages: [...s.messages, message('model', answer)] })
+    }
+    await settle()
+    expect(stored.get('chat.sessions.current')).toMatch(/^[ab]:[2-9]$/)
+    const again = await freshStore()
+    expect(await again.readAll()).toHaveLength(30)
+  })
+
+  it('moves chats from the old single key into chunks and clears it', async () => {
+    stored.set(
+      'chat.sessions',
+      JSON.stringify([{ id: 'old', title: 'Old', messages: [], updatedAt: 1 }]),
+    )
+    const store = await freshStore()
+    await store.readAll()
+    await settle()
+    expect(stored.get('chat.sessions')).toBe('')
+    expect(JSON.parse(storedBlob()).map((s: { id: string }) => s.id)).toEqual(['old'])
+  })
+
+  it('a save cut off before the pointer flips leaves the previous history intact', async () => {
+    const store = await freshStore()
+    await store.save(store.newSession(message('user', 'kept')))
+    await settle()
+    const before = storedBlob()
+    // The next save writes its chunks, then fails on the pointer.
+    const realSet = stored.set.bind(stored)
+    stored.set = (key: string, value: string) =>
+      key === 'chat.sessions.current' ? stored : realSet(key, value)
+    await store.save(store.newSession(message('user', 'lost')))
+    await settle()
+    stored.set = realSet
+    expect(storedBlob()).toBe(before)
   })
 
   it('treats unreadable stored data as no chats rather than failing', async () => {

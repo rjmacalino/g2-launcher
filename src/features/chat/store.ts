@@ -64,8 +64,37 @@ const TITLE_MAX_CHARS = 64
 // on its actual stored size, which is what really matters to the host's
 // storage bridge (a count alone stopped bounding size once Gemini answers
 // were allowed to run long - see core/gemini.ts).
-const MAX_STORED_SESSIONS = 40
-const MAX_STORED_CHARS = 20_000
+// Raised (G2-170) from 40 chats and 20,000 characters, which kept only the
+// last handful of chats once coding answers (2,000 to 3,000 characters each)
+// came in: history is now split across keys (see persist), as the official
+// device-features skill recommends for large values, 50,000 per key.
+const MAX_STORED_SESSIONS = 100
+const MAX_STORED_CHARS = 300_000
+const CHUNK_CHARS = 50_000
+
+// The history is written as chunks under one of two sets, "a" and "b"
+// (chat.sessions.a.0, chat.sessions.a.1, ...), and this pointer names the
+// complete set: "a:2" means set a, two chunks. Each save fills the set not
+// in use, then flips the pointer, so a save cut off half way leaves the
+// previous complete copy in place instead of a corrupt mix. The old single
+// key (STORAGE_KEY) is still read once, to move existing chats over.
+const POINTER_KEY = 'chat.sessions.current'
+
+export function chunkKey(set: string, index: number): string {
+  return `${STORAGE_KEY}.${set}.${index}`
+}
+
+export function splitChunks(text: string, size: number = CHUNK_CHARS): string[] {
+  const chunks: string[] = []
+  for (let i = 0; i < text.length; i += size) chunks.push(text.slice(i, i + size))
+  return chunks
+}
+
+// "a:2" -> { set: 'a', count: 2 }; anything else -> null.
+export function parsePointer(value: string): { set: 'a' | 'b'; count: number } | null {
+  const match = /^(a|b):(\d+)$/.exec(value)
+  return match ? { set: match[1] as 'a' | 'b', count: Number(match[2]) } : null
+}
 
 // THE SHAPE OF THIS FILE, AND WHY.
 //
@@ -157,16 +186,54 @@ function bound(sessions: ChatSession[]): ChatSession[] {
 // than two in-flight writes racing to be last.
 let writeQueue: Promise<void> = Promise.resolve()
 
+// The set the pointer names now; the next save goes to the other one.
+let currentSet: 'a' | 'b' | null = null
+// Whether the old single key still holds data to clear once moved over.
+let legacyToClear = false
+
+async function writeHistory(text: string): Promise<boolean> {
+  const next = currentSet === 'a' ? 'b' : 'a'
+  const chunks = splitChunks(text)
+  for (let i = 0; i < chunks.length; i++) {
+    if (!(await bridge.setLocalStorage(chunkKey(next, i), chunks[i]))) return false
+  }
+  if (!(await bridge.setLocalStorage(POINTER_KEY, `${next}:${chunks.length}`))) return false
+  currentSet = next
+  if (legacyToClear) {
+    legacyToClear = false
+    await bridge.setLocalStorage(STORAGE_KEY, '')
+  }
+  return true
+}
+
 function persist(): void {
   writeQueue = writeQueue.then(() => {
     if (!cache) return
-    return bridge.setLocalStorage(STORAGE_KEY, toStorageString(cache)).then(
+    return writeHistory(toStorageString(cache)).then(
       ok => {
         if (!ok) status('Failed to save chat history')
       },
       () => status('Failed to save chat history'),
     )
   })
+}
+
+// The stored history as one string: the set the pointer names, or the old
+// single key when nothing has been saved in chunks yet.
+async function readHistory(): Promise<string> {
+  const pointer = parsePointer((await bridge.getLocalStorage(POINTER_KEY)) ?? '')
+  if (pointer) {
+    currentSet = pointer.set
+    const chunks = await Promise.all(
+      Array.from({ length: pointer.count }, (_, i) =>
+        bridge.getLocalStorage(chunkKey(pointer.set, i)),
+      ),
+    )
+    return chunks.map(chunk => chunk ?? '').join('')
+  }
+  const legacy = (await bridge.getLocalStorage(STORAGE_KEY)) ?? ''
+  legacyToClear = legacy !== ''
+  return legacy
 }
 
 // Single shared load. Never rejects. Rewrites the stored value whenever it
@@ -178,10 +245,9 @@ function load(): Promise<void> {
     const stuckNotice = setTimeout(() => {
       status(`Chat history still loading after ${STUCK_LOAD_REPORT_MS / 1000}s`)
     }, STUCK_LOAD_REPORT_MS)
-    loadPromise = bridge
-      .getLocalStorage(STORAGE_KEY)
+    loadPromise = readHistory()
       .then(
-        raw => raw ?? '',
+        raw => raw,
         () => '',
       )
       .then(raw => {
@@ -191,7 +257,8 @@ function load(): Promise<void> {
           status(`Chat history load took ${(ms / 1000).toFixed(1)}s (${raw.length} chars)`)
         }
         cache = bound(parseSessions(raw))
-        if (raw !== '' && toStorageString(cache) !== raw) persist()
+        // Also moves chats from the old single key into chunks (G2-170).
+        if (raw !== '' && (legacyToClear || toStorageString(cache) !== raw)) persist()
       })
   }
   return loadPromise
