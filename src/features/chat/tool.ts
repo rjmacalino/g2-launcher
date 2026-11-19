@@ -1655,6 +1655,16 @@ export const chatTool: Tool = {
   // After the rebuild from picking a row in the list: "New chat" goes
   // straight to recording - per direct request, there is nothing else to do
   // on an empty conversation, so a long-press first was a wasted step.
+  onListSelectRefused: () => {
+    if (depth !== 'conversation') return
+    status('Jarvis: the glasses refused to open that chat - back on the list')
+    // Same list as before, in the same order: nothing was opened.
+    depth = 'picker'
+    clearChat(scope === 'code' ? 'coding' : 'auto', codeLanguage)
+    listenWhenReady = false
+    pages = []
+    publishScreen()
+  },
   onContentReady: () => {
     fillSection()
     startIfPending()

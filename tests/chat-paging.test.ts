@@ -125,6 +125,17 @@ describe('paginate', () => {
     expect(rebuildSafe('short')).toBe('short')
   })
 
+  it('counts the rebuild limit in bytes: the divider and symbols take 3 each (G2-188)', () => {
+    const divider = '─'.repeat(12)
+    const text = `You: q\n${divider}\n${Array.from({ length: 80 }, (_, i) => `line ${i} → x`).join('\n')}`
+    const cut = rebuildSafe(text)
+    expect(new TextEncoder().encode(cut).length).toBeLessThanOrEqual(REBUILD_CHAR_LIMIT - 10)
+    expect(text.startsWith(cut)).toBe(true)
+    // One unbroken run of symbols is cut between characters, still in bytes.
+    const run = rebuildSafe('─'.repeat(600))
+    expect(new TextEncoder().encode(run).length).toBeLessThanOrEqual(REBUILD_CHAR_LIMIT - 10)
+  })
+
   it('never starts a page on a blank line', () => {
     for (const page of paginate(longAnswer(8), PAGE_INNER_WIDTH)) {
       expect(page.text.startsWith('\n')).toBe(false)

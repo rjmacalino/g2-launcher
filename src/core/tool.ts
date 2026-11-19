@@ -148,6 +148,11 @@ export type Tool = {
   // instead). Wingman uses it to ask for a cue now.
   onTap?(): void
 
+  // The glasses refused the rebuild after onListSelect (G2-188): the list is
+  // still on screen, so the tool must go back to its list state, or it acts
+  // on a page the wearer cannot see while their list picks do nothing.
+  onListSelectRefused?(): void
+
   // Where inside this tool the wearer is, for the companion page to follow
   // (core/currentScreen.ts) - which list, which conversation. The shell
   // includes it every time it announces this tool is open, so the

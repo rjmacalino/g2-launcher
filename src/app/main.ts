@@ -1377,6 +1377,8 @@ const unsubscribe = bridge.onEvenHubEvent(event => {
             tool.onContentReady?.()
           } else {
             status(`Failed to update ${tool.name}`)
+            // The list is still on screen: the tool goes back to it (G2-188).
+            tool.onListSelectRefused?.()
           }
         })
       return

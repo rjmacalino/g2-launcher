@@ -153,11 +153,21 @@ export function paginate(text: string, innerWidth: number): Page[] {
 // The start of a section, cut at a line break to fit a full rebuild's
 // 1000-character ceiling. Jarvis shows this first, then the whole section
 // by an in-place update once the page is on screen (tool.ts).
-export function rebuildSafe(text: string): string {
-  const limit = REBUILD_MAX_CHARS - 10
-  if (text.length <= limit) return text
-  const cut = text.lastIndexOf('\n', limit)
-  return text.slice(0, cut > 0 ? cut : limit)
+// The limit is counted in UTF-8 bytes (G2-188): the divider's 12 box-drawing
+// characters are 36 bytes, so a section cut at 990 characters went past it
+// and the glasses refused to open long chats from the list.
+const utf8 = new TextEncoder()
+export const byteLength = (text: string): number => utf8.encode(text).length
+
+export function rebuildSafe(text: string, limit: number = REBUILD_MAX_CHARS - 10): string {
+  if (byteLength(text) <= limit) return text
+  // Whole lines while they fit, else as many characters as fit.
+  let end = text.lastIndexOf('\n', limit)
+  while (end > 0 && byteLength(text.slice(0, end)) > limit) end = text.lastIndexOf('\n', end - 1)
+  if (end > 0) return text.slice(0, end)
+  let cut = Math.min(text.length, limit)
+  while (cut > 0 && byteLength(text.slice(0, cut)) > limit) cut--
+  return text.slice(0, cut)
 }
 
 // Whether a block of code is short enough to read as text on the glasses.
