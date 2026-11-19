@@ -32,9 +32,11 @@ import {
   TRANSCRIBERS,
   getAutoSendSeconds,
   getDeepgramKey,
+  getSttGeminiKey,
   getTranscriber,
   setAutoSendSeconds,
   setDeepgramKey,
+  setSttGeminiKey,
   setTranscriber,
   type Transcriber,
 } from '../../core/transcriberSettings'
@@ -172,36 +174,26 @@ function transcriberCard(): HTMLElement {
     { class: 'field', 'aria-label': 'Transcriber' },
     TRANSCRIBERS.map(t => h('option', { value: t.id }, t.label)),
   ) as HTMLSelectElement
-  // The Deepgram key (G2-157): shown only while Deepgram is the choice.
-  const keyField = h('input', {
-    class: 'field',
-    type: 'password',
-    placeholder: 'Deepgram API key',
-    autocomplete: 'off',
-    'aria-label': 'Deepgram API key',
-  }) as HTMLInputElement
-  const saveKey = h('button', { class: 'button primary' }, 'Save Deepgram key')
-  saveKey.addEventListener('click', async () => {
-    const typed = keyField.value.trim()
-    if (!(await setDeepgramKey(typed))) toast('Save failed - try again')
-    else toast(typed ? 'Deepgram key saved' : 'Cleared')
+  // Speech to text has its own keys (G2-157, G2-166), separate from the AI
+  // models' keys below: a box for the chosen engine only.
+  const geminiBox = sttKeyBox({
+    label: 'Gemini key for speech to text',
+    hint: 'From aistudio.google.com. Separate from the key of the model that answers. Leave empty to use the Gemini key from AI models (answering).',
+    read: getSttGeminiKey,
+    write: setSttGeminiKey,
   })
-  const keyBox = h(
-    'div',
-    { style: 'margin-top: 12px' },
-    h('div', { class: 'section-label' }, 'Deepgram key'),
-    h(
-      'div',
-      { class: 'caption', style: 'margin: 0 0 6px' },
-      'From console.deepgram.com. Stored on this phone only.',
-    ),
-    keyField,
-    h('div', { style: 'margin-top: 8px' }, saveKey),
-  )
-  const showKeyBox = () => (keyBox.style.display = select.value === 'deepgram' ? '' : 'none')
-  void Promise.all([getTranscriber(), getDeepgramKey()]).then(([choice, key]) => {
+  const deepgramBox = sttKeyBox({
+    label: 'Deepgram key',
+    hint: 'From console.deepgram.com.',
+    read: getDeepgramKey,
+    write: setDeepgramKey,
+  })
+  const showKeyBox = () => {
+    geminiBox.style.display = select.value === 'gemini-live' ? '' : 'none'
+    deepgramBox.style.display = select.value === 'deepgram' ? '' : 'none'
+  }
+  void getTranscriber().then(choice => {
     select.value = choice
-    keyField.value = key ?? ''
     showKeyBox()
   })
   select.addEventListener('change', async () => {
@@ -216,8 +208,45 @@ function transcriberCard(): HTMLElement {
       'How Jarvis turns what you say into text. Gemini Live and Deepgram write the words while you speak, so the question is ready the moment you tap; the listening screen on the glasses shows which one is listening. Deepgram is tuned for coding terms. Whisper works offline on this phone but transcribes only after you tap, which is slower.',
     ),
     select,
-    keyBox,
+    geminiBox,
+    deepgramBox,
     autoSendBox(),
+  )
+}
+
+// One speech-to-text key: a password field with a save button. Stored on
+// this phone only, never bundled.
+function sttKeyBox(key: {
+  label: string
+  hint: string
+  read: () => Promise<string | null>
+  write: (value: string) => Promise<boolean>
+}): HTMLElement {
+  const field = h('input', {
+    class: 'field',
+    type: 'password',
+    placeholder: key.label,
+    autocomplete: 'off',
+    'aria-label': key.label,
+  }) as HTMLInputElement
+  void key.read().then(value => (field.value = value ?? ''))
+  const save = h('button', { class: 'button primary' }, 'Save key')
+  save.addEventListener('click', async () => {
+    const typed = field.value.trim()
+    if (!(await key.write(typed))) toast('Save failed - try again')
+    else toast(typed ? `${key.label} saved` : 'Cleared')
+  })
+  return h(
+    'div',
+    { style: 'margin-top: 12px; display: none' },
+    h('div', { class: 'section-label' }, key.label),
+    h(
+      'div',
+      { class: 'caption', style: 'margin: 0 0 6px' },
+      `${key.hint} Stored on this phone only.`,
+    ),
+    field,
+    h('div', { style: 'margin-top: 8px' }, save),
   )
 }
 
@@ -375,11 +404,11 @@ function aiCard(ctx: AppContext): HTMLElement {
     )
   })()
   return card(
-    h('h2', {}, 'AI'),
+    h('h2', {}, 'AI models (answering)'),
     h(
       'p',
       { class: 'caption', style: 'margin: 0 0 12px' },
-      'Answers your questions and runs actions it is asked for. Keys stay on this phone only.',
+      'The model that answers your questions and runs actions. These keys are for answering only; Speech to text has its own key in its section. Keys stay on this phone only.',
     ),
     body,
   )

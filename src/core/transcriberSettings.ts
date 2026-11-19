@@ -61,6 +61,25 @@ export async function setAutoSendSeconds(seconds: number): Promise<boolean> {
   return ok
 }
 
+// Speech to text has its own Gemini key (G2-166), separate from the key of
+// the model that answers, so quotas and billing are apart. Empty means it
+// falls back to the answering Gemini key (see voiceCapture.ts).
+const STT_GEMINI_KEY = 'jarvis.sttGeminiKey'
+
+export async function getSttGeminiKey(): Promise<string | null> {
+  try {
+    return (await bridge.getLocalStorage(STT_GEMINI_KEY)) || null
+  } catch {
+    return null
+  }
+}
+
+export async function setSttGeminiKey(key: string): Promise<boolean> {
+  const ok = await bridge.setLocalStorage(STT_GEMINI_KEY, key.trim())
+  if (!ok) status('Failed to save the speech-to-text Gemini key')
+  return ok
+}
+
 // The Deepgram key lives in phone storage, like the AI keys; never bundled.
 export async function getDeepgramKey(): Promise<string | null> {
   try {

@@ -6,6 +6,7 @@ import {
   TRANSCRIBER_NAMES,
   getAutoSendSeconds,
   getDeepgramKey,
+  getSttGeminiKey,
   getTranscriber,
   type Transcriber,
 } from './transcriberSettings'
@@ -169,7 +170,10 @@ function liveText(): string {
 async function liveChoice(): Promise<{ engine: Transcriber; key: string | null } | null> {
   try {
     const engine = await getTranscriber()
-    if (engine === 'gemini-live') return { engine, key: await getProviderKey('gemini') }
+    // Its own key first (G2-166), else the answering model's Gemini key.
+    if (engine === 'gemini-live') {
+      return { engine, key: (await getSttGeminiKey()) ?? (await getProviderKey('gemini')) }
+    }
     if (engine === 'deepgram') return { engine, key: await getDeepgramKey() }
     return null
   } catch {
