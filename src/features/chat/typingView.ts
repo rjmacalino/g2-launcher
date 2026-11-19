@@ -1,5 +1,5 @@
 import { PAGE_INNER_WIDTH, tailRows } from './paging'
-import { TYPING_CHARS_PER_SECOND, nextShown } from './typing'
+import { TYPING_CHARS_PER_SECOND, leadSentenceEnd, nextShown } from './typing'
 import { moveView, rowsOf, tailWin, viewLabel, type Win } from './viewer'
 
 // THE ANSWER BEING TYPED (G2-106, G2-107, G2-110, G2-111), split out of
@@ -28,6 +28,8 @@ export type Stream = {
   release: (() => void) | null
   // The window being read while paused.
   win: Win | null
+  // Show the first sentence whole as soon as it arrives (G2-180).
+  sayNow?: boolean
   // Set when the typing caught up with the model by itself; unset if it was
   // cut short (left, backgrounded).
   outcome?: 'caught-up'
@@ -103,6 +105,14 @@ export function tickStream(s: Stream): void {
     // Only typing time counts: a pause must not store up time that is then
     // spent in one burst on resuming (G2-110).
     s.budget += (TYPING_CHARS_PER_SECOND * elapsed) / 1000
+    // Interview and Code: the first sentence at once, to say now (G2-180).
+    if (s.sayNow) {
+      const lead = leadSentenceEnd(s.received)
+      if (lead > s.shown) {
+        s.shown = lead
+        s.budget = 0
+      }
+    }
     const next = nextShown(s.received, s.shown, s.fast ? Infinity : s.budget, s.complete)
     if (next > s.shown) {
       s.budget = s.fast ? 0 : Math.max(0, s.budget - (next - s.shown))

@@ -1106,6 +1106,8 @@ async function askGeminiNow(question: string) {
     release: null,
     win: null,
     pending: Promise.resolve(),
+    // Interview and Code: something to say at once (G2-180).
+    sayNow: chat.mode === 'interview' || chat.mode === 'coding',
   }
   setCurrentStream(typed)
   const onText = (textSoFar: string) => {

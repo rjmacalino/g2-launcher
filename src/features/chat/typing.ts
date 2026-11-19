@@ -29,3 +29,21 @@ export function nextShown(
   const space = Math.max(text.lastIndexOf(' '), text.lastIndexOf('\n'))
   return Math.max(shown, space + 1)
 }
+
+// THE SAY-IT-NOW SENTENCE (G2-180): in Interview and Code the wearer needs
+// something to say at once, so the answer's first sentence is shown whole
+// the moment it has arrived, before reading-pace typing takes over. Where
+// that sentence ends, or 0 while it is still arriving. A Code reply's header
+// line ("LeetCode - Two Sum - Easy") has no full stop, so it is shown with
+// the sentence after it. Never more than LEAD_MAX_CHARS, so a reply that
+// never ends a sentence still types.
+export const LEAD_MAX_CHARS = 300
+
+export function leadSentenceEnd(text: string): number {
+  const match = /[.?!](?=\s|$)/.exec(text.slice(0, LEAD_MAX_CHARS))
+  if (!match) return 0
+  const end = match.index + 1
+  // A full stop at the very end of what has arrived may be "3." of "3.5":
+  // wait for the next character to know.
+  return end < text.length ? end : 0
+}

@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'vitest'
-import { nextShown } from '../src/features/chat/typing'
+import { LEAD_MAX_CHARS, leadSentenceEnd, nextShown } from '../src/features/chat/typing'
 
 describe('nextShown (G2-106)', () => {
   const text = 'The quick brown fox jumps over the lazy dog'
@@ -23,5 +23,30 @@ describe('nextShown (G2-106)', () => {
     expect(nextShown(partial, 0, 100, false)).toBe('The quick brown '.length)
     // Nothing new to show yet: stay where it is.
     expect(nextShown(partial, 16, 100, false)).toBe(16)
+  })
+})
+
+describe('leadSentenceEnd (G2-180)', () => {
+  it('ends after the first sentence once the next character has arrived', () => {
+    expect(leadSentenceEnd('So I need two numbers. Then')).toBe(22)
+    expect(leadSentenceEnd('Is it sorted? Yes')).toBe(13)
+  })
+
+  it('takes a Code header line along with the sentence after it', () => {
+    const text = 'LeetCode - Two Sum - Easy\n\nSo I need two indices. The'
+    expect(text.slice(0, leadSentenceEnd(text))).toBe(
+      'LeetCode - Two Sum - Easy\n\nSo I need two indices.',
+    )
+  })
+
+  it('waits while the sentence, or a number like 3.5, is still arriving', () => {
+    expect(leadSentenceEnd('So I need')).toBe(0)
+    expect(leadSentenceEnd('It costs 3.')).toBe(0)
+    expect(leadSentenceEnd('It costs 3.5 and')).toBe(0)
+  })
+
+  it('never holds back more than a short lead', () => {
+    expect(leadSentenceEnd(`${'word '.repeat(80)}end. More`)).toBe(0)
+    expect(LEAD_MAX_CHARS).toBeLessThanOrEqual(300)
   })
 })
