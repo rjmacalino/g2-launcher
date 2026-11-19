@@ -229,7 +229,22 @@ function sttKeyBox(key: {
     autocomplete: 'off',
     'aria-label': key.label,
   }) as HTMLInputElement
-  void key.read().then(value => (field.value = value ?? ''))
+  // The saved key arrives after the page draws; it never overwrites a key
+  // already typed or pasted.
+  void key.read().then(value => {
+    if (field.value === '') field.value = value ?? ''
+  })
+  // Show/hide, as on the AI models key (G2-167): a password field's long
+  // press may offer no Paste in the phone's WebView, so the key could not be
+  // pasted; shown as text it can.
+  const reveal = h(
+    'button',
+    { class: 'icon-button', 'aria-label': 'Show key', style: 'width: 44px; height: 44px' },
+    icon('eye'),
+  )
+  reveal.addEventListener('click', () => {
+    field.type = field.type === 'password' ? 'text' : 'password'
+  })
   const save = h('button', { class: 'button primary' }, 'Save key')
   save.addEventListener('click', async () => {
     const typed = field.value.trim()
@@ -245,7 +260,7 @@ function sttKeyBox(key: {
       { class: 'caption', style: 'margin: 0 0 6px' },
       `${key.hint} Stored on this phone only.`,
     ),
-    field,
+    h('div', { class: 'key-row' }, field, reveal),
     h('div', { style: 'margin-top: 8px' }, save),
   )
 }
