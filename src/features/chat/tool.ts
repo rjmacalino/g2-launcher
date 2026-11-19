@@ -313,6 +313,7 @@ function currentHint(): string | null {
     screen: hintScreen(),
     countdown: listening ? autoSendCountdown() : null,
     hasCode: codeBlocks.length > 0,
+    earlier: hasEarlier(),
     armed: Date.now() < followUpArmedUntil,
   })
 }
@@ -730,6 +731,17 @@ function closeCodeView(): void {
 
 // The conversation as a list of its exchanges, newest first; tapping one
 // opens it (G2-102). Nothing to list: straight back to the chats.
+// Up past the top of an answer (G2-179): this chat's earlier questions, when
+// it has more than one; the answer on screen is the latest.
+function hasEarlier(): boolean {
+  return exchangesOf(chat.messages).length > 1
+}
+
+function openEarlier(): void {
+  if (!hasEarlier() || busy()) return
+  openHistory()
+}
+
 function openHistory(): void {
   if (exchangesOf(chat.messages).length === 0) {
     leaveToPicker()
@@ -1520,7 +1532,10 @@ export const chatTool: Tool = {
   // follow the same convention Teleprompter already settled on: an
   // accidental double-tap should be double-checked no matter which screen
   // it happens on, regardless of whether anything would actually be lost.
-  confirmOnExit: () => true,
+  // Only when leaving would cut something off (G2-179): a recording, an
+  // answer in progress, or a chat started from another screen. From the
+  // chat list a double-tap goes straight to the launcher.
+  confirmOnExit: () => depth === 'conversation',
   // Matches onConfirmedExit's own logic exactly, same reasoning as
   // Teleprompter's own pair of these two: one describes what pressing Yes
   // says, the other is what it does.
@@ -1673,8 +1688,10 @@ export const chatTool: Tool = {
       leaveToPicker()
       return true
     }
+    // Flat (G2-179): from an answer straight to the chat list. The chat's
+    // earlier questions are a swipe up from the top of its first page.
     if (depth === 'conversation' && !quickAsk && !busy()) {
-      openHistory()
+      leaveToPicker()
       return true
     }
     return false
@@ -1748,6 +1765,7 @@ export const chatTool: Tool = {
       lastScrollAt = now
       const view = tailView
       const next = moveView(view.rows, view.win, delta)
+      if (!next && delta === -1) openEarlier()
       if (next) {
         view.win = next
         const text = windowText(view.rows, next)
@@ -1760,7 +1778,10 @@ export const chatTool: Tool = {
       return
     }
     if (depth !== 'conversation' || listening || tickerRunning()) return
-    if (pages.length <= 1) return
+    if (pages.length <= 1) {
+      if (delta === -1) openEarlier()
+      return
+    }
     const now = Date.now()
     if (now - lastScrollAt < SCROLL_COOLDOWN_MS) return
     lastScrollAt = now
@@ -1769,7 +1790,10 @@ export const chatTool: Tool = {
       { page: pageIndex, win: pageWin },
       delta,
     )
-    if (!next) return
+    if (!next) {
+      if (delta === -1) openEarlier()
+      return
+    }
     // The firmware only reports a swipe at a section's very top or bottom,
     // so one swipe there moves on - no second "are you sure" swipe.
     pageIndex = next.page

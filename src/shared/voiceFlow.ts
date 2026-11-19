@@ -97,6 +97,8 @@ export type HintInput = {
   countdown: number | null
   // The answer has a code view.
   hasCode: boolean
+  // The chat has earlier questions, a swipe up from the top (G2-179).
+  earlier: boolean
   // A long press over the answer asked for a second one (G2-161).
   armed: boolean
 }
@@ -123,9 +125,14 @@ export function hintFor(h: HintInput): string {
       return 'hold: ask'
     case 'answer':
       if (h.armed) return 'hold again: ask a follow-up'
-      return [h.hasCode ? 'tap: code' : null, 'hold: ask', 'double-tap: back']
+      return [
+        h.hasCode ? 'tap: code' : null,
+        'hold: ask',
+        h.earlier ? 'up: earlier' : null,
+        'double-tap: back',
+      ]
         .filter(Boolean)
-        .join(GAP)
+        .join(h.hasCode && h.earlier ? '  ' : GAP)
   }
 }
 

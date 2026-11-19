@@ -124,7 +124,14 @@ describe('auto-send countdown over real mic frames (G2-162, G2-164)', () => {
 
 describe('hint row (G2-178)', () => {
   const hint = (over: Partial<Parameters<typeof hintFor>[0]>) =>
-    hintFor({ screen: 'answer', countdown: null, hasCode: false, armed: false, ...over })
+    hintFor({
+      screen: 'answer',
+      countdown: null,
+      hasCode: false,
+      earlier: false,
+      armed: false,
+      ...over,
+    })
 
   it('says what a tap does in every state, and nothing that would not work', () => {
     expect(hint({ screen: 'listening' })).toBe('tap: send')
@@ -144,6 +151,13 @@ describe('hint row (G2-178)', () => {
     expect(hint({ armed: true, hasCode: true })).toBe('hold again: ask a follow-up')
   })
 
+  it('points to earlier questions when the chat has them (G2-179)', () => {
+    expect(hint({ earlier: true })).toBe('hold: ask   up: earlier   double-tap: back')
+    expect(hint({ earlier: true, hasCode: true })).toBe(
+      'tap: code  hold: ask  up: earlier  double-tap: back',
+    )
+  })
+
   it('fits on one row', () => {
     const screens = [
       'listening',
@@ -156,7 +170,9 @@ describe('hint row (G2-178)', () => {
       'empty',
     ] as const
     for (const screen of screens) {
-      expect(hint({ screen, countdown: 20, hasCode: true }).length).toBeLessThanOrEqual(48)
+      expect(
+        hint({ screen, countdown: 20, hasCode: true, earlier: true }).length,
+      ).toBeLessThanOrEqual(52)
     }
   })
 })
