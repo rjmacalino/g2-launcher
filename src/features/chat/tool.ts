@@ -7,7 +7,6 @@ import {
   onPhoneRequest,
   type VoiceState,
 } from '../../shared/voiceFlow'
-import { getCodeSize } from '../../core/codeSize'
 import { setStatusNote } from '../../core/statusNote'
 import { modeOf, type ModeId } from '../../core/modes'
 import { navigate } from '../../core/navigation'
@@ -51,22 +50,26 @@ import {
   SCREEN_ROWS,
   wrapLines,
   REBUILD_MAX_CHARS,
-  fitsAsText,
   lowerPageLimit,
   paginate,
   rebuildSafe,
   tailRows,
   type Page,
 } from './paging'
-import { splitAnswer } from '../../shared/answerBlocks'
-import { codeScreens, layoutCodeRows, type CodeRow } from '../../shared/codeLayout'
-import { codeGutter, codeMetrics, renderCodeTiles, type CodeMetrics } from '../../ui/codeRender'
+import { layoutBlock, tilesFor, withCodePlaceholders, type CodeView } from './codeView'
 import { nextTileBank, setTiles } from '../../platform/page'
 import { askAssistant } from './assistant'
 import { setCurrentScreen } from '../../core/currentScreen'
 import { requestRebuild } from '../../core/rebuild'
 import type { Tool } from '../../core/tool'
-import { LANGUAGES, type Language } from '../../shared/languages'
+import {
+  newRowsFor,
+  pickerMax as pickerMaxFor,
+  pickerTitle,
+  sortForPicker as sortPicker,
+  type NewRow,
+  type Scope,
+} from './picker'
 
 // JARVIS - the one assistant. Per direct request, what used to be two tools
 // (Jarvis, the quick long-press-from-anywhere command runner, and Gemini,
@@ -346,7 +349,8 @@ function updatePositionNote(): void {
     setStatusNote(streamNote(stream))
     return
   }
-  if (tailView) {
+  // Not over the code view: it has its own screens to count (G2-172).
+  if (tailView && !codeView) {
     setStatusNote(withCodeTag(viewLabel(tailView.rows, tailView.win)))
     return
   }
@@ -403,65 +407,16 @@ function withModeTag(model: string): string {
   if (currentMode === 'coding' && currentLanguage) return `Code (${currentLanguage}) - ${model}`
   return currentMode === 'auto' ? model : `${modeOf(currentMode).label} - ${model}`
 }
-// Launcher entries (G2-152): Jarvis, Interview and Code are this one engine
-// with a scope each - the new-chat rows its list starts with, and which saved
-// chats it shows. Jarvis is general Q and A (Auto adapts to any topic).
-export type Scope = 'jarvis' | 'interview' | 'code'
-type NewRow = { label: string; mode: ModeId; language?: Language }
-const NEW_ROWS: Record<Scope, NewRow[]> = {
-  jarvis: [{ label: 'New chat', mode: 'auto' }],
-  interview: [{ label: 'New interview', mode: 'interview' }],
-  code: LANGUAGES.map(language => ({
-    label: `New: ${language}`,
-    mode: 'coding' as const,
-    language,
-  })),
-}
+// The launcher entry's chat list (G2-152): the rules are in picker.ts
+// (G2-172); this keeps which entry is open.
 let scope: Scope = 'jarvis'
-const newRows = (): NewRow[] => NEW_ROWS[scope]
-
-function inScope(session: ChatSession): boolean {
-  const mode = modeOf(session.mode).id
-  if (scope === 'interview') return mode === 'interview'
-  if (scope === 'code') return mode === 'coding'
-  return mode !== 'interview' && mode !== 'coding'
-}
+const newRows = (): NewRow[] => newRowsFor(scope)
+const pickerMax = (): number => pickerMaxFor(scope)
+const sortForPicker = (sessions: readonly ChatSession[]): ChatSession[] =>
+  sortPicker(sessions, scope)
 
 // A Code chat's language (G2-152).
 let currentLanguage: string | null = null
-
-// List containers have a firmware hard limit of 20 items (docs/platform.md).
-// "New chat" is always the first row, leaving 19 for saved sessions - after
-// enough testing/real use to pass that count, listItems() returning more
-// than 20 total made the firmware reject the rebuild outright, which looked
-// like Chat silently refusing to open at all [HW], not like a list that
-// needed trimming. Only the picker is capped; nothing is deleted, and the
-// companion page's own chat-view (see companion/main.ts) has no such limit
-// and still shows every session.
-const pickerMax = (): number => 20 - newRows().length
-
-// Shorter than the 64-character list-item limit on purpose. Both open
-// Gemini bugs [HW] - failing to open, and "Yes" on the leave prompt not
-// landing back on this picker - only ever happened with saved chats, i.e.
-// only when this list had titles in it; with zero chats it is just "New
-// chat" and both always worked. Titles were cut at exactly 64 characters,
-// right on the documented limit, so a firmware that really allows 63 plus a
-// terminator would reject every long-question title. Unconfirmed, but the
-// stored title is untouched - only what the list shows is shorter.
-const PICKER_TITLE_MAX_CHARS = 40
-
-function pickerTitle(title: string): string {
-  return title.length > PICKER_TITLE_MAX_CHARS
-    ? `${title.slice(0, PICKER_TITLE_MAX_CHARS - 3)}...`
-    : title
-}
-
-function sortForPicker(sessions: ChatSession[]): ChatSession[] {
-  return [...sessions]
-    .filter(inScope)
-    .sort((a, b) => b.updatedAt - a.updatedAt)
-    .slice(0, pickerMax())
-}
 
 // No storage read on this path any more - it reads the store's in-memory
 // copy, loaded once in the background at app startup (see
@@ -627,7 +582,7 @@ function renderExchange(messages: readonly ChatMessage[]): string {
     ...(shown.question ? [youLine(shown.question.text)] : []),
     ...(shown.answer
       ? [
-          `${shown.answer.model ? `${shown.answer.model}: ` : ''}${withCodePlaceholders(shown.answer.text)}`,
+          `${shown.answer.model ? `${shown.answer.model}: ` : ''}${withCodePlaceholders(shown.answer.text, codeBlocks)}`,
         ]
       : []),
   ]
@@ -638,89 +593,16 @@ function renderExchange(messages: readonly ChatMessage[]): string {
   return pages[0].text
 }
 
-// THE CODE VIEW (G2-73). The glasses' own text has one proportional font,
-// which scrambles code, so code in an answer is drawn as pictures instead
-// (ui/codeRender.ts) in a real monospace font, at the size chosen on the
-// phone. In the text view tall code stays as text with a hint under it; a tap
-// opens the code view, a swipe or tap pages through it, and a double-tap
-// returns to the text.
+// THE CODE VIEW (G2-73): layout and pictures in codeView.ts (G2-172); this
+// keeps the answer's code blocks and which one is open.
 let codeBlocks: string[] = []
-type CodeView = {
-  block: number
-  screen: number
-  screens: CodeRow[][]
-  metrics: CodeMetrics
-  // Pixels the line numbers take, with the gap after them (G2-117).
-  gutterPx: number
-}
 let codeView: CodeView | null = null
 let drawing = false
 let drawAgain = false
 
-function withCodePlaceholders(text: string): string {
-  const blocks = splitAnswer(text)
-  if (!blocks.some(b => b.kind === 'code')) return text
-  const isPicture = (b: (typeof blocks)[number]) =>
-    b.kind === 'code' && !fitsAsText(b.text, PAGE_INNER_WIDTH)
-  const total = blocks.filter(isPicture).length
-  return blocks
-    .map(block => {
-      // Code too tall for one screen stays in the text too (G2-121), with a
-      // hint under it that a tap opens the picture view.
-      if (!isPicture(block)) return block.text
-      codeBlocks.push(block.text)
-      const n = codeBlocks.length
-      return `${block.text}\n[tap: view code${total > 1 ? ` ${n} of ${total}` : ''} as a picture]`
-    })
-    .join('\n\n')
-}
-
-function layoutBlock(block: number): Omit<CodeView, 'screen'> {
-  const metrics = codeMetrics(getCodeSize())
-  // The gutter holds the widest line number; the code gets what is left.
-  const { gutterPx, maxPx } = codeGutter(codeBlocks[block].split('\n').length, metrics)
-  const rows = layoutCodeRows(codeBlocks[block], maxPx, metrics.measure, metrics.cell)
-  return { block, screens: codeScreens(rows, metrics.rows), metrics, gutterPx }
-}
-
 function viewBlock(block: number, screen: number): void {
-  const layout = layoutBlock(block)
+  const layout = layoutBlock(codeBlocks, block)
   codeView = { ...layout, screen: Math.min(screen, layout.screens.length - 1) }
-}
-
-// Drawing a screen of code took about 4 s on the phone (G2-91), and every
-// open drew it again. Screens are kept once drawn - keyed by everything
-// that changes the picture, so a new answer or size never shows a stale
-// one - and drawn ahead: the first screen when an answer with code
-// arrives, the next one while the wearer reads.
-const TILE_CACHE_MAX = 24
-const tileCache = new Map<string, Promise<Uint8Array[]>>()
-
-function footerFor(view: Omit<CodeView, 'screen'>, screen: number): string {
-  // Source line numbers, as in the gutter: the first and the last that
-  // start on this screen, of the block's whole count.
-  const numbers = view.screens[screen].flatMap(r => (r.number === null ? [] : [r.number]))
-  const first = numbers[0] ?? 1
-  const last = numbers[numbers.length - 1] ?? first
-  const total = codeBlocks[view.block].split('\n').length
-  const where = codeBlocks.length > 1 ? `Code ${view.block + 1}/${codeBlocks.length} - ` : ''
-  const more = screen < view.screens.length - 1 ? 'swipe for more, ' : ''
-  return `${where}lines ${first}-${last} of ${total} - ${more}hold: ask, double-tap: text`
-}
-
-function tilesFor(view: Omit<CodeView, 'screen'>, screen: number): Promise<Uint8Array[]> {
-  const footer = footerFor(view, screen)
-  const key = [view.metrics.fontPx, footer, codeBlocks[view.block]].join('|')
-  const known = tileCache.get(key)
-  if (known) return known
-  const drawn = renderCodeTiles(view.screens[screen], view.metrics, footer, view.gutterPx)
-  drawn.catch(() => tileCache.delete(key))
-  tileCache.set(key, drawn)
-  if (tileCache.size > TILE_CACHE_MAX) {
-    const oldest = tileCache.keys().next().value
-    if (oldest !== undefined) tileCache.delete(oldest)
-  }
-  return drawn
 }
 
 // Draws the first screen of the first code block in the background, so a
@@ -731,7 +613,8 @@ function warmCode(): void {
   warmTimer = setTimeout(() => {
     warmTimer = null
     if (codeBlocks.length === 0 || codeView) return
-    if (codeBlocks.length > 0 && !codeView) void tilesFor(layoutBlock(0), 0).catch(() => {})
+    if (codeBlocks.length > 0 && !codeView)
+      void tilesFor(codeBlocks, layoutBlock(codeBlocks, 0), 0).catch(() => {})
   }, 300)
 }
 
@@ -752,7 +635,7 @@ async function drawCode(): Promise<void> {
         await setContent(CODE_LOADING_TEXT)
       }
       const renderStarted = performance.now()
-      const tiles = await tilesFor(view, view.screen)
+      const tiles = await tilesFor(codeBlocks, view, view.screen)
       status(`Jarvis: code ready in ${((performance.now() - renderStarted) / 1000).toFixed(1)}s`)
       const sendStarted = performance.now()
       await setTiles(tiles)
@@ -766,7 +649,7 @@ async function drawCode(): Promise<void> {
       }
       // The next screen, while this one is read.
       if (view.screen + 1 < view.screens.length) {
-        void tilesFor(view, view.screen + 1).catch(() => {})
+        void tilesFor(codeBlocks, view, view.screen + 1).catch(() => {})
       }
     } while (drawAgain && codeView)
   } finally {
