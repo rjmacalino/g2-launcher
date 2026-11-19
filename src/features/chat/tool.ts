@@ -1,3 +1,4 @@
+import appInfo from '../../../app.json'
 import { getCodeSize } from '../../core/codeSize'
 import { setStatusNote } from '../../core/statusNote'
 import { modeOf, type ModeId } from '../../core/modes'
@@ -975,6 +976,7 @@ async function beginListening() {
   const ok = await start(
     () => {
       if (mySession !== sessionToken) return
+      status('Jarvis: recording ended by the 10-minute cap')
       finishListening()
     },
     {
@@ -1006,7 +1008,9 @@ async function beginListening() {
   // Status-line breadcrumbs through the whole voice flow (here, on a tap,
   // on an interruption), so a report of "stuck" says exactly which step
   // it stopped at - see the companion page's status line.
-  status(viaWake ? 'Jarvis: recording (Hey Jarvis)' : 'Jarvis: recording')
+  status(
+    `Jarvis: recording${viaWake ? ' (Hey Jarvis)' : ''}, build ${appInfo.version}, auto-send ${autoSendSeconds() || 'off'}`,
+  )
   // Who is listening (G2-157), redrawn every second, so a live engine that
   // drops or never connects shows up on the glasses as it happens; then
   // how the question is sent (G2-158).

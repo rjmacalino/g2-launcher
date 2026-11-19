@@ -1265,6 +1265,9 @@ const unsubscribe = bridge.onEvenHubEvent(event => {
     (sysType === OsEventTypeList.CLICK_EVENT || textType === OsEventTypeList.CLICK_EVENT)
   if (isSingleTap && screen.kind === 'tool' && isJarvisIndex(screen.index)) {
     if (isJarvisListening()) {
+      // Which event counted as the tap (G2-163): a recording reported as
+      // sending itself too early must show here if it was not a real tap.
+      status(`Jarvis: recording ended by a tap (${JSON.stringify(event).slice(0, 160)})`)
       finishJarvisListening()
       return
     }
