@@ -4,6 +4,7 @@ import {
   autoSendCountdown,
   canListen,
   frameMs,
+  hintFor,
   isBusy,
   onLongPress,
   onPhoneRequest,
@@ -118,5 +119,44 @@ describe('auto-send countdown over real mic frames (G2-162, G2-164)', () => {
 
   it('shows nothing when auto-send is off', () => {
     expect(autoSendCountdown(0, true, 5000)).toBeNull()
+  })
+})
+
+describe('hint row (G2-178)', () => {
+  const hint = (over: Partial<Parameters<typeof hintFor>[0]>) =>
+    hintFor({ screen: 'answer', countdown: null, hasCode: false, armed: false, ...over })
+
+  it('says what a tap does in every state, and nothing that would not work', () => {
+    expect(hint({ screen: 'listening' })).toBe('tap: send')
+    expect(hint({ screen: 'listening', countdown: 17 })).toBe('sending in 17s   tap: send now')
+    // A long press is ignored while transcribing (canListen is false).
+    expect(hint({ screen: 'transcribing' })).not.toMatch(/hold|tap/)
+    expect(hint({ screen: 'thinking' })).toBe('hold: ask')
+    expect(hint({ screen: 'typing' })).toBe('tap: pause   swipe down: skip to end')
+    expect(hint({ screen: 'paused' })).toBe('tap: continue   swipe: read')
+    expect(hint({ screen: 'error' })).toBe('tap: retry   hold: ask again')
+    expect(hint({ screen: 'empty' })).toBe('hold: ask')
+  })
+
+  it('offers the code view only when the answer has one, and the confirmation when armed', () => {
+    expect(hint({})).toBe('hold: ask   double-tap: back')
+    expect(hint({ hasCode: true })).toBe('tap: code   hold: ask   double-tap: back')
+    expect(hint({ armed: true, hasCode: true })).toBe('hold again: ask a follow-up')
+  })
+
+  it('fits on one row', () => {
+    const screens = [
+      'listening',
+      'transcribing',
+      'thinking',
+      'typing',
+      'paused',
+      'answer',
+      'error',
+      'empty',
+    ] as const
+    for (const screen of screens) {
+      expect(hint({ screen, countdown: 20, hasCode: true }).length).toBeLessThanOrEqual(48)
+    }
   })
 })

@@ -83,6 +83,37 @@ export const LIST_HEADER_HEIGHT = LIST_HEADER_ROWS * ROW_HEIGHT_PX + 2 * PADDING
 
 // Replaces the header text in place: no rebuild, so the list below keeps its
 // highlighted row.
+// THE HINT ROW (G2-178): one row under a tool's text that says what the
+// gestures do right now. Same compact style as the status bar. A tool that
+// has one (Tool.hint) gets a content area one row shorter. Id 5 is shared
+// with the list header and the leave prompt's title, which are never on a
+// text page.
+export const HINT_HEIGHT = STATUS_BAR_HEIGHT
+export const HINTED_CONTENT_HEIGHT = CONTENT_HEIGHT - HINT_HEIGHT
+export const CONTAINER_ID_HINT = 5
+export const CONTAINER_NAME_HINT = 'tool.hint'
+
+let shownHint: string | null = null
+
+// After a rebuild put this hint on screen.
+export function hintShown(text: string): void {
+  shownHint = text
+}
+
+// Updates the hint row only when its text changes: an update is a round
+// trip to the glasses, and the hint is redrawn on every state change.
+export function setHint(text: string): Promise<boolean> {
+  if (text === shownHint) return Promise.resolve(true)
+  shownHint = text
+  return bridge.textContainerUpgrade(
+    new TextContainerUpgrade({
+      containerID: CONTAINER_ID_HINT,
+      containerName: CONTAINER_NAME_HINT,
+      content: text,
+    }),
+  )
+}
+
 export function setListHeader(text: string): Promise<boolean> {
   return bridge.textContainerUpgrade(
     new TextContainerUpgrade({

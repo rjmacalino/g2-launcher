@@ -85,6 +85,50 @@ export function autoSendCountdown(
   return Math.max(1, Math.ceil((autoSendSeconds * 1000 - quietMs) / 1000))
 }
 
+// THE HINT ROW (G2-178): one line at the bottom of every Jarvis text screen
+// that says what the gestures do right now, so a tap is never a guess. One
+// place for it, instead of notes scattered over the status bar.
+export type HintScreen =
+  'empty' | 'listening' | 'transcribing' | 'thinking' | 'typing' | 'paused' | 'answer' | 'error'
+
+export type HintInput = {
+  screen: HintScreen
+  // Seconds before auto-send while listening, null when off.
+  countdown: number | null
+  // The answer has a code view.
+  hasCode: boolean
+  // A long press over the answer asked for a second one (G2-161).
+  armed: boolean
+}
+
+const GAP = '   '
+
+export function hintFor(h: HintInput): string {
+  switch (h.screen) {
+    case 'listening':
+      return h.countdown !== null ? `sending in ${h.countdown}s${GAP}tap: send now` : 'tap: send'
+    // Nothing works while transcribing (canListen is false): say so.
+    case 'transcribing':
+      return 'one moment...'
+    // A long press over a question still being answered asks a follow-up.
+    case 'thinking':
+      return 'hold: ask'
+    case 'typing':
+      return `tap: pause${GAP}swipe down: skip to end`
+    case 'paused':
+      return `tap: continue${GAP}swipe: read`
+    case 'error':
+      return `tap: retry${GAP}hold: ask again`
+    case 'empty':
+      return 'hold: ask'
+    case 'answer':
+      if (h.armed) return 'hold again: ask a follow-up'
+      return [h.hasCode ? 'tap: code' : null, 'hold: ask', 'double-tap: back']
+        .filter(Boolean)
+        .join(GAP)
+  }
+}
+
 // Length in ms of a 16-bit mono PCM frame (G2-162): measured, never assumed.
 export function frameMs(bytes: number, sampleRate: number): number {
   return (bytes / 2 / sampleRate) * 1000

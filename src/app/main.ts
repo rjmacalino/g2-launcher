@@ -25,6 +25,12 @@ import {
   CONTAINER_NAME_LIST_HEADER,
   LIST_HEADER_HEIGHT,
   CONTENT_HEIGHT,
+  CANVAS_HEIGHT,
+  CONTAINER_ID_HINT,
+  CONTAINER_NAME_HINT,
+  HINT_HEIGHT,
+  HINTED_CONTENT_HEIGHT,
+  hintShown,
   CONTENT_Y,
   IMAGE_MAX_HEIGHT,
   IMAGE_MAX_WIDTH,
@@ -382,7 +388,8 @@ function toolTextContent(tool: Tool): TextContainerProperty {
     xPosition: 0,
     yPosition: CONTENT_Y,
     width: CANVAS_WIDTH,
-    height: CONTENT_HEIGHT,
+    // One row shorter for the hint row under it (G2-178).
+    height: tool.hint ? HINTED_CONTENT_HEIGHT : CONTENT_HEIGHT,
     borderWidth: 0,
     paddingLength: PADDING,
     containerID: CONTAINER_ID_CONTENT,
@@ -498,6 +505,31 @@ function toolContainers(index: number) {
     }
   }
 
+  // The hint row (G2-178): what the gestures do right now, under the text.
+  if (tool.hint) {
+    const hint = tool.hint() ?? ''
+    hintShown(hint)
+    return {
+      containerTotalNum: bar.length + 2,
+      textObject: [
+        ...bar,
+        toolTextContent(tool),
+        new TextContainerProperty({
+          xPosition: 0,
+          yPosition: CANVAS_HEIGHT - HINT_HEIGHT,
+          width: CANVAS_WIDTH,
+          height: HINT_HEIGHT,
+          borderWidth: 0,
+          paddingLength: 0,
+          containerID: CONTAINER_ID_HINT,
+          containerName: CONTAINER_NAME_HINT,
+          content: hint,
+          isEventCapture: 0,
+        }),
+      ],
+      menuObject,
+    }
+  }
   return {
     containerTotalNum: bar.length + 1,
     textObject: [...bar, toolTextContent(tool)],

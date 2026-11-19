@@ -11,23 +11,17 @@ const { SCREEN_ROWS } = await import('../src/features/chat/paging')
 
 // The listening screen (G2-157, G2-158, G2-164, split out in G2-174).
 
-const base = { engine: 'Gemini Live', dots: '..', seconds: 4, autoSend: 0, countdown: null }
-
 describe('listeningHeader', () => {
-  it('names the engine and says a tap sends when auto-send is off', () => {
-    expect(listeningHeader(base)).toBe('Gemini Live listening.. (4s)\nTap to send')
+  it('names the engine and counts, on one line: how to send is on the hint row', () => {
+    expect(listeningHeader({ engine: 'Gemini Live', dots: '..', seconds: 4 })).toBe(
+      'Gemini Live listening.. (4s)',
+    )
   })
 
   it('flags an engine that is not connected', () => {
-    expect(listeningHeader({ ...base, engine: 'Gemini Live (not connected)' })).toMatch(
-      /^Gemini Live \(not connected\) listening/,
-    )
-  })
-
-  it('shows the live countdown when auto-send is on', () => {
-    expect(listeningHeader({ ...base, autoSend: 20, countdown: 17 })).toBe(
-      'Gemini Live listening.. (4s)\nSending in 17s, or tap to send now',
-    )
+    expect(
+      listeningHeader({ engine: 'Gemini Live (not connected)', dots: '.', seconds: 1 }),
+    ).toMatch(/^Gemini Live \(not connected\) listening/)
   })
 })
 

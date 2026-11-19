@@ -11,17 +11,11 @@ export type ListeningInfo = {
   engine: string
   dots: string
   seconds: number
-  // The auto-send setting in seconds, 0 when off.
-  autoSend: number
-  // Seconds left before auto-send, null when off (see shared/voiceFlow.ts).
-  countdown: number | null
 }
 
+// One line: how to send, and the countdown, are on the hint row (G2-178).
 export function listeningHeader(info: ListeningInfo): string {
-  const first = `${info.engine} listening${info.dots} (${info.seconds}s)`
-  if (info.countdown !== null) return `${first}\nSending in ${info.countdown}s, or tap to send now`
-  const hint = info.autoSend > 0 ? `Tap to send, or stay quiet ${info.autoSend}s` : 'Tap to send'
-  return `${first}\n${hint}`
+  return `${info.engine} listening${info.dots} (${info.seconds}s)`
 }
 
 // The header, a blank row, then as many of the newest caption rows as fit.

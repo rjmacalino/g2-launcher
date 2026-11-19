@@ -8,6 +8,8 @@ vi.mock('../src/platform/bridge', () => ({
 }))
 
 const { PAGE_MAX_CHARS, PAGE_ROWS, SCREEN_ROWS } = await import('../src/features/chat/paging')
+// Four pages whatever the screen height: three full ones and 19 rows.
+const TOTAL = 3 * PAGE_ROWS + 19
 const { movePaged, moveView, tailWin, viewLabel, viewPages, windowText } =
   await import('../src/features/chat/viewer')
 
@@ -20,15 +22,15 @@ describe('viewer pages (G2-107, G2-116)', () => {
   })
 
   it('cuts the rows into pages of three screens, each starting on the next line', () => {
-    const pages = viewPages(rows(100))
+    const pages = viewPages(rows(TOTAL))
     expect(pages).toHaveLength(4)
     expect(pages[0]).toEqual({ start: 0, end: PAGE_ROWS })
     for (let i = 1; i < pages.length; i++) expect(pages[i].start).toBe(pages[i - 1].end)
-    expect(pages[3].end).toBe(100)
+    expect(pages[3].end).toBe(TOTAL)
   })
 
   it('goes up by landing on the last screenful above, never repeating a row', () => {
-    const all = rows(100)
+    const all = rows(TOTAL)
     const pages = viewPages(all)
     // From the typed tail (the last screenful of page 4) up to the rest of it.
     let win = moveView(all, tailWin(all), -1)
@@ -43,7 +45,7 @@ describe('viewer pages (G2-107, G2-116)', () => {
   })
 
   it('goes down through the rest of a page, then the next whole page, and stops at the last', () => {
-    const all = rows(100)
+    const all = rows(TOTAL)
     const pages = viewPages(all)
     expect(moveView(all, pages[0], 1)).toEqual(pages[1])
     const landed = { start: pages[2].end - SCREEN_ROWS, end: pages[2].end }
@@ -61,7 +63,7 @@ describe('viewer pages (G2-107, G2-116)', () => {
   })
 
   it('says which page is on screen, and nothing for a single page', () => {
-    const all = rows(100)
+    const all = rows(TOTAL)
     const pages = viewPages(all)
     expect(viewLabel(all, tailWin(all))).toBe('Page 4 of 4')
     expect(viewLabel(all, pages[0])).toBe('Page 1 of 4')

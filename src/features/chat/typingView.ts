@@ -72,9 +72,10 @@ export function streamNote(s: Stream): string | null {
   if (s.mode === 'hold') {
     const rows = allRows(s)
     const win = s.win ?? tailWin(rows)
-    return viewLabel(rows, win) ?? 'Tap to continue'
+    return viewLabel(rows, win)
   }
-  return s.shown < s.received.length ? 'Tap to pause' : null
+  // Typing: no position yet; the hint row says what a tap does (G2-178).
+  return null
 }
 
 function drawStream(s: Stream): void {

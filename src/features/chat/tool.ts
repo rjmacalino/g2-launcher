@@ -3,6 +3,8 @@ import {
   FOLLOW_UP_CONFIRM_MS,
   canListen,
   isBusy as isFlowBusy,
+  hintFor,
+  type HintScreen,
   onLongPress as decideLongPress,
   onPhoneRequest,
   type VoiceState,
@@ -31,7 +33,7 @@ import { runAssistantActions } from '../../core/assistantActions'
 import { describeModel } from '../../core/llm'
 import { getLlmConfig, providerInfo } from '../../core/llmSettings'
 import { chatSessions, type ChatMessage, type ChatSession } from './store'
-import { setContent } from '../../platform/page'
+import { setContent as setText, setHint } from '../../platform/page'
 import { status } from '../../platform/bridge'
 import { TYPING_TICK_MS } from './typing'
 import { chat, chatAsSession, clearChat, loadChat } from './currentChat'
@@ -289,6 +291,43 @@ function publishScreen(): void {
 // Puts a page of text on the glasses. If the update is rejected because it
 // is long (see lowerPageLimit), the sections get shorter and the same view
 // is drawn again in them - redo gives the new first page.
+// THE HINT ROW (G2-178): what the gestures do right now, under the text.
+// The words are shared/voiceFlow.ts's hintFor (tested per state); this works
+// out which state the screen is in. Redrawn with every change of the text
+// (setContent below) and of the status note (updatePositionNote); repeats
+// are skipped in platform/page.ts.
+function hintScreen(): HintScreen {
+  if (listening) return 'listening'
+  if (transcribing) return 'transcribing'
+  const stream = currentStream()
+  if (stream && stream.timer !== null) return stream.mode === 'hold' ? 'paused' : 'typing'
+  if (waitingHere()) return 'thinking'
+  if (lastErrorQuestion !== null) return 'error'
+  return chat.messages.length > 0 ? 'answer' : 'empty'
+}
+
+// null where there is no text page (the lists and the code view).
+function currentHint(): string | null {
+  if (depth !== 'conversation' || codeView) return null
+  return hintFor({
+    screen: hintScreen(),
+    countdown: listening ? autoSendCountdown() : null,
+    hasCode: codeBlocks.length > 0,
+    armed: Date.now() < followUpArmedUntil,
+  })
+}
+
+function updateHint(): void {
+  const hint = currentHint()
+  if (hint !== null) void setHint(hint)
+}
+
+function setContent(text: string): Promise<boolean> {
+  const sent = setText(text)
+  updateHint()
+  return sent
+}
+
 async function showPage(text: string, redo: () => string = renderConversation): Promise<void> {
   const ok = await setContent(text)
   if (ok || text.length <= REBUILD_MAX_CHARS || !lowerPageLimit()) return
@@ -309,17 +348,11 @@ function redoView(rows: string[], at: number, setWin: (w: Win) => void): () => s
 
 // Where the wearer is in a long answer or in code, in the middle of the
 // status bar in place of the weather (G2-102).
-// Tells at a glance, on every page, that the answer has a code view (G2-122).
-function withCodeTag(label: string | null): string | null {
-  if (codeBlocks.length === 0 || codeView) return label
-  return label ? `${label} - tap: code` : 'Tap: code'
-}
 
 // Accidental long press (G2-161): in a chat that already has an answer, the
 // first long press only asks; a second one within this window records the
 // follow-up. Shown in the status bar, since rewriting the answer text would
 // reset the wearer's scroll. "Hey Jarvis" is deliberate and skips it.
-const FOLLOW_UP_NOTE = 'Long-press again to ask'
 let followUpArmedUntil = 0
 let followUpTimer: ReturnType<typeof setTimeout> | null = null
 
@@ -351,10 +384,7 @@ function confirmFollowUp(): boolean {
 }
 
 function updatePositionNote(): void {
-  if (Date.now() < followUpArmedUntil) {
-    setStatusNote(FOLLOW_UP_NOTE)
-    return
-  }
+  updateHint()
   const stream = currentStream()
   if (stream && stream.timer !== null) {
     setStatusNote(streamNote(stream))
@@ -362,14 +392,14 @@ function updatePositionNote(): void {
   }
   // Not over the code view: it has its own screens to count (G2-172).
   if (tailView && !codeView) {
-    setStatusNote(withCodeTag(viewLabel(tailView.rows, tailView.win)))
+    setStatusNote(viewLabel(tailView.rows, tailView.win))
     return
   }
   let note: string | null = null
   if (depth === 'conversation' && !listening && !transcribing && !tickerRunning()) {
     note = codeView
       ? positionLabel(codeView.screen, codeView.screens.length)
-      : withCodeTag(positionLabel(pageIndex, pages.length))
+      : positionLabel(pageIndex, pages.length)
   }
   setStatusNote(note)
 }
@@ -873,13 +903,8 @@ async function beginListening() {
   // how the question is sent (G2-158).
   startLiveStatus(mySession, (dots, elapsedSeconds) => {
     // Live countdown to auto-send (G2-164), redrawn every second.
-    listenHeader = listeningHeader({
-      engine: listeningEngine(),
-      dots,
-      seconds: elapsedSeconds,
-      autoSend: autoSendSeconds(),
-      countdown: autoSendCountdown(),
-    })
+    // The countdown is on the hint row (G2-178), redrawn by drawListening.
+    listenHeader = listeningHeader({ engine: listeningEngine(), dots, seconds: elapsedSeconds })
     drawListening(true)
   })
 }
@@ -936,7 +961,8 @@ let thinkingRetryNote = ''
 useScreen({
   setContent: text => setContent(text),
   setNote: note => {
-    if (Date.now() >= followUpArmedUntil) setStatusNote(note)
+    setStatusNote(note)
+    updateHint()
   },
   showWindow: (rows, win, setWin) =>
     showPage(windowText(rows, win), redoView(rows, win.start, setWin)),
@@ -1504,6 +1530,7 @@ export const chatTool: Tool = {
       : `Leave ${(entry ?? chatTool).name}?`,
   beforeOpen: () => openAs('jarvis', chatTool),
   contentKind: () => (depth !== 'conversation' ? 'list' : codeView ? 'tiles' : 'text'),
+  hint: () => currentHint(),
   listItems: () =>
     depth === 'history'
       ? historyRows(exchangesOf(chat.messages)).map(r => r.label)
