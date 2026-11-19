@@ -49,4 +49,17 @@ describe('picker', () => {
     expect(pickerTitle(long)).toHaveLength(40)
     expect(pickerTitle(long).endsWith('...')).toBe(true)
   })
+
+  it("inside a Code language: one New chat row, and only that language's chats (G2-182)", () => {
+    expect(newRowsFor('code', 'C#')).toEqual([
+      { label: 'New chat', mode: 'coding', language: 'C#' },
+    ])
+    const py = { ...chat('py', 'coding', 2), language: 'Python' }
+    const cs = { ...chat('cs', 'coding', 3), language: 'C#' }
+    const old = chat('old', 'coding', 1)
+    expect(sortForPicker([py, cs, old], 'code', 'C#').map(s => s.id)).toEqual(['cs'])
+    // Code chats from before languages existed were Python.
+    expect(sortForPicker([py, cs, old], 'code', 'Python').map(s => s.id)).toEqual(['py', 'old'])
+    expect(pickerMax('code', 'Python')).toBe(19)
+  })
 })

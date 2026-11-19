@@ -20,14 +20,28 @@ const NEW_ROWS: Record<Scope, NewRow[]> = {
   })),
 }
 
-export function newRowsFor(scope: Scope): NewRow[] {
+// Code opens on a list of languages (G2-182); inside one, its list starts
+// with a single "New chat" in that language.
+export function newRowsFor(scope: Scope, language: Language | null = null): NewRow[] {
+  if (scope === 'code' && language) return [{ label: 'New chat', mode: 'coding', language }]
   return NEW_ROWS[scope]
 }
 
-export function inScope(session: ChatSession, scope: Scope): boolean {
+// A Code chat's language; chats from before languages existed were Python.
+export function languageOfChat(session: ChatSession): Language {
+  return LANGUAGES.find(l => l === session.language) ?? 'Python'
+}
+
+export function inScope(
+  session: ChatSession,
+  scope: Scope,
+  language: Language | null = null,
+): boolean {
   const mode = modeOf(session.mode).id
   if (scope === 'interview') return mode === 'interview'
-  if (scope === 'code') return mode === 'coding'
+  if (scope === 'code') {
+    return mode === 'coding' && (language === null || languageOfChat(session) === language)
+  }
   return mode !== 'interview' && mode !== 'coding'
 }
 
@@ -37,8 +51,8 @@ export function inScope(session: ChatSession, scope: Scope): boolean {
 // reject the rebuild outright, which looked like Jarvis silently refusing to
 // open at all [HW]. Only the list is capped; nothing is deleted, and the
 // companion page shows every session.
-export function pickerMax(scope: Scope): number {
-  return 20 - NEW_ROWS[scope].length
+export function pickerMax(scope: Scope, language: Language | null = null): number {
+  return 20 - newRowsFor(scope, language).length
 }
 
 // Shorter than the 64-character list-item limit on purpose. Both open
@@ -57,9 +71,13 @@ export function pickerTitle(title: string): string {
 }
 
 // The saved chats this entry's list shows: its own, newest first, capped.
-export function sortForPicker(sessions: readonly ChatSession[], scope: Scope): ChatSession[] {
+export function sortForPicker(
+  sessions: readonly ChatSession[],
+  scope: Scope,
+  language: Language | null = null,
+): ChatSession[] {
   return sessions
-    .filter(s => inScope(s, scope))
+    .filter(s => inScope(s, scope, language))
     .sort((a, b) => b.updatedAt - a.updatedAt)
-    .slice(0, pickerMax(scope))
+    .slice(0, pickerMax(scope, language))
 }

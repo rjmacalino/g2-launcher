@@ -91,6 +91,7 @@ import {
   type NewRow,
   type Scope,
 } from './picker'
+import { LANGUAGES, type Language } from '../../shared/languages'
 
 // JARVIS - the one assistant. Per direct request, what used to be two tools
 // (Jarvis, the quick long-press-from-anywhere command runner, and Gemini,
@@ -440,10 +441,18 @@ function withModeTag(model: string): string {
 // The launcher entry's chat list (G2-152): the rules are in picker.ts
 // (G2-172); this keeps which entry is open.
 let scope: Scope = 'jarvis'
-const newRows = (): NewRow[] => newRowsFor(scope)
-const pickerMax = (): number => pickerMaxFor(scope)
+// Code's chosen language (G2-182): null shows the list of languages first.
+let codeLanguage: Language | null = null
+const newRows = (): NewRow[] => newRowsFor(scope, codeLanguage)
+const pickerMax = (): number => pickerMaxFor(scope, codeLanguage)
 const sortForPicker = (sessions: readonly ChatSession[]): ChatSession[] =>
-  sortPicker(sessions, scope)
+  sortPicker(sessions, scope, codeLanguage)
+// Code's first list: the languages, before any chats.
+const atLanguages = (): boolean => depth === 'picker' && scope === 'code' && codeLanguage === null
+
+function asLanguage(language: string | null): Language | null {
+  return LANGUAGES.find(l => l === language) ?? null
+}
 
 // No storage read on this path any more - it reads the store's in-memory
 // copy, loaded once in the background at app startup (see
@@ -466,6 +475,8 @@ async function refresh(): Promise<void> {
   nextChatMode = 'auto'
   chat.language = nextLanguage
   nextLanguage = null
+  // Code opens on its languages, or straight into one a voice command named.
+  codeLanguage = scope === 'code' ? asLanguage(chat.language) : null
   chat.messages = []
   chat.title = null
   lastErrorQuestion = null
@@ -754,6 +765,8 @@ function openHistory(): void {
 }
 
 function leaveToPicker(): void {
+  // Back from a Code chat lands on its own language's list (G2-182).
+  if (scope === 'code' && chat.language) codeLanguage = asLanguage(chat.language)
   syncPickerFromCurrent()
   depth = 'picker'
   chat.id = null
@@ -1551,12 +1564,9 @@ export const chatTool: Tool = {
   listItems: () =>
     depth === 'history'
       ? historyRows(exchangesOf(chat.messages)).map(r => r.label)
-      : [
-          ...newRows().map(r => r.label),
-          ...pickerSessions.map(s =>
-            pickerTitle(scope === 'code' && s.language ? `${s.language}: ${s.title}` : s.title),
-          ),
-        ],
+      : atLanguages()
+        ? [...LANGUAGES]
+        : [...newRows().map(r => r.label), ...pickerSessions.map(s => pickerTitle(s.title))],
   onListSelect: index => {
     if (depth === 'history') {
       const exchanges = exchangesOf(chat.messages)
@@ -1569,6 +1579,14 @@ export const chatTool: Tool = {
       return
     }
     if (depth !== 'picker') return
+    // A language picked: its own list, in place (G2-182).
+    if (atLanguages()) {
+      const language = LANGUAGES[index]
+      if (!language) return
+      codeLanguage = language
+      pickerSessions = sortForPicker(chatSessions.peek() ?? [])
+      return
+    }
     focus = null
     const rows = newRows()
     listenWhenReady = index < rows.length
@@ -1688,6 +1706,12 @@ export const chatTool: Tool = {
     }
     if (depth === 'history') {
       leaveToPicker()
+      return true
+    }
+    // From a language's chats back to the languages (G2-182).
+    if (depth === 'picker' && scope === 'code' && codeLanguage !== null) {
+      codeLanguage = null
+      requestRebuild(entry ?? chatTool)
       return true
     }
     // Flat (G2-179): from an answer straight to the chat list. The chat's
