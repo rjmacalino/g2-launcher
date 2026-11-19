@@ -34,6 +34,7 @@ import { chatSessions, type ChatMessage, type ChatSession } from './store'
 import { setContent } from '../../platform/page'
 import { status } from '../../platform/bridge'
 import { TYPING_TICK_MS } from './typing'
+import { chat, chatAsSession, clearChat, loadChat } from './currentChat'
 import {
   listeningHeader,
   listeningText,
@@ -165,7 +166,7 @@ export function isAtPicker(): boolean {
 // A conversation opened by a wake or long press from another screen that
 // has nothing in it yet (G2-150): "go back" then means the screen before.
 export function isQuickAskEmpty(): boolean {
-  return quickAsk && currentSessionId === null
+  return quickAsk && chat.id === null
 }
 
 // The shell's "take the wearer back to where they long-pressed from" -
@@ -187,7 +188,7 @@ const COMMAND_RETURN_DELAY_MS = 2500
 // already be here before they run (same reasoning as every other
 // picker-based tool in this app). Kept as full sessions, not just titles,
 // so picking one in onListSelect (itself synchronous - see the Tool
-// interface) can hand currentMessages its real history directly instead of
+// interface) can hand chat.messages its real history directly instead of
 // a second async storage read landing after the rebuild already happened.
 let pickerSessions: ChatSession[] = []
 
@@ -196,9 +197,7 @@ let pickerSessions: ChatSession[] = []
 // (see saveCurrent below and features/chat/store.ts for why nothing the
 // wearer waits on touches storage). null id means "New chat" was picked and
 // no question has been asked yet, so no session exists.
-let currentSessionId: string | null = null
-let currentMessages: ChatMessage[] = []
-let currentSessionTitle: string | null = null
+// The chat itself (id, messages, title, mode, language): currentChat.ts.
 
 // Background save of whatever conversation is open. Never awaited: the
 // store waits for its own startup load before writing (so it can never
@@ -212,17 +211,17 @@ export async function devAsk(text: string): Promise<void> {
   stopListeningIfAny()
   const created = chatSessions.newSession(
     { role: 'user', text, timestamp: Date.now() },
-    currentMode,
-    currentLanguage,
+    chat.mode,
+    chat.language,
   )
   depth = 'conversation'
   focus = null
   codeView = null
   pages = []
   quickAsk = false
-  currentSessionId = created.id
-  currentSessionTitle = created.title
-  currentMessages = created.messages
+  chat.id = created.id
+  chat.title = created.title
+  chat.messages = created.messages
   // Not awaited, exactly like a spoken first question (finishListening).
   void chatSessions.save({
     id: created.id,
@@ -235,13 +234,8 @@ export async function devAsk(text: string): Promise<void> {
 }
 
 function saveCurrent(): void {
-  if (currentSessionId === null) return
-  void chatSessions.save({
-    id: currentSessionId,
-    title: currentSessionTitle ?? '(untitled)',
-    messages: currentMessages,
-    updatedAt: Date.now(),
-  })
+  const session = chatAsSession()
+  if (session) void chatSessions.save(session)
 }
 
 let sessionToken = 0
@@ -276,7 +270,7 @@ export function canRetry(): boolean {
 export type ChatScreenDetail =
   { depth: 'picker' } | { depth: 'conversation'; sessionId: string | null }
 
-// Called everywhere depth or currentSessionId changes: refresh, picking an
+// Called everywhere depth or chat.id changes: refresh, picking an
 // item in the picker, stepping back via onBack, and after a voice exchange
 // either creates a brand new session or continues an existing one. Also
 // called from onOpen/onContentReady so it is always the LAST write for
@@ -284,9 +278,7 @@ export type ChatScreenDetail =
 // publish (see app/main.ts's setCurrentScreen calls) - that ordering is
 // what stops the baseline from clobbering this richer detail.
 function screenDetail(): ChatScreenDetail {
-  return depth === 'picker'
-    ? { depth: 'picker' }
-    : { depth: 'conversation', sessionId: currentSessionId }
+  return depth === 'picker' ? { depth: 'picker' } : { depth: 'conversation', sessionId: chat.id }
 }
 
 function publishScreen(): void {
@@ -343,7 +335,7 @@ function confirmFollowUp(): boolean {
   const decision = decideLongPress(voiceState(), {
     now: Date.now(),
     viaWake: nextListenViaWake,
-    hasMessages: currentMessages.length > 0,
+    hasMessages: chat.messages.length > 0,
     armedUntil: followUpArmedUntil,
   })
   disarmFollowUp()
@@ -402,29 +394,17 @@ function showSession(id: string | null): void {
   listenWhenReady = false
   if (!session) {
     depth = 'picker'
-    currentSessionId = null
-    currentMode = 'auto'
-    currentLanguage = null
-    currentMessages = []
-    currentSessionTitle = null
+    clearChat()
     pickerSessions = sortForPicker(chatSessions.peek() ?? [])
     return
   }
   depth = 'conversation'
-  currentSessionId = session.id
-  currentMessages = session.messages
-  currentSessionTitle = session.title
-  currentMode = modeOf(session.mode).id
-  currentLanguage = session.language ?? null
+  loadChat(session)
 }
 
-// The chat's mode (G2-139, core/modes.ts): picked with "New chat: ..." in
-// the list, kept with the chat, shown next to the model's name.
-let currentMode: ModeId = 'auto'
-
 function withModeTag(model: string): string {
-  if (currentMode === 'coding' && currentLanguage) return `Code (${currentLanguage}) - ${model}`
-  return currentMode === 'auto' ? model : `${modeOf(currentMode).label} - ${model}`
+  if (chat.mode === 'coding' && chat.language) return `Code (${chat.language}) - ${model}`
+  return chat.mode === 'auto' ? model : `${modeOf(chat.mode).label} - ${model}`
 }
 // The launcher entry's chat list (G2-152): the rules are in picker.ts
 // (G2-172); this keeps which entry is open.
@@ -433,9 +413,6 @@ const newRows = (): NewRow[] => newRowsFor(scope)
 const pickerMax = (): number => pickerMaxFor(scope)
 const sortForPicker = (sessions: readonly ChatSession[]): ChatSession[] =>
   sortPicker(sessions, scope)
-
-// A Code chat's language (G2-152).
-let currentLanguage: string | null = null
 
 // No storage read on this path any more - it reads the store's in-memory
 // copy, loaded once in the background at app startup (see
@@ -453,13 +430,13 @@ async function refresh(): Promise<void> {
   // startIfPending).
   depth = mode === 'picker' ? 'picker' : 'conversation'
   listenWhenReady = mode !== 'picker'
-  currentSessionId = null
-  currentMode = nextChatMode
+  chat.id = null
+  chat.mode = nextChatMode
   nextChatMode = 'auto'
-  currentLanguage = nextLanguage
+  chat.language = nextLanguage
   nextLanguage = null
-  currentMessages = []
-  currentSessionTitle = null
+  chat.messages = []
+  chat.title = null
   lastErrorQuestion = null
   interrupted = false
   pages = []
@@ -486,14 +463,14 @@ async function refresh(): Promise<void> {
 // the way back to it. Called from onConfirmedExit, which must be
 // synchronous (same requirement as onListSelect).
 function syncPickerFromCurrent(): void {
-  if (currentSessionId === null) return
+  if (chat.id === null) return
   const updated: ChatSession = {
-    id: currentSessionId,
-    title: currentSessionTitle ?? '(untitled)',
-    messages: currentMessages,
+    id: chat.id,
+    title: chat.title ?? '(untitled)',
+    messages: chat.messages,
     updatedAt: Date.now(),
   }
-  const index = pickerSessions.findIndex(s => s.id === currentSessionId)
+  const index = pickerSessions.findIndex(s => s.id === chat.id)
   const withoutCurrent =
     index === -1 ? pickerSessions : pickerSessions.filter((_, i) => i !== index)
   // Capped the same way refresh() is (see pickerMax above) - a
@@ -573,7 +550,7 @@ const DIVIDER = '\n\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\
 // Earlier exchanges in the same conversation are on the companion page. Returns the FIRST page and
 // resets paging to it, so a new answer always opens at its start.
 function renderConversation(): string {
-  return renderExchange(currentMessages)
+  return renderExchange(chat.messages)
 }
 
 // renderConversation's work, for any list of messages - also used to show
@@ -592,7 +569,7 @@ function renderExchange(messages: readonly ChatMessage[]): string {
   }
   const exchanges = exchangesOf(messages)
   const at =
-    focus && focus.of === exchanges.length && messages === currentMessages
+    focus && focus.of === exchanges.length && messages === chat.messages
       ? focus.index
       : exchanges.length - 1
   const shown = exchanges[at]
@@ -724,7 +701,7 @@ function closeCodeView(): void {
 // The conversation as a list of its exchanges, newest first; tapping one
 // opens it (G2-102). Nothing to list: straight back to the chats.
 function openHistory(): void {
-  if (exchangesOf(currentMessages).length === 0) {
+  if (exchangesOf(chat.messages).length === 0) {
     leaveToPicker()
     return
   }
@@ -737,11 +714,11 @@ function openHistory(): void {
 function leaveToPicker(): void {
   syncPickerFromCurrent()
   depth = 'picker'
-  currentSessionId = null
-  currentMode = 'auto'
-  currentLanguage = null
-  currentMessages = []
-  currentSessionTitle = null
+  chat.id = null
+  chat.mode = 'auto'
+  chat.language = null
+  chat.messages = []
+  chat.title = null
   lastErrorQuestion = null
   pages = []
   focus = null
@@ -782,7 +759,7 @@ let inFlightQuestion: string | null = null
 let inFlightSessionId: string | null = null
 
 function waitingHere(): boolean {
-  return inFlightQuestion !== null && inFlightSessionId === currentSessionId
+  return inFlightQuestion !== null && inFlightSessionId === chat.id
 }
 
 // Which Gemini request inFlightQuestion and the Thinking counter belong to.
@@ -932,13 +909,13 @@ function drawListening(now = false): void {
   listenDrawTimer = setTimeout(draw, Math.max(0, lastListenDraw + CAPTION_MIN_GAP_MS - Date.now()))
 }
 
-// Sends currentMessages (already ending with the question to answer - see
+// Sends chat.messages (already ending with the question to answer - see
 // the two callers below) to Gemini and renders whatever comes back. Shared
 // by finishListening (a fresh question, just appended) and retry (the same
-// failed question, already sitting at the end of currentMessages from the
+// failed question, already sitting at the end of chat.messages from the
 // first attempt - NOT re-appended, that would duplicate it in history).
 // question is passed separately only for what to show while waiting and on
-// a repeat failure; the actual request body is currentMessages itself.
+// a repeat failure; the actual request body is chat.messages itself.
 // The "Thinking" display, as its own function so onResume can put it back
 // after a trip to the background stopped it. Elapsed time counts from when
 // the request started, not from the restart.
@@ -1032,11 +1009,11 @@ async function askGeminiNow(question: string) {
   // this question belongs to is captured now - id, title and messages -
   // so the answer is filed against it even if the wearer has moved on by
   // the time it arrives.
-  const targetSessionId = currentSessionId
-  const targetTitle = currentSessionTitle
-  const messagesAtAsk = currentMessages
+  const targetSessionId = chat.id
+  const targetTitle = chat.title
+  const messagesAtAsk = chat.messages
   if (targetSessionId === null) return
-  const stillRelevant = () => depth === 'conversation' && currentSessionId === targetSessionId
+  const stillRelevant = () => depth === 'conversation' && chat.id === targetSessionId
 
   // Whichever AI the wearer chose on the companion page (G2-68).
   status('Jarvis: loading AI settings')
@@ -1108,8 +1085,8 @@ async function askGeminiNow(question: string) {
   status(`Jarvis: asking ${describeModel(llm)}`)
   // The request itself is shared with the phone (assistant.ts, G2-70).
   const reply = await askAssistant(llm, messagesAtAsk, targetSessionId, {
-    mode: currentMode,
-    language: currentLanguage,
+    mode: chat.mode,
+    language: chat.language,
     onText,
     onRetry: (attempt, max) => {
       attemptsMade = attempt
@@ -1174,11 +1151,11 @@ async function askGeminiNow(question: string) {
   if (reply.kind === 'actions' && messagesAtAsk.length === 1) {
     void chatSessions.remove(targetSessionId)
     if (!stillRelevant()) return
-    currentSessionId = null
-    currentMode = 'auto'
-    currentLanguage = null
-    currentSessionTitle = null
-    currentMessages = []
+    chat.id = null
+    chat.mode = 'auto'
+    chat.language = null
+    chat.title = null
+    chat.messages = []
     showCommandResult(messagesAtAsk[0], answer)
     publishScreen()
     return
@@ -1196,7 +1173,7 @@ async function askGeminiNow(question: string) {
     updatedAt: Date.now(),
   })
   if (!stillRelevant()) return
-  currentMessages = answeredMessages
+  chat.messages = answeredMessages
   // A follow-up is being recorded over this answer (G2-149): keep its
   // screen; the answer is in the chat for when the wearer looks back.
   if (listening || transcribing) return
@@ -1219,7 +1196,7 @@ function showCommandResult(question: ChatMessage, reply: ChatMessage): void {
   setContent(renderExchange([question, reply]))
   if (!quickAsk) return
   setTimeout(() => {
-    if (!quickAsk || depth !== 'conversation' || currentSessionId !== null) return
+    if (!quickAsk || depth !== 'conversation' || chat.id !== null) return
     if (busy()) return
     returnHandler?.()
   }, COMMAND_RETURN_DELAY_MS)
@@ -1234,7 +1211,7 @@ function showCommandResult(question: ChatMessage, reply: ChatMessage): void {
 // as Jarvis's own exported finishListening, just a different gesture.
 export async function finishListening() {
   listening = false
-  const sessionIdBeforeAsking = currentSessionId
+  const sessionIdBeforeAsking = chat.id
   // Stop the Listening counter now, not whenever the next startLiveStatus
   // call happens to land - otherwise it keeps ticking (and overwriting
   // the screen) all through transcription, and would overwrite the
@@ -1261,7 +1238,7 @@ export async function finishListening() {
   // session token, which a brief app-in-background blip also bumps: a
   // question that finished transcribing during one was silently thrown
   // away, leaving "Transcribing" on screen for good.
-  if (depth !== 'conversation' || currentSessionId !== sessionIdBeforeAsking || listening) {
+  if (depth !== 'conversation' || chat.id !== sessionIdBeforeAsking || listening) {
     status('Jarvis: question dropped - conversation changed while transcribing')
     return
   }
@@ -1293,23 +1270,22 @@ export async function finishListening() {
     status('Jarvis: checking for a command')
     const command = await dispatchVoiceCommand(result.transcript)
     if (command.handled) {
-      if (depth !== 'conversation' || currentSessionId !== sessionIdBeforeAsking || listening)
-        return
+      if (depth !== 'conversation' || chat.id !== sessionIdBeforeAsking || listening) return
       const reply: ChatMessage = { role: 'model', text: command.message, timestamp: Date.now() }
       status('Jarvis: ran a command')
-      if (currentSessionId === null) {
+      if (chat.id === null) {
         // A command from a blank start is not saved as a conversation -
         // timers would otherwise fill the history with one-line chats.
         showCommandResult(question, reply)
         return
       }
       // Mid-conversation, the command is part of it like anything else said.
-      currentMessages = [...currentMessages, question, reply]
+      chat.messages = [...chat.messages, question, reply]
       saveCurrent()
       void showPage(renderConversation())
       return
     }
-    if (depth !== 'conversation' || currentSessionId !== sessionIdBeforeAsking || listening) {
+    if (depth !== 'conversation' || chat.id !== sessionIdBeforeAsking || listening) {
       status('Jarvis: question dropped - the screen changed before asking')
       return
     }
@@ -1319,7 +1295,7 @@ export async function finishListening() {
     if (answering) {
       setContent('Sending... (the last answer is still arriving)')
       await answering
-      if (depth !== 'conversation' || currentSessionId !== sessionIdBeforeAsking || listening) {
+      if (depth !== 'conversation' || chat.id !== sessionIdBeforeAsking || listening) {
         status('Jarvis: question dropped - the screen changed while waiting')
         return
       }
@@ -1328,13 +1304,13 @@ export async function finishListening() {
     // Added in memory right away, no await - the old version awaited a
     // storage write here before asking Gemini, which is exactly the kind of
     // wait a slow or stuck host read turned into a frozen screen.
-    if (currentSessionId === null) {
-      const created = chatSessions.newSession(question, currentMode, currentLanguage)
-      currentSessionId = created.id
-      currentSessionTitle = created.title
-      currentMessages = created.messages
+    if (chat.id === null) {
+      const created = chatSessions.newSession(question, chat.mode, chat.language)
+      chat.id = created.id
+      chat.title = created.title
+      chat.messages = created.messages
     } else {
-      currentMessages = [...currentMessages, question]
+      chat.messages = [...chat.messages, question]
     }
     saveCurrent()
     // "New chat" only gets a real id once this first question exists -
@@ -1368,13 +1344,13 @@ function runNavCommand(nav: NavCommand): void {
   }
   const before = pageBeforeListening
   pageBeforeListening = null
-  if (currentMessages.length === 0 || !before) {
+  if (chat.messages.length === 0 || !before) {
     // Nothing on screen to scroll: a wake from elsewhere opened an empty chat.
-    if (quickAsk && currentSessionId === null) {
+    if (quickAsk && chat.id === null) {
       returnHandler?.()
       return
     }
-    void showPage(currentMessages.length > 0 ? renderConversation() : 'Nothing to scroll here.')
+    void showPage(chat.messages.length > 0 ? renderConversation() : 'Nothing to scroll here.')
     return
   }
   renderConversation()
@@ -1399,7 +1375,7 @@ function runNavCommand(nav: NavCommand): void {
 // Tries the SAME question again with no new recording, triggered by a
 // single tap on the Gemini-error screen (see app/main.ts's isSingleTap
 // carve-out) - per direct request, re-speaking a question just to hit the
-// same network error again is the wrong recovery path. currentMessages
+// same network error again is the wrong recovery path. chat.messages
 // already ends with the unanswered question from the first attempt (see
 // finishListening above), so this calls askGemini directly rather than
 // going through finishListening - appending the question again would
@@ -1479,8 +1455,8 @@ chatSessions.onChange(() => {
     requestRebuild(entry ?? chatTool, fillSection)
     return
   }
-  if (currentSessionId === null || busy()) return
-  const session = sessions.find(s => s.id === currentSessionId)
+  if (chat.id === null || busy()) return
+  const session = sessions.find(s => s.id === chat.id)
   if (!session) {
     showSession(null)
     requestRebuild(entry ?? chatTool, fillSection)
@@ -1489,13 +1465,13 @@ chatSessions.onChange(() => {
   }
   const last = (messages: readonly ChatMessage[]) => messages[messages.length - 1]?.timestamp
   if (
-    session.messages.length === currentMessages.length &&
-    last(session.messages) === last(currentMessages)
+    session.messages.length === chat.messages.length &&
+    last(session.messages) === last(chat.messages)
   ) {
     return
   }
-  currentMessages = session.messages
-  currentSessionTitle = session.title
+  chat.messages = session.messages
+  chat.title = session.title
   pages = []
   requestRebuild(entry ?? chatTool, fillSection)
 })
@@ -1530,7 +1506,7 @@ export const chatTool: Tool = {
   contentKind: () => (depth !== 'conversation' ? 'list' : codeView ? 'tiles' : 'text'),
   listItems: () =>
     depth === 'history'
-      ? historyRows(exchangesOf(currentMessages)).map(r => r.label)
+      ? historyRows(exchangesOf(chat.messages)).map(r => r.label)
       : [
           ...newRows().map(r => r.label),
           ...pickerSessions.map(s =>
@@ -1539,7 +1515,7 @@ export const chatTool: Tool = {
         ],
   onListSelect: index => {
     if (depth === 'history') {
-      const exchanges = exchangesOf(currentMessages)
+      const exchanges = exchangesOf(chat.messages)
       const row = historyRows(exchanges)[index]
       if (!row) return
       focus = { index: row.index, of: exchanges.length }
@@ -1553,19 +1529,19 @@ export const chatTool: Tool = {
     const rows = newRows()
     listenWhenReady = index < rows.length
     if (index < rows.length) {
-      currentSessionId = null
-      currentMessages = []
-      currentSessionTitle = null
-      currentMode = rows[index].mode
-      currentLanguage = rows[index].language ?? null
+      chat.id = null
+      chat.messages = []
+      chat.title = null
+      chat.mode = rows[index].mode
+      chat.language = rows[index].language ?? null
     } else {
       const picked = pickerSessions[index - rows.length]
       if (!picked) return
-      currentSessionId = picked.id
-      currentMessages = picked.messages
-      currentSessionTitle = picked.title
-      currentMode = modeOf(picked.mode).id
-      currentLanguage = picked.language ?? null
+      chat.id = picked.id
+      chat.messages = picked.messages
+      chat.title = picked.title
+      chat.mode = modeOf(picked.mode).id
+      chat.language = picked.language ?? null
     }
     depth = 'conversation'
     quickAsk = false
@@ -1636,11 +1612,11 @@ export const chatTool: Tool = {
     stopListeningIfAny()
     syncPickerFromCurrent()
     depth = 'picker'
-    currentSessionId = null
-    currentMode = 'auto'
-    currentLanguage = null
-    currentMessages = []
-    currentSessionTitle = null
+    chat.id = null
+    chat.mode = 'auto'
+    chat.language = null
+    chat.messages = []
+    chat.title = null
     lastErrorQuestion = null
     pages = []
     publishScreen()
@@ -1689,7 +1665,7 @@ export const chatTool: Tool = {
     }
     const decision = onPhoneRequest(voiceState(), {
       wanted,
-      current: currentSessionId,
+      current: chat.id,
       atPicker: depth === 'picker',
     })
     if (decision === 'ignore') {
