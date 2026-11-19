@@ -66,8 +66,16 @@ export function createTurnDetector({
   return {
     // transcript: the live words so far, or null when there is no live
     // transcription (the long pause is used then).
-    push(rms: number, transcript: string | null = null): EndpointDecision {
-      elapsed += frameMs
+    // durationMs: this frame's real length (G2-162). The glasses' frame size
+    // is not documented; assuming 100 ms made a 20 s auto-send fire after
+    // about 2 s on hardware, so the caller measures it from the bytes.
+    push(
+      rms: number,
+      transcript: string | null = null,
+      durationMs: number = frameMs,
+    ): EndpointDecision {
+      const step = durationMs
+      elapsed += step
       loudest = Math.max(loudest, rms)
       const loud = isSpeech(rms, floor)
       floor = nextFloor(rms, floor, loud)
@@ -77,7 +85,7 @@ export function createTurnDetector({
         if (speechFrames >= MIN_SPEECH_FRAMES) heardSpeech = true
       } else {
         speechFrames = 0
-        quietMs += frameMs
+        quietMs += step
       }
       // New words are speech too, even when the mic level missed them.
       if (transcript !== null && transcript.trim() !== lastTranscript) {

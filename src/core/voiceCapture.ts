@@ -256,10 +256,16 @@ export async function start(
     if (!endpointer || !onEndpoint || endpointReported) return
     // With a live engine, new words count as speech even when the level
     // missed them.
-    const decision = endpointer.push(rmsLevel(toFloat32(pcm)), live ? liveText() : null)
+    // Each frame's real length from its bytes (16-bit mono), not an assumed
+    // 100 ms (G2-162).
+    const frameMs = (pcm.length / 2 / SAMPLE_RATE) * 1000
+    const decision = endpointer.push(rmsLevel(toFloat32(pcm)), live ? liveText() : null, frameMs)
     if (decision === 'listening') return
     endpointReported = true
     endpointDecision = decision
+    status(
+      `Jarvis: recording ended by itself (${decision}), auto-send ${recordingAutoSend || 'off'}, mic frames ${frameMs.toFixed(0)} ms`,
+    )
     onEndpoint(decision)
   })
   if (!release) return false

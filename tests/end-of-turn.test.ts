@@ -78,6 +78,18 @@ describe('createTurnDetector (G2-149)', () => {
     expect(quietUntilSent(10_000)).toBe(10_000)
   })
 
+  it('counts real frame time: 20 s with 10 ms frames waits 20 s, not 2 s (G2-162)', () => {
+    const turn = createTurnDetector({
+      initialFloor: QUIET,
+      completePauseMs: 20_000,
+      incompletePauseMs: 20_000,
+    })
+    for (let i = 0; i < 100; i++) turn.push(LOUD, 'What is a closure?', 10)
+    let ms = 0
+    while (turn.push(QUIET, 'What is a closure?', 10) === 'listening') ms += 10
+    expect(ms + 10).toBe(20_000)
+  })
+
   it('auto-send off never sends on quiet; only a tap ends the recording', () => {
     expect(quietUntilSent(Infinity)).toBe(-1)
   })
