@@ -39,6 +39,13 @@ describe('leadSentenceEnd (G2-180)', () => {
     )
   })
 
+  it('ends at a colon that ends a line: the Code opening line (G2-186)', () => {
+    const text = 'For this HackerRank Tuples problem, use:\n\npseudo code:'
+    expect(text.slice(0, leadSentenceEnd(text))).toBe('For this HackerRank Tuples problem, use:')
+    // Not a colon inside a line, like "Note: this".
+    expect(leadSentenceEnd('Note: this is it. More')).toBe(17)
+  })
+
   it('waits while the sentence, or a number like 3.5, is still arriving', () => {
     expect(leadSentenceEnd('So I need')).toBe(0)
     expect(leadSentenceEnd('It costs 3.')).toBe(0)

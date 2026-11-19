@@ -336,9 +336,13 @@ function shorthandIn(code: string): string[] {
 // looks like code ("primary += arr[0][0] = 11") is a block of its own and
 // would break the program if joined in.
 function codeOf(answer: string): string {
-  const blocks = splitAnswer(answer)
-    .filter(b => b.kind === 'code')
-    .map(b => b.text)
+  const all = splitAnswer(answer)
+  // The block under the "code:" label (G2-186): the pseudocode above it can
+  // look like code ("n = size of the matrix") and run longer.
+  const label = all.findIndex(b => b.kind === 'text' && /^code:$/i.test(b.text.trim()))
+  const labelled = label >= 0 ? all.slice(label + 1).find(b => b.kind === 'code') : undefined
+  if (labelled) return labelled.text
+  const blocks = all.filter(b => b.kind === 'code').map(b => b.text)
   return blocks.reduce((a, b) => (b.length > a.length ? b : a), '')
 }
 

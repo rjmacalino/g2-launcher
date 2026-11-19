@@ -40,7 +40,16 @@ function isProseLine(line: string): boolean {
 // it (G2-94: the PC model writes "def ...", "  return a", "This approach
 // uses ..." with no blank line between) is split there, so the code is
 // still found.
+// A section label on its own line ("code:", "pseudo code:", "How it works:")
+// right above code (G2-186): it is text, not the first line of the code.
+const LABEL = /^[A-Za-z][A-Za-z ]{0,24}:$/
+
 function separateProse(lines: string[]): string[][] {
+  // Not a line of code that happens to end in a colon ("class Solution:").
+  const top = lines[0].trim()
+  if (lines.length > 1 && LABEL.test(top) && !isCodeLine(top)) {
+    return [[lines[0]], ...separateProse(lines.slice(1))]
+  }
   const first = lines.findIndex(isCodeLine)
   const last = lines.length - 1 - [...lines].reverse().findIndex(isCodeLine)
   if (first < 0 || last - first < 1) return [lines]

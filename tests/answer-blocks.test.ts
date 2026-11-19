@@ -2,6 +2,18 @@ import { describe, expect, it } from 'vitest'
 import { splitAnswer } from '../src/shared/answerBlocks'
 
 describe('splitAnswer', () => {
+  it('keeps a section label above code out of the code (G2-186)', () => {
+    const answer = 'code:\nn = int(input())\nprint(n * 2)\n\nHow it works:\n1. Reads n'
+    const code = splitAnswer(answer).filter(b => b.kind === 'code')
+    expect(code.map(b => b.text)).toEqual(['n = int(input())\nprint(n * 2)'])
+  })
+
+  it('never takes a line of code ending in a colon for a label', () => {
+    const answer = 'code:\nclass Solution:\n  def f(self):\n    return 1'
+    const code = splitAnswer(answer).filter(b => b.kind === 'code')
+    expect(code.map(b => b.text)).toEqual(['class Solution:\n  def f(self):\n    return 1'])
+  })
+
   it('leaves an ordinary answer as text', () => {
     expect(
       splitAnswer('The capital of Australia is Canberra. It became the capital in 1913.'),

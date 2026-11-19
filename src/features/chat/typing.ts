@@ -40,7 +40,9 @@ export function nextShown(
 export const LEAD_MAX_CHARS = 300
 
 export function leadSentenceEnd(text: string): number {
-  const match = /[.?!](?=\s|$)/.exec(text.slice(0, LEAD_MAX_CHARS))
+  // A sentence end, or a colon ending a line: Code opens with
+  // "For this ... problem, use:" (G2-186).
+  const match = /[.?!](?=\s|$)|:(?=\n)/.exec(text.slice(0, LEAD_MAX_CHARS))
   if (!match) return 0
   const end = match.index + 1
   // A full stop at the very end of what has arrived may be "3." of "3.5":
