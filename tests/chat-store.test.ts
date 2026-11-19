@@ -201,4 +201,31 @@ describe('chatSessions', () => {
     const store = await freshStore()
     expect(await store.readAll()).toEqual([])
   })
+
+  it('repairs Code chats saved without their mode, and leaves other chats alone (G2-185)', async () => {
+    stored.set(
+      'chat.sessions',
+      JSON.stringify([
+        {
+          id: 'code',
+          title: 'Two sum',
+          updatedAt: 2,
+          messages: [
+            message('user', 'Two sum'),
+            message('model', 'LeetCode - Two Sum - Easy\n\nSo I need...'),
+          ],
+        },
+        {
+          id: 'plain',
+          title: 'Weather',
+          updatedAt: 1,
+          messages: [message('user', 'Weather?'), message('model', 'Sunny - and warm - today.')],
+        },
+      ]),
+    )
+    const store = await freshStore()
+    const loaded = await store.readAll()
+    expect(loaded.find(s => s.id === 'code')?.mode).toBe('coding')
+    expect(loaded.find(s => s.id === 'plain')?.mode).toBeUndefined()
+  })
 })

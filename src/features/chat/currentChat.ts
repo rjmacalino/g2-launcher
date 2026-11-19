@@ -45,8 +45,17 @@ export function loadChat(session: ChatSession): void {
 }
 
 // The chat as a session to save or list; null before its first question.
-// The store keeps the mode and language it already has.
+// Always with its mode and language (G2-185): a new Code chat's first save
+// had neither, since the store only kept ones it had seen before, so Code
+// chats were saved as plain Jarvis chats and never listed under a language.
 export function chatAsSession(now = Date.now()): ChatSession | null {
   if (chat.id === null) return null
-  return { id: chat.id, title: chat.title ?? '(untitled)', messages: chat.messages, updatedAt: now }
+  return {
+    id: chat.id,
+    title: chat.title ?? '(untitled)',
+    messages: chat.messages,
+    updatedAt: now,
+    ...(chat.mode !== 'auto' ? { mode: chat.mode } : {}),
+    ...(chat.language ? { language: chat.language } : {}),
+  }
 }

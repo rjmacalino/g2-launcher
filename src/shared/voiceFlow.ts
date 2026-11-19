@@ -101,6 +101,8 @@ export type HintInput = {
   earlier: boolean
   // A long press over the answer asked for a second one (G2-161).
   armed: boolean
+  // A tap over the answer asked to open the code (G2-185).
+  codeArmed?: boolean
 }
 
 // Short enough for the status bar's centre slot (G2-184, 216 px, checked in
@@ -126,6 +128,7 @@ export function hintFor(h: HintInput): string {
       return 'hold: ask'
     case 'answer':
       if (h.armed) return 'hold again: follow-up'
+      if (h.codeArmed) return 'tap: code, 2x: cancel'
       if (h.hasCode) return 'tap: code, hold: ask'
       if (h.earlier) return 'hold: ask, up: earlier'
       return 'hold: ask, 2x tap: back'

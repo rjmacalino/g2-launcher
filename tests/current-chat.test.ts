@@ -27,6 +27,13 @@ describe('currentChat', () => {
     expect(chat.language).toBeNull()
   })
 
+  it("saves a Code chat's mode and language from its first save on (G2-185)", () => {
+    clearChat('coding', 'C#')
+    chat.id = 'new'
+    chat.title = 'Two sum'
+    expect(chatAsSession(1)).toMatchObject({ id: 'new', mode: 'coding', language: 'C#' })
+  })
+
   it('saves as a session stamped now, with a title even if it has none', () => {
     loadChat({ id: 's1', title: 'Two sum', messages: [], updatedAt: 1 })
     chat.title = null

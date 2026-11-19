@@ -300,7 +300,7 @@ function publishScreen(): void {
 // are skipped in platform/page.ts.
 function hintScreen(): HintScreen {
   if (listening) return 'listening'
-  if (transcribing) return 'transcribing'
+  if (transcribing && transcribingFor === chat.id) return 'transcribing'
   const stream = currentStream()
   if (stream && stream.timer !== null) return stream.mode === 'hold' ? 'paused' : 'typing'
   if (waitingHere()) return 'thinking'
@@ -317,6 +317,7 @@ function currentHint(): string | null {
     hasCode: codeBlocks.length > 0,
     earlier: hasEarlier(),
     armed: Date.now() < followUpArmedUntil,
+    codeArmed: Date.now() < codeArmedUntil,
   })
 }
 
@@ -359,6 +360,16 @@ function redoView(rows: string[], at: number, setWin: (w: Win) => void): () => s
 // reset the wearer's scroll. "Hey Jarvis" is deliberate and skips it.
 let followUpArmedUntil = 0
 let followUpTimer: ReturnType<typeof setTimeout> | null = null
+
+// A first tap over an answer with code asked to open it (G2-185).
+let codeArmedUntil = 0
+let codeArmTimer: ReturnType<typeof setTimeout> | null = null
+
+function disarmCode(): void {
+  codeArmedUntil = 0
+  if (codeArmTimer !== null) clearTimeout(codeArmTimer)
+  codeArmTimer = null
+}
 
 function disarmFollowUp(): void {
   followUpArmedUntil = 0
@@ -507,13 +518,10 @@ async function refresh(): Promise<void> {
 // the way back to it. Called from onConfirmedExit, which must be
 // synchronous (same requirement as onListSelect).
 function syncPickerFromCurrent(): void {
-  if (chat.id === null) return
-  const updated: ChatSession = {
-    id: chat.id,
-    title: chat.title ?? '(untitled)',
-    messages: chat.messages,
-    updatedAt: Date.now(),
-  }
+  // With its mode and language (G2-185), so picking it again reopens it as
+  // the Code or Interview chat it is.
+  const updated = chatAsSession()
+  if (!updated) return
   const index = pickerSessions.findIndex(s => s.id === chat.id)
   const withoutCurrent =
     index === -1 ? pickerSessions : pickerSessions.filter((_, i) => i !== index)
@@ -831,6 +839,9 @@ let stopThinking: (() => void) | null = null
 // long-press then used to start a second recording on top of the first's
 // transcription.
 let transcribing = false
+// The chat the transcription belongs to, so another chat opened meanwhile
+// does not show its "one moment..." (G2-185).
+let transcribingFor: string | null = null
 
 // Recording, transcribing, or waiting on Gemini: a long-press asking the
 // next question waits until this one is done.
@@ -1286,8 +1297,18 @@ export async function finishListening() {
       : `Whisper is transcribing ${recordedSeconds}s of speech...\n\n(this can take a moment)`,
   )
   transcribing = true
-  const result = await stop()
-  transcribing = false
+  transcribingFor = sessionIdBeforeAsking
+  let result: Awaited<ReturnType<typeof stop>>
+  try {
+    result = await stop()
+  } finally {
+    // Always cleared, and the status bar redrawn (G2-185): a transcription
+    // that ended after the wearer opened another chat left "one moment..."
+    // on that chat's status bar for good.
+    transcribing = false
+    transcribingFor = null
+    updatePositionNote()
+  }
   // Dropped only if the wearer actually moved on - left this conversation,
   // or started a new recording. The old check here was the voice-capture
   // session token, which a brief app-in-background blip also bumps: a
@@ -1703,14 +1724,35 @@ export const chatTool: Tool = {
   onTap: () => {
     if (tapStream()) return
     if (depth !== 'conversation' || busy()) return
-    if (codeView) moveCode(1)
-    else openCodeView()
+    if (codeView) {
+      moveCode(1)
+      return
+    }
+    if (codeBlocks.length === 0) return
+    // Confirmed (G2-185): the first tap only asks, a second opens the code.
+    if (Date.now() < codeArmedUntil) {
+      disarmCode()
+      openCodeView()
+      return
+    }
+    codeArmedUntil = Date.now() + FOLLOW_UP_CONFIRM_MS
+    codeArmTimer = setTimeout(() => {
+      disarmCode()
+      updatePositionNote()
+    }, FOLLOW_UP_CONFIRM_MS)
+    updatePositionNote()
   },
   // Double-tap steps back one level, no question asked, until the chat list
   // (G2-102): code > question and answer > exchanges > chats > launcher.
   // Mid-recording or answering, and in a conversation started from another
   // screen, it still goes through the leave prompt.
   onBack: () => {
+    // Double-tap cancels a tap that asked to open the code (G2-185).
+    if (Date.now() < codeArmedUntil) {
+      disarmCode()
+      updatePositionNote()
+      return true
+    }
     if (codeView) {
       closeCodeView()
       return true

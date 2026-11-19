@@ -155,6 +155,7 @@ describe('status bar hint (G2-178, G2-184)', () => {
     expect(hint({ earlier: true })).toBe('hold: ask, up: earlier')
     expect(hint({ hasCode: true, earlier: true })).toBe('tap: code, hold: ask')
     expect(hint({ armed: true, hasCode: true })).toBe('hold again: follow-up')
+    expect(hint({ codeArmed: true, hasCode: true })).toBe('tap: code, 2x: cancel')
   })
 
   it("fits the status bar's centre slot in the glasses' own font", () => {
@@ -173,6 +174,7 @@ describe('status bar hint (G2-178, G2-184)', () => {
       hint({ screen, hasCode: true }),
       hint({ screen, earlier: true }),
       hint({ screen, armed: true }),
+      hint({ screen, codeArmed: true }),
     ])
     for (const text of all) expect(getTextWidth(text)).toBeLessThanOrEqual(CENTRE_SLOT_PX)
   })

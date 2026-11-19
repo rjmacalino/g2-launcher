@@ -138,10 +138,24 @@ const STUCK_LOAD_REPORT_MS = 5000
 function parseSessions(raw: string): ChatSession[] {
   try {
     const parsed: unknown = JSON.parse(raw)
-    return Array.isArray(parsed) ? parsed.filter(isChatSession) : []
+    return Array.isArray(parsed) ? parsed.filter(isChatSession).map(repairMode) : []
   } catch {
     return []
   }
+}
+
+// Code chats saved before G2-185 lost their mode on their first save, so
+// they listed under Jarvis. An answer that opens with Code mode's header line
+// ("LeetCode - Two Sum - Easy", since G2-160) marks one; its language was not
+// saved, so it lists under Python. Written back on the next save.
+const CODE_HEADER = /^(LeetCode|HackerRank|Problem) - .+ - (Easy|Medium|Hard)\s*$/m
+
+export function repairMode(session: ChatSession): ChatSession {
+  if (session.mode) return session
+  const looksLikeCode = session.messages.some(
+    m => m.role === 'model' && CODE_HEADER.test(m.text.slice(0, 200)),
+  )
+  return looksLikeCode ? { ...session, mode: 'coding' } : session
 }
 
 // Escapes every character at or above 0x7f as \uXXXX. A loop over char
