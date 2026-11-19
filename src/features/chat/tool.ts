@@ -35,6 +35,13 @@ import { setContent } from '../../platform/page'
 import { status } from '../../platform/bridge'
 import { TYPING_TICK_MS } from './typing'
 import {
+  listeningHeader,
+  listeningText,
+  startTicker,
+  stopTicker,
+  tickerRunning,
+} from './listeningScreen'
+import {
   currentStream,
   endStream,
   freezeStream,
@@ -61,8 +68,6 @@ import {
 } from './viewer'
 import {
   PAGE_INNER_WIDTH,
-  SCREEN_ROWS,
-  wrapLines,
   REBUILD_MAX_CHARS,
   lowerPageLimit,
   paginate,
@@ -369,7 +374,7 @@ function updatePositionNote(): void {
     return
   }
   let note: string | null = null
-  if (depth === 'conversation' && !listening && !transcribing && stopActiveStatus === null) {
+  if (depth === 'conversation' && !listening && !transcribing && !tickerRunning()) {
     note = codeView
       ? positionLabel(codeView.screen, codeView.screens.length)
       : withCodeTag(positionLabel(pageIndex, pages.length))
@@ -744,52 +749,14 @@ function leaveToPicker(): void {
   requestRebuild(entry ?? chatTool)
 }
 
-const STATUS_FRAMES = ['.', '..', '...']
-// Per direct request: update every second, showing elapsed time, not a
-// faster cosmetic flicker - the counter itself is the "is this alive"
-// signal now, the cycling dots are secondary.
-const STATUS_TICK_MS = 1000
-
-// A cycling ". .. ..." plus an elapsed-seconds counter, both just a fixed
-// string on a setInterval - nothing running repeated model inference on
-// the main thread (that is what made live captions unsafe, see the
-// comment at this function's call sites). mySession is the same staleness
-// token every other async step here already checks; the timer checks it
-// too so a tick can never land after the session that started it has
-// moved on.
-//
-// Only one of these may run at a time (Listening and Thinking are never
-// both active together), but this guards that invariant defensively
-// anyway rather than trusting every call site to get it right: starting a
-// new one always stops whatever the last one left running first. A
-// leaked interval here would not just look wrong on screen - it is a real
-// background cost (a setContent/bridge call every tick, forever) that
-// could add up across a long session.
-let stopActiveStatus: (() => void) | null = null
-
+// The Listening and Thinking counters tick in listeningScreen.ts (G2-174);
+// each stops itself once its recording or question is stale.
 function startLiveStatus(
   mySession: number,
   render: (dots: string, elapsedSeconds: number) => void,
   startedAt = Date.now(),
 ): () => void {
-  stopActiveStatus?.()
-  let frame = 0
-  const tick = () => {
-    if (mySession !== sessionToken) {
-      stop()
-      return
-    }
-    render(STATUS_FRAMES[frame], Math.floor((Date.now() - startedAt) / 1000))
-    frame = (frame + 1) % STATUS_FRAMES.length
-  }
-  tick()
-  const interval = setInterval(tick, STATUS_TICK_MS)
-  const stop = () => {
-    clearInterval(interval)
-    if (stopActiveStatus === stop) stopActiveStatus = null
-  }
-  stopActiveStatus = stop
-  return stop
+  return startTicker(() => mySession !== sessionToken, render, startedAt)
 }
 
 // When the current recording started, so "Transcribing" can say how much
@@ -927,12 +894,15 @@ async function beginListening() {
   // Who is listening (G2-157), redrawn every second, so a live engine that
   // drops or never connects shows up on the glasses as it happens; then
   // how the question is sent (G2-158).
-  const quiet = autoSendSeconds()
-  const hint = quiet > 0 ? `Tap to send, or stay quiet ${quiet}s` : 'Tap to send'
   startLiveStatus(mySession, (dots, elapsedSeconds) => {
     // Live countdown to auto-send (G2-164), redrawn every second.
-    const left = autoSendCountdown()
-    listenHeader = `${listeningEngine()} listening${dots} (${elapsedSeconds}s)\n${left === null ? hint : `Sending in ${left}s, or tap to send now`}`
+    listenHeader = listeningHeader({
+      engine: listeningEngine(),
+      dots,
+      seconds: elapsedSeconds,
+      autoSend: autoSendSeconds(),
+      countdown: autoSendCountdown(),
+    })
     drawListening(true)
   })
 }
@@ -951,9 +921,7 @@ function drawListening(now = false): void {
     listenDrawTimer = null
     lastListenDraw = Date.now()
     if (!listening) return
-    // Two header rows (engine and counter, then the hint) and a blank one.
-    const rows = heardSoFar ? wrapLines(heardSoFar, PAGE_INNER_WIDTH).slice(-(SCREEN_ROWS - 3)) : []
-    void setContent(rows.length > 0 ? `${listenHeader}\n\n${rows.join('\n')}` : listenHeader)
+    void setContent(listeningText(listenHeader, heardSoFar))
   }
   if (now) {
     if (listenDrawTimer !== null) clearTimeout(listenDrawTimer)
@@ -1272,7 +1240,7 @@ export async function finishListening() {
   // the screen) all through transcription, and would overwrite the
   // "Didn't catch that" error below entirely, since nothing else would
   // ever stop it on that path.
-  stopActiveStatus?.()
+  stopTicker()
   // A fixed message, not a ticking counter: transcription runs Whisper on
   // the same main thread the counter's timer needs, so the counter could
   // never move [HW - it sat at 0s the whole time]. The length of what was
@@ -1453,7 +1421,7 @@ function stopListeningIfAny() {
   // interval still ticking against a container that is being torn down
   // is worth killing immediately rather than waiting up to a second for
   // its own staleness check to catch up.
-  stopActiveStatus?.()
+  stopTicker()
   if (listening) {
     listening = false
     cancel()
@@ -1481,7 +1449,7 @@ function resume(): void {
     setContent('Recording was interrupted.\n\nLong-press to ask again.')
     return
   }
-  if (inFlightQuestion !== null && waitingHere() && stopActiveStatus === null) {
+  if (inFlightQuestion !== null && waitingHere() && !tickerRunning()) {
     showThinking(inFlightQuestion)
   }
 }
@@ -1788,7 +1756,7 @@ export const chatTool: Tool = {
       }
       return
     }
-    if (depth !== 'conversation' || listening || stopActiveStatus !== null) return
+    if (depth !== 'conversation' || listening || tickerRunning()) return
     if (pages.length <= 1) return
     const now = Date.now()
     if (now - lastScrollAt < SCROLL_COOLDOWN_MS) return
