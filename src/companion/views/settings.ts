@@ -179,12 +179,14 @@ function transcriberCard(): HTMLElement {
   const geminiBox = sttKeyBox({
     label: 'Gemini key for speech to text',
     hint: 'From aistudio.google.com. Separate from the key of the model that answers. Leave empty to use the Gemini key from AI models (answering).',
+    keyUrl: 'https://aistudio.google.com/apikey',
     read: getSttGeminiKey,
     write: setSttGeminiKey,
   })
   const deepgramBox = sttKeyBox({
     label: 'Deepgram key',
     hint: 'From console.deepgram.com.',
+    keyUrl: 'https://console.deepgram.com/',
     read: getDeepgramKey,
     write: setDeepgramKey,
   })
@@ -219,6 +221,7 @@ function transcriberCard(): HTMLElement {
 function sttKeyBox(key: {
   label: string
   hint: string
+  keyUrl: string
   read: () => Promise<string | null>
   write: (value: string) => Promise<boolean>
 }): HTMLElement {
@@ -261,7 +264,12 @@ function sttKeyBox(key: {
       `${key.hint} Stored on this phone only.`,
     ),
     h('div', { class: 'key-row' }, field, reveal),
-    h('div', { style: 'margin-top: 8px' }, save),
+    h(
+      'div',
+      { class: 'button-row' },
+      save,
+      h('a', { class: 'button', href: key.keyUrl, target: '_blank', rel: 'noopener' }, 'Get a key'),
+    ),
   )
 }
 
