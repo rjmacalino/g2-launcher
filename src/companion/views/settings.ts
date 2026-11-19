@@ -1,4 +1,5 @@
 import { bridge, onStatus, recentStatus } from '../../platform/bridge'
+import { trace } from '../../shared/trace'
 import { ABOUT_ME_MAX_CHARS, getAboutMe, setAboutMe } from '../../core/geminiSettings'
 import {
   DEFAULT_LOCAL_INSTRUCTIONS,
@@ -477,8 +478,34 @@ function textCard(
   )
 }
 
+// The hardware trace (G2-171, shared/trace.ts) for a bug report: copied to
+// the clipboard, or shown to select by hand when the WebView refuses the
+// clipboard. In dev also saved to bench/results/last-trace.json on the PC.
+async function copyTrace(box: HTMLTextAreaElement): Promise<void> {
+  const text = trace.toJson()
+  import.meta.hot?.send('companion:trace', text)
+  try {
+    await navigator.clipboard.writeText(text)
+    toast('Trace copied - paste it into a message')
+    return
+  } catch {
+    box.value = text
+    box.style.display = ''
+    box.focus()
+    box.select()
+    toast('Select all in the box and copy it')
+  }
+}
+
 function diagnosticsCard(): { el: HTMLElement; stop: () => void } {
   const list = h('ul', { class: 'log' })
+  const traceBox = h('textarea', {
+    class: 'field',
+    readonly: true,
+    rows: 6,
+    'aria-label': 'Trace',
+    style: 'display: none; margin-bottom: 12px',
+  }) as HTMLTextAreaElement
   const paint = () => {
     list.replaceChildren(
       ...[...recentStatus()]
@@ -518,7 +545,9 @@ function diagnosticsCard(): { el: HTMLElement; stop: () => void } {
           },
           'Test long text on glasses',
         ),
+        h('button', { class: 'button', onclick: () => void copyTrace(traceBox) }, 'Copy trace'),
       ),
+      traceBox,
       list,
     ),
     stop,

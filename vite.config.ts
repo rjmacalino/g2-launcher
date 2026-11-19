@@ -19,6 +19,11 @@ function companionDevControl(): Plugin {
       server.ws.on('companion:audio', (data: string) => {
         writeFileSync('bench/results/last-recording.pcm', Buffer.from(data, 'base64'))
       })
+      // The hardware trace from Diagnostics' Copy trace (G2-171), for replay
+      // tests (tests/trace.test.ts).
+      server.ws.on('companion:trace', (data: string) => {
+        writeFileSync('bench/results/last-trace.json', data)
+      })
       server.middlewares.use('/__dev/companion', (req, res) => {
         if (req.method !== 'POST' || !loopback.has(req.socket.remoteAddress ?? '')) {
           res.statusCode = 403

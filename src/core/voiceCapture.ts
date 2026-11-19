@@ -18,6 +18,7 @@ import { isSilenceHallucination, stripNonSpeech, stripWakePhrase } from '../shar
 import { endsInSpeech, rmsLevel, type EndpointDecision } from '../shared/endpoint'
 import { createTurnDetector } from '../shared/endOfTurn'
 import { autoSendCountdown as countdownFrom, frameMs } from '../shared/voiceFlow'
+import { trace } from '../shared/trace'
 
 // Browser SpeechRecognition looked available (Lab's presence-check probe
 // constructed it without throwing) but actually using it fails with
@@ -232,6 +233,11 @@ export async function start(
       })
     : null
   if (choice && !choice.key) missingKeyFor = choice.engine
+  trace.add({
+    kind: 'recording-start',
+    autoSend,
+    engine: choice?.key ? choice.engine : 'whisper',
+  })
   if (choice?.key) {
     const caption = captureOptions.onCaption
     liveEngine = choice.engine
@@ -256,16 +262,19 @@ export async function start(
     if (myCapture !== captureToken) return
     chunks.push(pcm)
     live?.push(pcm)
+    // Each frame's real length from its bytes (16-bit mono), not an assumed
+    // 100 ms (G2-162); traced with its loudness, never the audio (G2-171).
+    const length = frameMs(pcm.length, SAMPLE_RATE)
+    const level = rmsLevel(toFloat32(pcm))
+    trace.mic(length, level)
     if (!endpointer || !onEndpoint || endpointReported) return
     // With a live engine, new words count as speech even when the level
     // missed them.
-    // Each frame's real length from its bytes (16-bit mono), not an assumed
-    // 100 ms (G2-162).
-    const length = frameMs(pcm.length, SAMPLE_RATE)
-    const decision = endpointer.push(rmsLevel(toFloat32(pcm)), live ? liveText() : null, length)
+    const decision = endpointer.push(level, live ? liveText() : null, length)
     if (decision === 'listening') return
     endpointReported = true
     endpointDecision = decision
+    trace.add({ kind: 'recording-end', reason: decision })
     status(
       `Jarvis: recording ended by itself (${decision}), auto-send ${recordingAutoSend || 'off'}, mic frames ${length.toFixed(0)} ms`,
     )
@@ -316,6 +325,8 @@ function peakLevel(samples: Float32Array): number {
 
 // Ends capture and runs one transcription over everything recorded.
 export async function stop(): Promise<VoiceResult> {
+  // A tap or the cap; an ending by itself was traced when it happened.
+  if (endpointDecision === null) trace.add({ kind: 'recording-end', reason: 'tap or cap' })
   teardownCapture()
   const stream = live
   live = null
@@ -368,6 +379,8 @@ export async function stop(): Promise<VoiceResult> {
     if (options.stripWake && endpointDecision === 'no-speech' && transcript === heard) {
       return { kind: 'error', message: `no speech after "Hey Jarvis" (noise read as "${heard}")` }
     }
+    // Its length only, never the words (G2-171).
+    trace.add({ kind: 'transcript', chars: transcript.length })
     return {
       kind: 'transcript',
       transcript,
@@ -386,6 +399,7 @@ export async function stop(): Promise<VoiceResult> {
 // or the app suspended mid-recording, so there is no page left to show a
 // result on even if one were computed.
 export function cancel() {
+  trace.add({ kind: 'recording-end', reason: 'cancelled' })
   teardownCapture()
   live?.close()
   live = null

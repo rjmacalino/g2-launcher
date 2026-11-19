@@ -46,6 +46,7 @@ import {
 } from './statusbar'
 import { registerRebuildHandler } from '../core/rebuild'
 import { registerStatusNoteHandler } from '../core/statusNote'
+import { trace } from '../shared/trace'
 import { onScreenRequest, publishToolScreen, setCurrentScreen } from '../core/currentScreen'
 import { persistScreen, readStoredScreen, type Screen } from './screen'
 import { TOOLS, TOOL_NAMES } from './registry'
@@ -1196,6 +1197,27 @@ const unsubscribe = bridge.onEvenHubEvent(event => {
   const textType = eventTypeOf(event.textEvent)
   const listType = eventTypeOf(event.listEvent)
   const listEvent = event.listEvent
+  // Hardware trace (G2-171): the raw type, before a missing one becomes a
+  // click, so a stray "tap" shows up as null. No text or item names.
+  if (event.sysEvent)
+    trace.add({ kind: 'event', source: 'sys', type: event.sysEvent.eventType ?? null })
+  if (event.textEvent) {
+    trace.add({
+      kind: 'event',
+      source: 'text',
+      type: event.textEvent.eventType ?? null,
+      container: event.textEvent.containerName,
+    })
+  }
+  if (listEvent) {
+    trace.add({
+      kind: 'event',
+      source: 'list',
+      type: listEvent.eventType ?? null,
+      container: listEvent.containerName,
+      index: listEvent.currentSelectItemIndex,
+    })
+  }
 
   const isDoubleTap =
     sysType === OsEventTypeList.DOUBLE_CLICK_EVENT ||
