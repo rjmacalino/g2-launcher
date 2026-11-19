@@ -136,6 +136,17 @@ export function autoSendSeconds(): number {
   return recordingAutoSend
 }
 
+// Seconds until auto-send while the wearer is quiet after speaking, for the
+// countdown on the listening screen (G2-161); null while talking, before
+// any speech, or with auto-send off. Shown after a second of quiet, so it
+// does not flicker between words.
+export function autoSendCountdown(): number | null {
+  if (recordingAutoSend === 0 || !endpointer || !endpointer.heardSpeech()) return null
+  const quiet = endpointer.quietMs()
+  if (quiet < 1000) return null
+  return Math.max(1, Math.ceil((recordingAutoSend * 1000 - quiet) / 1000))
+}
+
 // Who is listening right now, for the listening screen (G2-157): the live
 // engine, flagged while it is not connected (Whisper then writes the
 // question after the tap), or Whisper.

@@ -8,6 +8,7 @@ import { exchangesOf, historyRows } from './exchanges'
 import { questionLine } from '../../shared/questionKeywords'
 import { modelLabel } from '../../core/llmProviders'
 import {
+  autoSendCountdown,
   autoSendSeconds,
   cancel,
   isLiveTranscribing,
@@ -292,7 +293,44 @@ function withCodeTag(label: string | null): string | null {
   return label ? `${label} - tap: code` : 'Tap: code'
 }
 
+// Accidental long press (G2-161): in a chat that already has an answer, the
+// first long press only asks; a second one within this window records the
+// follow-up. Shown in the status bar, since rewriting the answer text would
+// reset the wearer's scroll. "Hey Jarvis" is deliberate and skips it.
+const FOLLOW_UP_CONFIRM_MS = 4000
+const FOLLOW_UP_NOTE = 'Long-press again to ask'
+let followUpArmedUntil = 0
+let followUpTimer: ReturnType<typeof setTimeout> | null = null
+
+function disarmFollowUp(): void {
+  followUpArmedUntil = 0
+  if (followUpTimer !== null) clearTimeout(followUpTimer)
+  followUpTimer = null
+}
+
+// True when the follow-up should record now; false when this press only
+// asked for confirmation.
+function confirmFollowUp(): boolean {
+  if (nextListenViaWake || currentMessages.length === 0) return true
+  if (Date.now() < followUpArmedUntil) {
+    disarmFollowUp()
+    return true
+  }
+  disarmFollowUp()
+  followUpArmedUntil = Date.now() + FOLLOW_UP_CONFIRM_MS
+  followUpTimer = setTimeout(() => {
+    disarmFollowUp()
+    updatePositionNote()
+  }, FOLLOW_UP_CONFIRM_MS)
+  updatePositionNote()
+  return false
+}
+
 function updatePositionNote(): void {
+  if (Date.now() < followUpArmedUntil) {
+    setStatusNote(FOLLOW_UP_NOTE)
+    return
+  }
   if (stream && stream.timer !== null) {
     setStatusNote(streamNote(stream))
     return
@@ -920,6 +958,7 @@ export function isBusy(): boolean {
 let pageBeforeListening: { index: number; win: Win | null } | null = null
 
 async function beginListening() {
+  disarmFollowUp()
   pageBeforeListening = pages.length > 0 ? { index: pageIndex, win: pageWin } : null
   codeView = null
   const mySession = ++sessionToken
@@ -974,7 +1013,9 @@ async function beginListening() {
   const quiet = autoSendSeconds()
   const hint = quiet > 0 ? `Tap to send, or stay quiet ${quiet}s` : 'Tap to send'
   startLiveStatus(mySession, (dots, elapsedSeconds) => {
-    listenHeader = `${listeningEngine()} listening${dots} (${elapsedSeconds}s)\n${hint}`
+    // Quiet after speaking: count down to auto-send (G2-161).
+    const left = autoSendCountdown()
+    listenHeader = `${listeningEngine()} listening${dots} (${elapsedSeconds}s)\n${left === null ? hint : `Sending in ${left}s - speak to keep going, or tap`}`
     drawListening(true)
   })
 }
@@ -1073,7 +1114,7 @@ function drawStream(s: Stream): void {
       s.pending = s.pending.then(() => setContent(tail))
     }
   }
-  setStatusNote(streamNote(s))
+  if (Date.now() >= followUpArmedUntil) setStatusNote(streamNote(s))
 }
 
 function tickStream(s: Stream): void {
@@ -1139,7 +1180,7 @@ function freezeStream(): Stream | null {
   if (!s || s.timer === null || s.mode !== 'follow') return null
   s.mode = 'hold'
   s.win = tailWin(rowsOf(s.received.slice(0, s.shown), PAGE_INNER_WIDTH))
-  setStatusNote(streamNote(s))
+  if (Date.now() >= followUpArmedUntil) setStatusNote(streamNote(s))
   return s
 }
 
@@ -1808,6 +1849,7 @@ export const chatTool: Tool = {
   // handles a long-press itself, by opening a new conversation - see
   // app/main.ts.)
   onLongPress: () => {
+    if (depth !== 'picker' && canListenNow() && !confirmFollowUp()) return
     if (codeView) {
       // Ask the next question, same as from the text (G2-93: one code
       // size, so long press no longer resizes) - back to the text page

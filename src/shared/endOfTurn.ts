@@ -94,6 +94,8 @@ export function createTurnDetector({
       return 'listening'
     },
     heardSpeech: () => heardSpeech,
+    // How long it has been quiet since the last speech (G2-161 countdown).
+    quietMs: () => quietMs,
     floor: () => floor,
     loudest: () => loudest,
   }
