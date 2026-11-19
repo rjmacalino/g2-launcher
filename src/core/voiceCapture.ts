@@ -17,6 +17,7 @@ import { SAMPLE_RATE, concat, toFloat32 } from '../shared/pcm'
 import { isSilenceHallucination, stripNonSpeech, stripWakePhrase } from '../shared/transcript'
 import { endsInSpeech, rmsLevel, type EndpointDecision } from '../shared/endpoint'
 import { createTurnDetector } from '../shared/endOfTurn'
+import { autoSendCountdown as countdownFrom, frameMs } from '../shared/voiceFlow'
 
 // Browser SpeechRecognition looked available (Lab's presence-check probe
 // constructed it without throwing) but actually using it fails with
@@ -142,10 +143,8 @@ export function autoSendSeconds(): number {
 // counting down while quiet, back to full at the next word. null when
 // auto-send is off.
 export function autoSendCountdown(): number | null {
-  if (recordingAutoSend === 0 || !endpointer) return null
-  // Before any speech the timer has not started: it shows the full time.
-  if (!endpointer.heardSpeech()) return recordingAutoSend
-  return Math.max(1, Math.ceil((recordingAutoSend * 1000 - endpointer.quietMs()) / 1000))
+  if (!endpointer) return null
+  return countdownFrom(recordingAutoSend, endpointer.heardSpeech(), endpointer.quietMs())
 }
 
 // Who is listening right now, for the listening screen (G2-157): the live
@@ -262,13 +261,13 @@ export async function start(
     // missed them.
     // Each frame's real length from its bytes (16-bit mono), not an assumed
     // 100 ms (G2-162).
-    const frameMs = (pcm.length / 2 / SAMPLE_RATE) * 1000
-    const decision = endpointer.push(rmsLevel(toFloat32(pcm)), live ? liveText() : null, frameMs)
+    const length = frameMs(pcm.length, SAMPLE_RATE)
+    const decision = endpointer.push(rmsLevel(toFloat32(pcm)), live ? liveText() : null, length)
     if (decision === 'listening') return
     endpointReported = true
     endpointDecision = decision
     status(
-      `Jarvis: recording ended by itself (${decision}), auto-send ${recordingAutoSend || 'off'}, mic frames ${frameMs.toFixed(0)} ms`,
+      `Jarvis: recording ended by itself (${decision}), auto-send ${recordingAutoSend || 'off'}, mic frames ${length.toFixed(0)} ms`,
     )
     onEndpoint(decision)
   })

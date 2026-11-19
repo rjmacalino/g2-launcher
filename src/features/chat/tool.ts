@@ -1,4 +1,12 @@
 import appInfo from '../../../app.json'
+import {
+  FOLLOW_UP_CONFIRM_MS,
+  canListen,
+  isBusy as isFlowBusy,
+  onLongPress as decideLongPress,
+  onPhoneRequest,
+  type VoiceState,
+} from '../../shared/voiceFlow'
 import { getCodeSize } from '../../core/codeSize'
 import { setStatusNote } from '../../core/statusNote'
 import { modeOf, type ModeId } from '../../core/modes'
@@ -298,7 +306,6 @@ function withCodeTag(label: string | null): string | null {
 // first long press only asks; a second one within this window records the
 // follow-up. Shown in the status bar, since rewriting the answer text would
 // reset the wearer's scroll. "Hey Jarvis" is deliberate and skips it.
-const FOLLOW_UP_CONFIRM_MS = 4000
 const FOLLOW_UP_NOTE = 'Long-press again to ask'
 let followUpArmedUntil = 0
 let followUpTimer: ReturnType<typeof setTimeout> | null = null
@@ -312,13 +319,16 @@ function disarmFollowUp(): void {
 // True when the follow-up should record now; false when this press only
 // asked for confirmation.
 function confirmFollowUp(): boolean {
-  if (nextListenViaWake || currentMessages.length === 0) return true
-  if (Date.now() < followUpArmedUntil) {
-    disarmFollowUp()
-    return true
-  }
+  const decision = decideLongPress(voiceState(), {
+    now: Date.now(),
+    viaWake: nextListenViaWake,
+    hasMessages: currentMessages.length > 0,
+    armedUntil: followUpArmedUntil,
+  })
   disarmFollowUp()
-  followUpArmedUntil = Date.now() + FOLLOW_UP_CONFIRM_MS
+  // 'ignore' falls through to onLongPress's own guards, as before.
+  if (decision.kind !== 'confirm') return true
+  followUpArmedUntil = decision.armedUntil
   followUpTimer = setTimeout(() => {
     disarmFollowUp()
     updatePositionNote()
@@ -933,8 +943,14 @@ let transcribing = false
 // finishListening's span contains askGemini's.
 let preparing = 0
 
+// The voice flow's state as src/shared/voiceFlow.ts sees it (G2-169): its
+// decisions are tested there; this file owns the variables and the screen.
+function voiceState(): VoiceState {
+  return { listening, transcribing, preparing, waitingHere: waitingHere() }
+}
+
 function busy(): boolean {
-  return listening || transcribing || preparing > 0 || waitingHere()
+  return isFlowBusy(voiceState())
 }
 
 // Set by the shell just before "Hey Jarvis" opens or continues a
@@ -1268,7 +1284,7 @@ async function askGemini(question: string) {
 // while an answer is still coming it may (G2-149) - "Hey Jarvis" or a long
 // press during an answer asks a follow-up in the same chat.
 function canListenNow(): boolean {
-  return !listening && !transcribing && (preparing === 0 || waitingHere())
+  return canListen(voiceState())
 }
 
 // Stops showing the answer being typed so the next question can be
@@ -1946,11 +1962,16 @@ export const chatTool: Tool = {
       openSessionId = wanted
       return false
     }
-    if (busy()) {
+    const decision = onPhoneRequest(voiceState(), {
+      wanted,
+      current: currentSessionId,
+      atPicker: depth === 'picker',
+    })
+    if (decision === 'ignore') {
       status('Jarvis: phone asked for another screen - ignored while answering')
       return false
     }
-    if (wanted === currentSessionId && (wanted !== null || depth === 'picker')) return false
+    if (decision === 'stay') return false
     status(`Jarvis: phone opened ${wanted === null ? 'the chat list' : 'a chat'}`)
     syncPickerFromCurrent()
     showSession(wanted)
