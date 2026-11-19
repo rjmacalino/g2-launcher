@@ -1017,9 +1017,9 @@ async function beginListening() {
   const quiet = autoSendSeconds()
   const hint = quiet > 0 ? `Tap to send, or stay quiet ${quiet}s` : 'Tap to send'
   startLiveStatus(mySession, (dots, elapsedSeconds) => {
-    // Quiet after speaking: count down to auto-send (G2-161).
+    // Live countdown to auto-send (G2-164), redrawn every second.
     const left = autoSendCountdown()
-    listenHeader = `${listeningEngine()} listening${dots} (${elapsedSeconds}s)\n${left === null ? hint : `Sending in ${left}s - speak to keep going, or tap`}`
+    listenHeader = `${listeningEngine()} listening${dots} (${elapsedSeconds}s)\n${left === null ? hint : `Sending in ${left}s, or tap to send now`}`
     drawListening(true)
   })
 }

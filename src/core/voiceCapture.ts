@@ -136,15 +136,15 @@ export function autoSendSeconds(): number {
   return recordingAutoSend
 }
 
-// Seconds until auto-send while the wearer is quiet after speaking, for the
-// countdown on the listening screen (G2-161); null while talking, before
-// any speech, or with auto-send off. Shown after a second of quiet, so it
-// does not flicker between words.
+// Seconds until auto-send, for the live countdown on the listening screen
+// (G2-161, G2-164): the full time while talking or before any speech,
+// counting down while quiet, back to full at the next word. null when
+// auto-send is off.
 export function autoSendCountdown(): number | null {
-  if (recordingAutoSend === 0 || !endpointer || !endpointer.heardSpeech()) return null
-  const quiet = endpointer.quietMs()
-  if (quiet < 1000) return null
-  return Math.max(1, Math.ceil((recordingAutoSend * 1000 - quiet) / 1000))
+  if (recordingAutoSend === 0 || !endpointer) return null
+  // Before any speech the timer has not started: it shows the full time.
+  if (!endpointer.heardSpeech()) return recordingAutoSend
+  return Math.max(1, Math.ceil((recordingAutoSend * 1000 - endpointer.quietMs()) / 1000))
 }
 
 // Who is listening right now, for the listening screen (G2-157): the live
