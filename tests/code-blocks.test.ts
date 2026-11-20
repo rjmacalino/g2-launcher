@@ -4,7 +4,8 @@ import { describe, expect, it, vi } from 'vitest'
 // the bridge; there is none under Vitest.
 vi.mock('../src/platform/bridge', () => ({ bridge: {}, status: vi.fn() }))
 
-const { codeBlockNames, withCodePlaceholders } = await import('../src/features/chat/codeView')
+const { blockTopic, codeBlockNames, withCodePlaceholders } =
+  await import('../src/features/chat/codeView')
 type CodeKind = 'code' | 'pseudo'
 
 // An answer's code and pseudocode blocks for the code view's list (G2-203).
@@ -32,16 +33,27 @@ describe('code blocks of an answer (G2-203)', () => {
     expect(blocks[3].startsWith('def best(xs):')).toBe(true)
   })
 
-  it('names them by kind and number, with their length, for the list', () => {
+  it('names them by kind, number and what they are about, for the list (G2-204)', () => {
     const blocks: string[] = []
     const kinds: CodeKind[] = []
     withCodePlaceholders(answer, blocks, kinds)
     expect(codeBlockNames(blocks, kinds)).toEqual([
-      'Pseudo code 1 (3 lines)',
-      'Code 1 (5 lines)',
-      'Pseudo code 2 (2 lines)',
-      'Code 2 (6 lines)',
+      'Pseudo 1: read n - 3 lines',
+      'Code 1: n = int(input()) - 5 lines',
+      'Pseudo 2: loop once - 2 lines',
+      'Code 2: best() - 6 lines',
     ])
+  })
+
+  it('finds the function or class across languages, and fits the list', () => {
+    const name = (code: string) => blockTopic(code, 'code')
+    expect(name('class Solution:\n  def twoSum(self, nums):\n    pass')).toBe('class Solution')
+    expect(name('function reverseString(s) {\n  return s\n}')).toBe('reverseString()')
+    expect(name('export async function load() {}')).toBe('load()')
+    expect(name('public static int Sum(int[] xs)\n{\n  return 0;\n}')).toBe('Sum()')
+    const long = codeBlockNames(['x'.repeat(80)], ['pseudo'])[0]
+    expect(long.length).toBeLessThanOrEqual(40)
+    expect(long).toMatch(/\.\.\. - 1 lines$/)
   })
 
   it('takes pseudocode that looks like code ("n = ...") as pseudocode, once', () => {

@@ -88,15 +88,41 @@ export function withCodePlaceholders(
   return blocks.length > 0 ? out.join('\n\n') : text
 }
 
-// The list of an answer's code view blocks (G2-203): "Pseudo code 1 (5
-// lines)", "Code 1 (14 lines)", numbered by kind, in the answer's order.
+// What a block is about, for its row in the list (G2-204): the function or
+// class it defines, else its first line (for pseudocode, its first step).
+const DEFINES =
+  /^\s*(?:export\s+)?(?:public\s+|private\s+|static\s+|async\s+)*(?:def|function|class|interface)\s+([A-Za-z_$][\w$]*)/
+const CS_METHOD =
+  /^\s*(?:public|private|static|internal|protected)\s+[\w<>[\],\s]+?\s+([A-Za-z_]\w*)\s*\(/
+
+export function blockTopic(block: string, kind: CodeKind): string {
+  const lines = block.split('\n').filter(l => l.trim() !== '')
+  if (kind === 'code') {
+    for (const line of lines) {
+      const found = DEFINES.exec(line) ?? CS_METHOD.exec(line)
+      if (found) return /\bclass\b/.test(line) ? `class ${found[1]}` : `${found[1]}()`
+    }
+  }
+  return (lines[0] ?? '').trim()
+}
+
+// A list row is cut to fit (pickerTitle's 40 characters).
+const ROW_MAX_CHARS = 40
+
+// The list of an answer's code view blocks (G2-203, G2-204): "Code 2: best()
+// - 6 lines", "Pseudo 1: read n - 3 lines", numbered by kind, in order.
 export function codeBlockNames(blocks: readonly string[], kinds: readonly CodeKind[]): string[] {
   const seen = { code: 0, pseudo: 0 }
   return blocks.map((block, i) => {
     const kind = kinds[i] ?? 'code'
     seen[kind]++
     const lines = block.split('\n').length
-    return `${kind === 'pseudo' ? 'Pseudo code' : 'Code'} ${seen[kind]} (${lines} lines)`
+    const label = `${kind === 'pseudo' ? 'Pseudo' : 'Code'} ${seen[kind]}`
+    const tail = ` - ${lines} lines`
+    const room = ROW_MAX_CHARS - label.length - tail.length - 2
+    let topic = blockTopic(block, kind)
+    if (topic.length > room) topic = `${topic.slice(0, Math.max(0, room - 3)).trimEnd()}...`
+    return topic ? `${label}: ${topic}${tail}` : `${label}${tail}`
   })
 }
 
@@ -121,7 +147,7 @@ export function footerFor(
   const last = numbers[numbers.length - 1] ?? first
   const total = blocks[view.block].split('\n').length
   // Which block, by its kind and number (G2-203): "Pseudo code 1".
-  const name = codeBlockNames(blocks, kinds)[view.block]?.replace(/ \(.*\)$/, '')
+  const name = codeBlockNames(blocks, kinds)[view.block]?.replace(/ - \d+ lines$/, '')
   const where = blocks.length > 1 && name ? `${name} - ` : ''
   const more = screen < view.screens.length - 1 ? 'swipe for more, ' : ''
   return `${where}lines ${first}-${last} of ${total} - ${more}double-tap: text`
