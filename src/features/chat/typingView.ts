@@ -96,7 +96,8 @@ export function streamNote(s: Stream): string | null {
 // The answer so far under its header ("Q: ..." and "Mode: ... - Model: ...",
 // G2-200), so the header is on screen from the first word.
 function withHeader(s: Stream, upTo: number): string {
-  return `${s.header}\n${s.received.slice(0, upTo)}`
+  // A blank line between the header and the answer (G2-201).
+  return `${s.header}\n\n${s.received.slice(0, upTo)}`
 }
 
 function drawStream(s: Stream): void {

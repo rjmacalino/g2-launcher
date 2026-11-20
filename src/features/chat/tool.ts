@@ -617,7 +617,8 @@ function renderExchange(messages: readonly ChatMessage[]): string {
     ...(shown.question ? [answerHeader(shown.question.text, shown.answer?.model ?? null)] : []),
     ...(shown.answer ? [withCodePlaceholders(shown.answer.text, codeBlocks)] : []),
   ]
-  pages = paginate(parts.join('\n'), PAGE_INNER_WIDTH)
+  // A blank line between the header and the answer (G2-201).
+  pages = paginate(parts.join('\n\n'), PAGE_INNER_WIDTH)
   pageIndex = 0
   pageWin = null
   warmCode()
@@ -998,7 +999,7 @@ function showThinking(question: string): void {
     sessionToken,
     (dots, elapsedSeconds) => {
       setContent(
-        `${answerHeader(question, null)}\nThinking${dots} (${elapsedSeconds}s)${thinkingRetryNote}`,
+        `${answerHeader(question, null)}\n\nThinking${dots} (${elapsedSeconds}s)${thinkingRetryNote}`,
       )
     },
     thinkingStartedAt,
@@ -1164,7 +1165,7 @@ async function askGeminiNow(question: string) {
     lastErrorQuestion = question
     const triedNote = attemptsMade > 1 ? ` after ${attemptsMade} tries` : ''
     setContent(
-      `${answerHeader(question, null)}\nCouldn't reach ${providerInfo(llm.provider).label}${triedNote} (${reply.message}).` +
+      `${answerHeader(question, null)}\n\nCouldn't reach ${providerInfo(llm.provider).label}${triedNote} (${reply.message}).` +
         '\n\n(tap to retry, double-tap to go back)',
     )
     return
@@ -1226,7 +1227,7 @@ async function askGeminiNow(question: string) {
   if (typed.outcome === 'caught-up' && typed.mode === 'follow' && !isInstant()) {
     // The typing caught up by itself: the wearer is reading the last lines,
     // so leave them there instead of jumping back to the first (G2-107).
-    const rows = rowsOf(`${typed.header}\n${typed.received}`, PAGE_INNER_WIDTH)
+    const rows = rowsOf(`${typed.header}\n\n${typed.received}`, PAGE_INNER_WIDTH)
     tailView = { rows, win: tailWin(rows) }
   } else {
     void showPage(firstPage)
