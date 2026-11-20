@@ -24,6 +24,8 @@ type Problem = {
   check?: string
   // For a read-stdin problem: input and the exact expected output.
   stdin?: { input: string; output: string }[]
+  // The code must build its text with an f-string, not + (G2-194).
+  fString?: boolean
 }
 
 const PROBLEMS: Problem[] = [
@@ -309,6 +311,19 @@ print('PASS')`,
       { input: '6\n1 9 9 9 2 9\n', output: '4' },
     ],
   },
+  {
+    // Builds a sentence from the input (G2-194): Python must use an f-string.
+    name: 'HackerRank greeting (stdin, builds a string)',
+    spoken:
+      'Greeting. Read a first name on the first line and a last name on the second line, ' +
+      'then print exactly: Hello first last! You just delved into python. Sample input: ' +
+      'Ross, new line, Taylor. Sample output: Hello Ross Taylor! You just delved into python.',
+    stdin: [
+      { input: 'Ross\nTaylor\n', output: 'Hello Ross Taylor! You just delved into python.' },
+      { input: 'Ada\nLovelace\n', output: 'Hello Ada Lovelace! You just delved into python.' },
+    ],
+    fString: true,
+  },
 ]
 
 const SAMPLE_PROFILE = 'ABOUT ME (sample). I am a full-stack web developer learning Python.'
@@ -339,7 +354,8 @@ function codeOf(answer: string): string {
   const all = splitAnswer(answer)
   // The block under the "code:" label (G2-186): the pseudocode above it can
   // look like code ("n = size of the matrix") and run longer.
-  const label = all.findIndex(b => b.kind === 'text' && /^code:$/i.test(b.text.trim()))
+  // The label can be its own block or the last line of the text above.
+  const label = all.findIndex(b => b.kind === 'text' && /(^|\n)\s*code:\s*$/i.test(b.text))
   const labelled = label >= 0 ? all.slice(label + 1).find(b => b.kind === 'code') : undefined
   if (labelled) return labelled.text
   const blocks = all.filter(b => b.kind === 'code').map(b => b.text)
@@ -356,6 +372,11 @@ function runPython(code: string, input?: string): { ok: boolean; out: string } {
 
 function grade(problem: Problem, code: string): string {
   if (!code) return 'FAIL (no code found in the answer)'
+  // A string built with + or str() instead of an f-string (G2-194).
+  const concatenates = /["']\s*\+|\+\s*["']|\bstr\(/.test(code)
+  if (problem.fString && (!/\bf["']/.test(code) || concatenates)) {
+    return 'FAIL (builds the string without an f-string)'
+  }
   if (problem.stdin) {
     for (const t of problem.stdin) {
       const r = runPython(code, t.input)
