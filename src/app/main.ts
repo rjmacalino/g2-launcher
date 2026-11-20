@@ -624,8 +624,9 @@ let inForeground = true
 // transcription or answer already under way (saying "Jarvis" inside a
 // question must not start a second one), the leave prompt, the timer
 // alert, Lab, whose probes hold the mic for their own measurements, or
-// Wingman, where "Jarvis" said in conversation is just a word.
-const NO_WAKE_TOOLS = new Set(['Lab', 'Wingman'])
+// Interview and Code (G2-202): the wearer must be discreet there, and the
+// interviewer's voice must never start anything.
+const NO_WAKE_TOOLS = new Set(['Lab', 'Interview', 'Code'])
 
 function canWake(): boolean {
   return (

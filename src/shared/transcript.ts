@@ -34,6 +34,30 @@ export function isSilenceHallucination(transcript: string): boolean {
   return SILENCE_HALLUCINATIONS.has(words)
 }
 
+// Words that carry no question on their own (G2-202).
+const FILLERS = new Set(
+  [
+    'um uh erm er hmm hm mm ah oh okay ok so yeah yep yes no nope like well right',
+    'hello hi hey thanks thank you please sorry the a an and or but just',
+  ]
+    .join(' ')
+    .split(' '),
+)
+
+// Whether a transcript is worth sending to the AI (G2-202): auto-send on
+// noise or silence gave empty or garbage questions, and each one cost a
+// request. Nothing but fillers or a known noise phrase is never sent; a new
+// chat needs at least two real words, while a follow-up may be one ("Why?").
+export function worthAsking(transcript: string, isFollowUp: boolean): boolean {
+  if (isSilenceHallucination(transcript)) return false
+  const words = transcript
+    .toLowerCase()
+    .replace(/[^a-z0-9' ]/g, ' ')
+    .split(/\s+/)
+    .filter(w => w && !FILLERS.has(w))
+  return words.length >= (isFollowUp ? 1 : 2)
+}
+
 // A recording started by "Hey Jarvis" keeps the audio from just before
 // the wake word fired (so words said straight after it are not lost), which
 // means the transcript starts with the wake phrase - and sometimes the

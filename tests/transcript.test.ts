@@ -1,5 +1,10 @@
 import { describe, expect, it } from 'vitest'
-import { isSilenceHallucination, stripNonSpeech, stripWakePhrase } from '../src/shared/transcript'
+import {
+  isSilenceHallucination,
+  stripNonSpeech,
+  stripWakePhrase,
+  worthAsking,
+} from '../src/shared/transcript'
 
 describe('stripNonSpeech', () => {
   it('drops bracketed and parenthesised non-speech markers', () => {
@@ -46,5 +51,28 @@ describe('stripWakePhrase', () => {
 
   it('can leave nothing when only the wake phrase was said', () => {
     expect(stripWakePhrase('Hey Jarvis.')).toBe('')
+  })
+})
+
+describe('worthAsking (G2-202)', () => {
+  it('never sends fillers, noise or an empty transcript', () => {
+    for (const heard of [
+      '',
+      'Um.',
+      'Okay, thank you.',
+      'uh, yeah',
+      'Thanks for watching!',
+      'Hello?',
+    ]) {
+      expect(worthAsking(heard, false)).toBe(false)
+      expect(worthAsking(heard, true)).toBe(false)
+    }
+  })
+
+  it('needs two real words to start a chat, one for a follow-up', () => {
+    expect(worthAsking('Why?', false)).toBe(false)
+    expect(worthAsking('Why?', true)).toBe(true)
+    expect(worthAsking('Reverse a string', false)).toBe(true)
+    expect(worthAsking('Tell me about yourself.', false)).toBe(true)
   })
 })

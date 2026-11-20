@@ -1,5 +1,6 @@
 import appInfo from '../../../app.json'
 import { answerHeader } from '../../shared/answerHeader'
+import { worthAsking } from '../../shared/transcript'
 import {
   FOLLOW_UP_CONFIRM_MS,
   canListen,
@@ -1310,8 +1311,22 @@ export async function finishListening() {
     `Jarvis: heard ${result.transcript.length} chars, audio level ${result.peak.toFixed(3)}, ${result.audioSeconds.toFixed(1)}s of audio in ${(result.transcribeMs / 1000).toFixed(1)}s via ${result.engine.startsWith('Whisper') ? `${result.engine} on ${engineDescription()}` : result.engine}${result.levels === null ? '' : `, room ${result.levels.floor.toFixed(4)} loudest ${result.levels.loudest.toFixed(4)}`}`,
   )
 
+  // Nothing worth a request (G2-202): fillers, noise, or a lone word that is
+  // not a follow-up. Shown so the wearer knows what was heard; nothing sent.
+  if (!worthAsking(result.transcript, chat.messages.length > 0)) {
+    status(`Jarvis: not sent - no question in "${result.transcript.slice(0, 60)}"`)
+    setContent(
+      `Didn't catch a question (heard: "${result.transcript.slice(0, 80)}").\n\nLong-press to ask again.`,
+    )
+    return
+  }
+
+  // Voice commands only in the Jarvis entry (G2-202): in Interview and Code
+  // whatever is heard is the question, never a command.
+  const commandsAllowed = scope === 'jarvis'
+
   // Navigation by voice (G2-150): "go back", "open notes", "scroll down"...
-  const nav = parseNavCommand(result.transcript)
+  const nav = commandsAllowed ? parseNavCommand(result.transcript) : null
   if (nav) {
     status(`Jarvis: voice command ${nav.kind}`)
     runNavCommand(nav)
@@ -1324,7 +1339,9 @@ export async function finishListening() {
   preparing++
   try {
     status('Jarvis: checking for a command')
-    const command = await dispatchVoiceCommand(result.transcript)
+    const command: Awaited<ReturnType<typeof dispatchVoiceCommand>> = commandsAllowed
+      ? await dispatchVoiceCommand(result.transcript)
+      : { handled: false }
     if (command.handled) {
       if (depth !== 'conversation' || chat.id !== sessionIdBeforeAsking || listening) return
       const reply: ChatMessage = { role: 'model', text: command.message, timestamp: Date.now() }
