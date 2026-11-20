@@ -152,7 +152,7 @@ describe('status bar hint (G2-178, G2-184)', () => {
 
   it('over an answer: code first, then earlier questions, then back', () => {
     expect(hint({})).toBe('hold: ask, 2x tap: back')
-    expect(hint({ earlier: true })).toBe('hold: ask, up: earlier')
+    expect(hint({ earlier: true })).toBe('hold: ask, 2x: questions')
     expect(hint({ hasCode: true, earlier: true })).toBe('tap: code, hold: ask')
     expect(hint({ armed: true, hasCode: true })).toBe('hold again: follow-up')
     expect(hint({ codeArmed: true, hasCode: true })).toBe('tap: code, 2x: cancel')

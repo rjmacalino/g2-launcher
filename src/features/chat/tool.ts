@@ -752,15 +752,9 @@ function closeCodeView(): void {
 
 // The conversation as a list of its exchanges, newest first; tapping one
 // opens it (G2-102). Nothing to list: straight back to the chats.
-// Up past the top of an answer (G2-179): this chat's earlier questions, when
-// it has more than one; the answer on screen is the latest.
+// This chat has earlier questions (G2-179): double-tap shows them (G2-192).
 function hasEarlier(): boolean {
   return exchangesOf(chat.messages).length > 1
-}
-
-function openEarlier(): void {
-  if (!hasEarlier() || busy()) return
-  openHistory()
 }
 
 function openHistory(): void {
@@ -1778,10 +1772,12 @@ export const chatTool: Tool = {
       requestRebuild(entry ?? chatTool)
       return true
     }
-    // Flat (G2-179): from an answer straight to the chat list. The chat's
-    // earlier questions are a swipe up from the top of its first page.
+    // RJ's order (G2-192): answer, then this chat's questions (when it has
+    // more than one), then the chat list. Never by swiping: a swipe up at the
+    // top of an answer stays on the answer.
     if (depth === 'conversation' && !quickAsk && !busy()) {
-      leaveToPicker()
+      if (hasEarlier()) openHistory()
+      else leaveToPicker()
       return true
     }
     return false
@@ -1856,7 +1852,6 @@ export const chatTool: Tool = {
       lastScrollAt = now
       const view = tailView
       const next = moveView(view.rows, view.win, delta)
-      if (!next && delta === -1) openEarlier()
       if (next) {
         view.win = next
         const text = windowText(view.rows, next)
@@ -1869,10 +1864,7 @@ export const chatTool: Tool = {
       return
     }
     if (depth !== 'conversation' || listening || tickerRunning()) return
-    if (pages.length <= 1) {
-      if (delta === -1) openEarlier()
-      return
-    }
+    if (pages.length <= 1) return
     const now = Date.now()
     if (now - lastScrollAt < SCROLL_COOLDOWN_MS) return
     lastScrollAt = now
@@ -1881,10 +1873,7 @@ export const chatTool: Tool = {
       { page: pageIndex, win: pageWin },
       delta,
     )
-    if (!next) {
-      if (delta === -1) openEarlier()
-      return
-    }
+    if (!next) return
     // The firmware only reports a swipe at a section's very top or bottom,
     // so one swipe there moves on - no second "are you sure" swipe.
     pageIndex = next.page

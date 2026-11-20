@@ -97,7 +97,7 @@ export type HintInput = {
   countdown: number | null
   // The answer has a code view.
   hasCode: boolean
-  // The chat has earlier questions, a swipe up from the top (G2-179).
+  // The chat has earlier questions, a double-tap away (G2-179, G2-192).
   earlier: boolean
   // A long press over the answer asked for a second one (G2-161).
   armed: boolean
@@ -130,7 +130,7 @@ export function hintFor(h: HintInput): string {
       if (h.armed) return 'hold again: follow-up'
       if (h.codeArmed) return 'tap: code, 2x: cancel'
       if (h.hasCode) return 'tap: code, hold: ask'
-      if (h.earlier) return 'hold: ask, up: earlier'
+      if (h.earlier) return 'hold: ask, 2x: questions'
       return 'hold: ask, 2x tap: back'
   }
 }
@@ -141,8 +141,8 @@ export const GESTURE_CARD = [
   'Gestures',
   'hold: ask (twice over an answer; not in code)',
   'tap: send / pause / continue / open code',
-  'swipe: read on; swipe up at the top: earlier questions',
-  'double-tap: back (answer, list, launcher)',
+  'swipe: read on (up and down)',
+  'double-tap: back (questions, chats, launcher)',
   '"Hey Jarvis": ask without touching',
   'say "go back", "go home", "scroll down", "new python chat"',
 ].join('\n')

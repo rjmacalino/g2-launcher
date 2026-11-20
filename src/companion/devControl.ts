@@ -16,7 +16,13 @@ export type DevCommand =
   | { action: 'type'; selector: string; text: string; enter?: boolean }
   | { action: 'read'; selector: string }
   // Saves a made-up conversation, to see long answers without an AI call.
-  | { action: 'seedChat'; question: string; answer: string }
+  // more: further question and answer pairs, for a chat of several (G2-192).
+  | {
+      action: 'seedChat'
+      question: string
+      answer: string
+      more?: { question: string; answer: string }[]
+    }
   // Asks a question on the glasses as if spoken (needs Jarvis open there).
   | { action: 'glassesAsk'; text: string }
   // A "Hey Jarvis, go back"-style command as if just heard (G2-150).
@@ -78,6 +84,10 @@ export function runDevCommand(command: DevCommand, navigate: (route: Route) => v
         timestamp: Date.now(),
       })
       session.messages.push({ role: 'model', text: command.answer, timestamp: Date.now() })
+      for (const pair of command.more ?? []) {
+        session.messages.push({ role: 'user', text: pair.question, timestamp: Date.now() })
+        session.messages.push({ role: 'model', text: pair.answer, timestamp: Date.now() })
+      }
       void chatSessions.save(session).then(() => {
         navigate({ tab: 'jarvis', chatId: session.id })
         status(`dev: seeded chat ${session.id}`)
