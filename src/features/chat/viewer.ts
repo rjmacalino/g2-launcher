@@ -38,11 +38,12 @@ export type PagePlace = { page: number; win: Win | null }
 
 // Where a swipe past the top (-1) or bottom (1) edge goes (G2-124). The
 // glasses cannot be scrolled to a position and every update starts at the
-// top, so going back lands on the last screenful of what is above - the
-// wearer comes from below - and a further swipe up steps back a screenful
-// at a time, then on to the page before. Going down shows the rest of the
-// page, then the next whole page. Nothing is ever repeated. null when there
-// is nowhere further. `lengths` are the pages' row counts.
+// top. Going up shows a whole page from its top (G2-190, RJ's choice): the
+// page above, or this page when only part of it is on screen. The wearer
+// then scrolls down natively through all of it, back to where they were -
+// never a last screenful that cannot scroll. Going down shows the rest of
+// the page, then the next whole page. null when there is nowhere further.
+// `lengths` are the pages' row counts.
 export function movePaged(
   lengths: readonly number[],
   at: PagePlace,
@@ -54,17 +55,9 @@ export function movePaged(
     if (cur.end < length) return { page: at.page, win: { start: cur.end, end: length } }
     return at.page + 1 < lengths.length ? { page: at.page + 1, win: null } : null
   }
-  // Up within a page (G2-189): one screen above the current top, through to
-  // the page's end, so the text shown still scrolls natively down past where
-  // the wearer was, instead of a single screen that cannot scroll at all.
-  if (cur.start > 0) {
-    const start = Math.max(0, cur.start - SCREEN_ROWS)
-    return { page: at.page, win: start === 0 ? null : { start, end: length } }
-  }
+  if (cur.start > 0) return { page: at.page, win: null }
   if (at.page === 0) return null
-  const before = lengths[at.page - 1]
-  const start = Math.max(0, before - SCREEN_ROWS)
-  return { page: at.page - 1, win: start === 0 ? null : { start, end: before } }
+  return { page: at.page - 1, win: null }
 }
 
 // The same for a view over all of an answer's rows.
