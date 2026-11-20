@@ -23,6 +23,20 @@ export function parseReadingStyle(saved: string): ReadingStyle {
   return READING_STYLES.some(s => s.id === saved) ? (saved as ReadingStyle) : DEFAULT_READING_STYLE
 }
 
+// Where long code is read (G2-193): in the text with the rest, or only in the
+// code view (pictures with line numbers, never cut mid-line), with one line
+// "[code: 34 lines - tap: code]" in the text instead.
+export type LongCode = 'inline' | 'codeView'
+
+export const LONG_CODE_CHOICES: { id: LongCode; label: string }[] = [
+  { id: 'inline', label: 'In the answer text' },
+  { id: 'codeView', label: 'Only in the code view (one line in the text)' },
+]
+
+export function parseLongCode(saved: string): LongCode {
+  return saved === 'codeView' ? 'codeView' : 'inline'
+}
+
 // Screens in one page for a style.
 export function screensPerPage(style: ReadingStyle): number {
   return style === 'screens' ? 1 : 3

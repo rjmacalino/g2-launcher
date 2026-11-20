@@ -239,3 +239,20 @@ describe('one screen per page (G2-191)', () => {
     }
   })
 })
+
+describe('short code is never split across pages (G2-193)', () => {
+  it('ends the page before a code block that would fit on a page of its own', () => {
+    setScreensPerPage(1)
+    try {
+      const prose = Array.from({ length: 5 }, (_, i) => `Plain sentence ${i}.`).join('\n')
+      const code =
+        'def f(xs):\n  total = 0\n  for x in xs:\n    total = total + x\n  return total\nprint(f([1]))'
+      const pages = paginate(`${prose}\n\n${code}`, PAGE_INNER_WIDTH)
+      const withCode = pages.filter(p => p.text.includes('def f('))
+      expect(withCode).toHaveLength(1)
+      expect(withCode[0].text).toContain('print(f([1]))')
+    } finally {
+      setScreensPerPage(3)
+    }
+  })
+})

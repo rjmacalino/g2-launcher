@@ -1,3 +1,4 @@
+import type { LongCode } from '../../shared/readingStyle'
 import { getCodeSize } from '../../core/codeSize'
 import { splitAnswer } from '../../shared/answerBlocks'
 import { codeScreens, layoutCodeRows, type CodeRow } from '../../shared/codeLayout'
@@ -25,6 +26,14 @@ export type CodeView = CodeLayout & { screen: number }
 // An answer's text for the glasses, with a hint under each code block too
 // tall for one screen (G2-121); those blocks are added to `blocks`, in
 // order, for the code view.
+// Where long code is read (G2-193, a Display setting): in the text, or only
+// in the code view with one line in its place.
+let longCode: LongCode = 'inline'
+
+export function setLongCode(mode: LongCode): void {
+  longCode = mode
+}
+
 export function withCodePlaceholders(text: string, blocks: string[]): string {
   const parts = splitAnswer(text)
   if (!parts.some(b => b.kind === 'code')) return text
@@ -36,7 +45,13 @@ export function withCodePlaceholders(text: string, blocks: string[]): string {
       if (!isPicture(part)) return part.text
       blocks.push(part.text)
       const n = blocks.length
-      return `${part.text}\n[tap: view code${total > 1 ? ` ${n} of ${total}` : ''} as a picture]`
+      const which = total > 1 ? ` ${n} of ${total}` : ''
+      // "Open in the code view" (G2-193): one line in the text instead of
+      // the code, which reads better as pictures than cut into pages.
+      if (longCode === 'codeView') {
+        return `[code${which}: ${part.text.split('\n').length} lines - tap: code]`
+      }
+      return `${part.text}\n[tap: view code${which} as a picture]`
     })
     .join('\n\n')
 }

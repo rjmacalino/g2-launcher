@@ -1,5 +1,6 @@
 import { CANVAS_WIDTH, CONTENT_HEIGHT, PADDING, ROW_HEIGHT_PX } from '../../platform/page'
 import { getTextWidth } from '../../platform/text'
+import { splitAnswer } from '../../shared/answerBlocks'
 
 // Lays text out into pages so an answer of any length can be shown in full
 // (see features/chat/tool.ts for why one screen update cannot simply carry
@@ -120,7 +121,9 @@ export type RowRange = { start: number; end: number }
 // The pages of a wrapped text as ranges of rows: each up to PAGE_ROWS rows
 // and the character budget, the next starting on the line after the last,
 // never on a blank row. Trailing blank rows are ignored.
-export function pageRanges(rows: readonly string[]): RowRange[] {
+// keep: row ranges not to split across pages when they fit in one (G2-193:
+// short code blocks), so a page ends before one instead of inside it.
+export function pageRanges(rows: readonly string[], keep: readonly RowRange[] = []): RowRange[] {
   let last = rows.length
   while (last > 0 && rows[last - 1] === '') last--
   const budget = pageMaxChars - HINT_RESERVE_CHARS
@@ -138,6 +141,9 @@ export function pageRanges(rows: readonly string[]): RowRange[] {
       chars += added
       next++
     }
+    // Ending inside a block that would fit on a page of its own: end before it.
+    const cut = keep.find(k => k.start > start && k.start < next && k.end > next)
+    if (cut && cut.end - cut.start <= pageRows) next = cut.start
     ranges.push({ start, end: next })
   }
   return ranges
@@ -149,9 +155,34 @@ export type Page = {
   fitsOneScreen: boolean
 }
 
+// The rows each code block of a text takes once wrapped (G2-193). Each line
+// wraps on its own (wrapLines), so a block's rows follow from its lines.
+export function codeRows(text: string, innerWidth: number): RowRange[] {
+  const raw = text.split('\n')
+  const rowStart: number[] = []
+  let row = 0
+  for (const line of raw) {
+    rowStart.push(row)
+    row += wrapLines(line, innerWidth).length
+  }
+  rowStart.push(row)
+  const ranges: RowRange[] = []
+  let from = 0
+  for (const block of splitAnswer(text)) {
+    const at = text.indexOf(block.text, from)
+    if (at < 0) continue
+    from = at + block.text.length
+    if (block.kind !== 'code') continue
+    const firstLine = text.slice(0, at).split('\n').length - 1
+    const lastLine = firstLine + block.text.split('\n').length
+    ranges.push({ start: rowStart[firstLine], end: rowStart[lastLine] })
+  }
+  return ranges
+}
+
 export function paginate(text: string, innerWidth: number): Page[] {
   const lines = wrapLines(text, innerWidth)
-  const ranges = pageRanges(lines)
+  const ranges = pageRanges(lines, codeRows(text, innerWidth))
   if (ranges.length === 0) return [{ text: '', fitsOneScreen: true }]
   return ranges.map((range, i) => {
     const rows = lines.slice(range.start, range.end)

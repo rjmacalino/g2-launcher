@@ -1,7 +1,17 @@
 import { bridge, onStatus, recentStatus } from '../../platform/bridge'
 import { trace } from '../../shared/trace'
-import { READING_STYLES, type ReadingStyle } from '../../shared/readingStyle'
-import { getReadingStyle, setReadingStyle } from '../../core/readingSettings'
+import {
+  LONG_CODE_CHOICES,
+  READING_STYLES,
+  type LongCode,
+  type ReadingStyle,
+} from '../../shared/readingStyle'
+import {
+  getLongCode,
+  getReadingStyle,
+  setLongCodeSetting,
+  setReadingStyle,
+} from '../../core/readingSettings'
 import { ABOUT_ME_MAX_CHARS, getAboutMe, setAboutMe } from '../../core/geminiSettings'
 import {
   DEFAULT_LOCAL_INSTRUCTIONS,
@@ -113,26 +123,6 @@ function glassesCard(ctx: AppContext): HTMLElement {
     setTimeout(() => paint(on), 800)
   })
 
-  const sizeSelect = h(
-    'select',
-    { class: 'field', 'aria-label': 'Code size' },
-    CODE_SIZES.map(px => h('option', { value: String(px) }, `${px} px`)),
-  ) as HTMLSelectElement
-  void loadCodeSize().then(() => (sizeSelect.value = String(getCodeSize())))
-  sizeSelect.addEventListener('change', async () => {
-    if (await setCodeSize(Number(sizeSelect.value))) toast('Code size saved')
-  })
-  // How long answers read (G2-191).
-  const readingSelect = h(
-    'select',
-    { class: 'field', 'aria-label': 'Reading style' },
-    READING_STYLES.map(s => h('option', { value: s.id }, s.label)),
-  ) as HTMLSelectElement
-  readingSelect.value = getReadingStyle()
-  readingSelect.addEventListener('change', async () => {
-    if (await setReadingStyle(readingSelect.value as ReadingStyle)) toast('Reading style saved')
-  })
-
   return card(
     h(
       'div',
@@ -158,24 +148,6 @@ function glassesCard(ctx: AppContext): HTMLElement {
       { class: 'caption', style: 'margin: 8px 0 0' },
       'Listens for its name on the glasses microphone while the app is open. The listening happens on this phone; nothing is stored or sent until you speak to Jarvis.',
     ),
-    h('div', { style: 'margin-top: 16px' }, [
-      h('div', { style: 'font-weight: 500' }, 'Code size on the glasses'),
-      h(
-        'p',
-        { class: 'caption', style: 'margin: 4px 0 6px' },
-        'Bigger is easier to read but shows fewer lines. Applies the next time you open code.',
-      ),
-      sizeSelect,
-    ]),
-    h('div', { style: 'margin-top: 16px' }, [
-      h('div', { style: 'font-weight: 500' }, 'Reading long answers'),
-      h(
-        'p',
-        { class: 'caption', style: 'margin: 4px 0 6px' },
-        'The glasses always open text at its top, so going back up either opens the page above from its top (you can scroll), lands right above where you were, or turns one screen at a time with no scrolling. Applies to the next answer you open.',
-      ),
-      readingSelect,
-    ]),
   )
 }
 
@@ -575,12 +547,66 @@ function diagnosticsCard(): { el: HTMLElement; stop: () => void } {
   }
 }
 
+// Display preferences (G2-193): how answers and code read on the glasses,
+// in one place, with room for more.
+function displayCard(): HTMLElement {
+  const select = (label: string, options: { id: string; label: string }[]) =>
+    h(
+      'select',
+      { class: 'field', 'aria-label': label },
+      options.map(o => h('option', { value: o.id }, o.label)),
+    ) as HTMLSelectElement
+  const reading = select('Reading style', READING_STYLES)
+  reading.value = getReadingStyle()
+  reading.addEventListener('change', async () => {
+    if (await setReadingStyle(reading.value as ReadingStyle)) toast('Reading style saved')
+  })
+  const code = select('Long code', LONG_CODE_CHOICES)
+  code.value = getLongCode()
+  code.addEventListener('change', async () => {
+    if (await setLongCodeSetting(code.value as LongCode)) toast('Saved')
+  })
+  const size = select(
+    'Code size',
+    CODE_SIZES.map(px => ({ id: String(px), label: `${px} px` })),
+  )
+  void loadCodeSize().then(() => (size.value = String(getCodeSize())))
+  size.addEventListener('change', async () => {
+    if (await setCodeSize(Number(size.value))) toast('Code size saved')
+  })
+  const row = (title: string, caption: string, field: HTMLElement) =>
+    h('div', { style: 'margin-top: 16px' }, [
+      h('div', { style: 'font-weight: 500' }, title),
+      h('p', { class: 'caption', style: 'margin: 4px 0 6px' }, caption),
+      field,
+    ])
+  return card(
+    h('h2', {}, 'Reading'),
+    row(
+      'Long answers',
+      'The glasses always open text at its top, so going back up either opens the page above from its top (you can scroll), lands right above where you were, or turns one screen at a time with no scrolling.',
+      reading,
+    ),
+    row(
+      'Long code',
+      'Code taller than a screen: in the answer with the rest, or only in the code view (pictures with line numbers, never cut mid-line) with one line in the text to tap.',
+      code,
+    ),
+    row(
+      'Code size on the glasses',
+      'Bigger is easier to read but shows fewer lines. Applies the next time you open code.',
+      size,
+    ),
+  )
+}
+
 // Settings in three tabs (G2-181) instead of one long scroll: what you set
 // once for listening, what answers, and the text and diagnostics behind it.
-type SettingsTab = 'voice' | 'answers' | 'advanced'
+type SettingsTab = 'voice' | 'answers' | 'display' | 'advanced'
 const SETTINGS_TABS: { id: SettingsTab; label: string }[] = [
   { id: 'voice', label: 'Voice' },
   { id: 'answers', label: 'Answers' },
+  { id: 'display', label: 'Display' },
   { id: 'advanced', label: 'Advanced' },
 ]
 let settingsTab: SettingsTab = 'voice'
@@ -608,6 +634,9 @@ export function settingsView(ctx: AppContext): Page {
   )
   if (settingsTab === 'voice') {
     return { title: 'Settings', body: h('div', {}, tabs, glassesCard(ctx), transcriberCard()) }
+  }
+  if (settingsTab === 'display') {
+    return { title: 'Settings', body: h('div', {}, tabs, displayCard()) }
   }
   if (settingsTab === 'answers') {
     return {
