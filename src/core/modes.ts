@@ -11,7 +11,9 @@ import { MODES, modeOf, type ModeId } from '../shared/modePresets'
 export { MODES, modeOf }
 export type { Mode, ModeId } from '../shared/modePresets'
 
-export const MODE_PRESET_MAX_CHARS = 5000
+// Room for the Coding preset (about 7,900 characters) and Interview with a
+// full CV profile (about 5,500): 5000 cut both off when saved (G2-195).
+export const MODE_PRESET_MAX_CHARS = 12_000
 
 const key = (id: ModeId) => `jarvis.mode.${id}`
 
