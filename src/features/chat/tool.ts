@@ -80,7 +80,14 @@ import {
   rebuildSafe,
   type Page,
 } from './paging'
-import { layoutBlock, tilesFor, withCodePlaceholders, type CodeView } from './codeView'
+import {
+  codeBlockNames,
+  layoutBlock,
+  tilesFor,
+  withCodePlaceholders,
+  type CodeKind,
+  type CodeView,
+} from './codeView'
 import { nextTileBank, setTiles } from '../../platform/page'
 import { askAssistant } from './assistant'
 import { setCurrentScreen } from '../../core/currentScreen'
@@ -133,7 +140,8 @@ import { LANGUAGES, type Language } from '../../shared/languages'
 // 'history' (G2-102) is the list of one conversation's exchanges, between
 // the chat list and one exchange: double-tap steps back one level at a time,
 // code > question and answer > exchanges > chats > launcher.
-type Depth = 'picker' | 'history' | 'conversation'
+// 'codes': the list of an answer's code and pseudocode blocks (G2-203).
+type Depth = 'picker' | 'history' | 'conversation' | 'codes'
 let depth: Depth = 'picker'
 
 // Which exchange the question-and-answer screen shows; null is the latest.
@@ -613,10 +621,11 @@ function renderExchange(messages: readonly ChatMessage[]): string {
       : exchanges.length - 1
   const shown = exchanges[at]
   codeBlocks = []
+  codeKinds = []
   // Q:, then Mode and Model, then the answer, no divider (G2-200).
   const parts = [
     ...(shown.question ? [answerHeader(shown.question.text, shown.answer?.model ?? null)] : []),
-    ...(shown.answer ? [withCodePlaceholders(shown.answer.text, codeBlocks)] : []),
+    ...(shown.answer ? [withCodePlaceholders(shown.answer.text, codeBlocks, codeKinds)] : []),
   ]
   // A blank line between the header and the answer (G2-201).
   pages = paginate(parts.join('\n\n'), PAGE_INNER_WIDTH)
@@ -629,6 +638,8 @@ function renderExchange(messages: readonly ChatMessage[]): string {
 // THE CODE VIEW (G2-73): layout and pictures in codeView.ts (G2-172); this
 // keeps the answer's code blocks and which one is open.
 let codeBlocks: string[] = []
+// Code or pseudocode, for each block (G2-203).
+let codeKinds: CodeKind[] = []
 let codeView: CodeView | null = null
 let drawing = false
 let drawAgain = false
@@ -647,7 +658,7 @@ function warmCode(): void {
     warmTimer = null
     if (codeBlocks.length === 0 || codeView) return
     if (codeBlocks.length > 0 && !codeView)
-      void tilesFor(codeBlocks, layoutBlock(codeBlocks, 0), 0).catch(() => {})
+      void tilesFor(codeBlocks, layoutBlock(codeBlocks, 0), 0, codeKinds).catch(() => {})
   }, 300)
 }
 
@@ -668,7 +679,7 @@ async function drawCode(): Promise<void> {
         await setContent(CODE_LOADING_TEXT)
       }
       const renderStarted = performance.now()
-      const tiles = await tilesFor(codeBlocks, view, view.screen)
+      const tiles = await tilesFor(codeBlocks, view, view.screen, codeKinds)
       status(`Jarvis: code ready in ${((performance.now() - renderStarted) / 1000).toFixed(1)}s`)
       const sendStarted = performance.now()
       await setTiles(tiles)
@@ -682,7 +693,7 @@ async function drawCode(): Promise<void> {
       }
       // The next screen, while this one is read.
       if (view.screen + 1 < view.screens.length) {
-        void tilesFor(codeBlocks, view, view.screen + 1).catch(() => {})
+        void tilesFor(codeBlocks, view, view.screen + 1, codeKinds).catch(() => {})
       }
     } while (drawAgain && codeView)
   } finally {
@@ -697,6 +708,13 @@ let openStartedAt: number | null = null
 // happening until the last picture lands.
 const CODE_LOADING_TEXT = '\n\n\n\n        Loading code...'
 let showCodeLoading = false
+
+// The answer's code and pseudocode blocks as a list to pick from (G2-203).
+function openCodeList(): void {
+  depth = 'codes'
+  updatePositionNote()
+  requestRebuild(entry ?? chatTool)
+}
 
 function openCodeView(): void {
   if (codeBlocks.length === 0) return
@@ -713,16 +731,11 @@ function openCodeView(): void {
 function moveCode(delta: 1 | -1): void {
   const view = codeView
   if (!view) return
+  // Only within the block that was picked (G2-203): another block is picked
+  // from the list, back on the answer.
   const next = view.screen + delta
-  if (next >= 0 && next < view.screens.length) {
-    view.screen = next
-  } else if (delta === 1 && view.block < codeBlocks.length - 1) {
-    viewBlock(view.block + 1, 0)
-  } else if (delta === -1 && view.block > 0) {
-    viewBlock(view.block - 1, Number.MAX_SAFE_INTEGER)
-  } else {
-    return
-  }
+  if (next < 0 || next >= view.screens.length) return
+  view.screen = next
   void drawCode()
 }
 
@@ -1590,12 +1603,26 @@ export const chatTool: Tool = {
   beforeOpen: () => openAs('jarvis', chatTool),
   contentKind: () => (depth !== 'conversation' ? 'list' : codeView ? 'tiles' : 'text'),
   listItems: () =>
-    depth === 'history'
-      ? historyRows(exchangesOf(chat.messages)).map(r => r.label)
-      : atLanguages()
-        ? [...LANGUAGES]
-        : [...newRows().map(r => r.label), ...pickerSessions.map(s => pickerTitle(s.title))],
+    depth === 'codes'
+      ? codeBlockNames(codeBlocks, codeKinds)
+      : depth === 'history'
+        ? historyRows(exchangesOf(chat.messages)).map(r => r.label)
+        : atLanguages()
+          ? [...LANGUAGES]
+          : [...newRows().map(r => r.label), ...pickerSessions.map(s => pickerTitle(s.title))],
   onListSelect: index => {
+    // A code or pseudocode block picked from the answer's list (G2-203): the
+    // shell's rebuild shows the code view, drawn in onContentReady.
+    if (depth === 'codes') {
+      if (index < 0 || index >= codeBlocks.length) return
+      depth = 'conversation'
+      openStartedAt = performance.now()
+      showCodeLoading = true
+      nextTileBank()
+      viewBlock(index, 0)
+      status(`Jarvis: code view of block ${index + 1} (${codeView?.screens.length} screens)`)
+      return
+    }
     if (depth === 'history') {
       const exchanges = exchangesOf(chat.messages)
       const row = historyRows(exchanges)[index]
@@ -1740,7 +1767,9 @@ export const chatTool: Tool = {
     // Confirmed (G2-185): the first tap only asks, a second opens the code.
     if (Date.now() < codeArmedUntil) {
       disarmCode()
-      openCodeView()
+      // Several blocks: pick one from a list first (G2-203).
+      if (codeBlocks.length > 1) openCodeList()
+      else openCodeView()
       return
     }
     codeArmedUntil = Date.now() + FOLLOW_UP_CONFIRM_MS
@@ -1763,6 +1792,13 @@ export const chatTool: Tool = {
     }
     if (codeView) {
       closeCodeView()
+      return true
+    }
+    // From the list of code blocks back to the answer (G2-203).
+    if (depth === 'codes') {
+      depth = 'conversation'
+      updatePositionNote()
+      requestRebuild(entry ?? chatTool, fillSection)
       return true
     }
     if (depth === 'history') {
