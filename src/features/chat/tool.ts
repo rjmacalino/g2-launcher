@@ -1,4 +1,5 @@
 import appInfo from '../../../app.json'
+import { answerHeader } from '../../shared/answerHeader'
 import {
   FOLLOW_UP_CONFIRM_MS,
   canListen,
@@ -16,7 +17,6 @@ import { navigate } from '../../core/navigation'
 import { parseNavCommand, type NavCommand } from '../../shared/navCommands'
 import { positionLabel } from '../../shared/position'
 import { exchangesOf, historyRows } from './exchanges'
-import { questionLine } from '../../shared/questionKeywords'
 import { modelLabel } from '../../core/llmProviders'
 import {
   autoSendCountdown,
@@ -550,13 +550,6 @@ function syncPickerFromCurrent(): void {
 // changes the page (see onScroll below). Every page is under either
 // ceiling, so answer length is unlimited.
 
-// The question line above an answer (G2-100): short questions in full, long
-// ones boiled down to their key words (shared/questionKeywords.ts), so it
-// never takes more than a line or two of the screen.
-function youLine(question: string): string {
-  return `You: ${questionLine(question)}`
-}
-
 // The pages currently on screen, and which one is showing. Empty whenever
 // something other than the conversation is on screen (listening, thinking,
 // an error), so a swipe there does nothing.
@@ -589,18 +582,6 @@ let tailView: { rows: string[]; win: Win } | null = null
 const SCROLL_COOLDOWN_MS = 400
 let lastScrollAt = 0
 
-// A short horizontal rule between the question and the answer - U+2500,
-// confirmed available in the firmware font (docs/platform.md's glyph
-// table). A blank line alone looks identical to a paragraph break INSIDE a
-// longer answer, which makes a multi-paragraph reply hard to tell apart
-// from the question above it; this divider is the one mark on screen that
-// only ever means "new speaker", never "new paragraph". Kept short (12
-// chars) rather than spanning the line - a measured, intentional rule
-// reads more clearly at this size than a long one that may not even line
-// up with the text's own wrapped width, which this app has no way to
-// measure exactly (see docs/platform.md, proportional font).
-const DIVIDER = '\n\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\n'
-
 // The latest answer only (G2-97: the question took the whole first screen
 // and the wearer already knows what they asked - it is on the phone). An
 // unanswered question is shown, short, since there is no answer yet.
@@ -631,15 +612,12 @@ function renderExchange(messages: readonly ChatMessage[]): string {
       : exchanges.length - 1
   const shown = exchanges[at]
   codeBlocks = []
+  // Q:, then Mode and Model, then the answer, no divider (G2-200).
   const parts = [
-    ...(shown.question ? [youLine(shown.question.text)] : []),
-    ...(shown.answer
-      ? [
-          `${shown.answer.model ? `${shown.answer.model}: ` : ''}${withCodePlaceholders(shown.answer.text, codeBlocks)}`,
-        ]
-      : []),
+    ...(shown.question ? [answerHeader(shown.question.text, shown.answer?.model ?? null)] : []),
+    ...(shown.answer ? [withCodePlaceholders(shown.answer.text, codeBlocks)] : []),
   ]
-  pages = paginate(parts.join(DIVIDER), PAGE_INNER_WIDTH)
+  pages = paginate(parts.join('\n'), PAGE_INNER_WIDTH)
   pageIndex = 0
   pageWin = null
   warmCode()
@@ -1020,7 +998,7 @@ function showThinking(question: string): void {
     sessionToken,
     (dots, elapsedSeconds) => {
       setContent(
-        `${youLine(question)}${DIVIDER}Thinking${dots} (${elapsedSeconds}s)${thinkingRetryNote}`,
+        `${answerHeader(question, null)}\nThinking${dots} (${elapsedSeconds}s)${thinkingRetryNote}`,
       )
     },
     thinkingStartedAt,
@@ -1116,7 +1094,8 @@ async function askGeminiNow(question: string) {
   // The finished answer then replaces it with the normal paged view below,
   // from its start, where smooth scrolling is back.
   const typed: Stream = {
-    header: youLine(question),
+    // Shown above the answer from its first word (G2-200).
+    header: answerHeader(question, withModeTag(modelLabel(llm.provider, llm.model))),
     label: modelLabel(llm.provider, llm.model),
     received: '',
     shown: 0,
@@ -1185,7 +1164,7 @@ async function askGeminiNow(question: string) {
     lastErrorQuestion = question
     const triedNote = attemptsMade > 1 ? ` after ${attemptsMade} tries` : ''
     setContent(
-      `${youLine(question)}${DIVIDER}Couldn't reach ${providerInfo(llm.provider).label}${triedNote} (${reply.message}).` +
+      `${answerHeader(question, null)}\nCouldn't reach ${providerInfo(llm.provider).label}${triedNote} (${reply.message}).` +
         '\n\n(tap to retry, double-tap to go back)',
     )
     return
@@ -1247,7 +1226,7 @@ async function askGeminiNow(question: string) {
   if (typed.outcome === 'caught-up' && typed.mode === 'follow' && !isInstant()) {
     // The typing caught up by itself: the wearer is reading the last lines,
     // so leave them there instead of jumping back to the first (G2-107).
-    const rows = rowsOf(typed.received, PAGE_INNER_WIDTH)
+    const rows = rowsOf(`${typed.header}\n${typed.received}`, PAGE_INNER_WIDTH)
     tailView = { rows, win: tailWin(rows) }
   } else {
     void showPage(firstPage)

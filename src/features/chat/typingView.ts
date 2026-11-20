@@ -93,18 +93,26 @@ export function streamNote(s: Stream): string | null {
   return null
 }
 
+// The answer so far under its header ("Q: ..." and "Mode: ... - Model: ...",
+// G2-200), so the header is on screen from the first word.
+function withHeader(s: Stream, upTo: number): string {
+  return `${s.header}\n${s.received.slice(0, upTo)}`
+}
+
 function drawStream(s: Stream): void {
   if (current !== s) return
   if (s.mode === 'follow' && answerSpeed === 'instant') {
     // Instant (G2-197): the answer's first page from the top, growing as it
     // arrives; once that page is full nothing changes, so nothing moves.
-    const head = rowsOf(s.received, PAGE_INNER_WIDTH).slice(0, currentPageRows()).join('\n')
+    const head = rowsOf(withHeader(s, s.received.length), PAGE_INNER_WIDTH)
+      .slice(0, currentPageRows())
+      .join('\n')
     if (head && head !== s.drawn) {
       s.drawn = head
       s.pending = s.pending.then(() => screen?.setContent(head))
     }
   } else if (s.mode === 'follow') {
-    const tail = tailRows(s.received.slice(0, s.shown), PAGE_INNER_WIDTH)
+    const tail = tailRows(withHeader(s, s.shown), PAGE_INNER_WIDTH)
     if (tail && tail !== s.drawn) {
       s.drawn = tail
       s.pending = s.pending.then(() => screen?.setContent(tail))
@@ -177,7 +185,7 @@ export function waitForReveal(s: Stream): Promise<void> {
 // and a swipe down past the last window waits for more to arrive. Tap again
 // to go on typing from where they have read to.
 function allRows(s: Stream): string[] {
-  return rowsOf(s.received, PAGE_INNER_WIDTH)
+  return rowsOf(withHeader(s, s.received.length), PAGE_INNER_WIDTH)
 }
 
 export function freezeStream(): Stream | null {
@@ -185,7 +193,7 @@ export function freezeStream(): Stream | null {
   // Instant (G2-197): nothing to pause, and pausing jumps to the newest line.
   if (!s || s.timer === null || s.mode !== 'follow' || answerSpeed === 'instant') return null
   s.mode = 'hold'
-  s.win = tailWin(rowsOf(s.received.slice(0, s.shown), PAGE_INNER_WIDTH))
+  s.win = tailWin(rowsOf(withHeader(s, s.shown), PAGE_INNER_WIDTH))
   screen?.setNote(streamNote(s))
   return s
 }
