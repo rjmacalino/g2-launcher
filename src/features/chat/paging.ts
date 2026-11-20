@@ -57,6 +57,11 @@ export const PAGE_ROWS = SCREEN_ROWS * 3
 // reading style (G2-191, shared/readingStyle.ts).
 let pageRows = PAGE_ROWS
 
+// Rows in a page now (G2-197: an instant answer shows its first page).
+export function currentPageRows(): number {
+  return pageRows
+}
+
 export function setScreensPerPage(screens: number): void {
   // One screen: a row less, so the page and its "(more below)" line fit the
   // screen exactly and nothing scrolls.

@@ -37,6 +37,30 @@ export function parseLongCode(saved: string): LongCode {
   return saved === 'codeView' ? 'codeView' : 'inline'
 }
 
+// How fast answers appear (G2-197). The typing speeds reveal the answer at a
+// reading pace, following its newest line; instant shows it from its first
+// line as it arrives and never moves down by itself.
+export type AnswerSpeed = 'slow' | 'normal' | 'fast' | 'instant'
+
+export const ANSWER_SPEEDS: { id: AnswerSpeed; label: string }[] = [
+  { id: 'slow', label: 'Type slowly' },
+  { id: 'normal', label: 'Type at a reading pace' },
+  { id: 'fast', label: 'Type fast' },
+  { id: 'instant', label: 'Instant, stay at the top' },
+]
+
+export function parseAnswerSpeed(saved: string): AnswerSpeed {
+  return ANSWER_SPEEDS.some(s => s.id === saved) ? (saved as AnswerSpeed) : 'normal'
+}
+
+// Characters a second; instant shows everything at once.
+export function charsPerSecond(speed: AnswerSpeed): number {
+  if (speed === 'slow') return 18
+  if (speed === 'fast') return 60
+  if (speed === 'instant') return Infinity
+  return 30
+}
+
 // Screens in one page for a style.
 export function screensPerPage(style: ReadingStyle): number {
   return style === 'screens' ? 1 : 3

@@ -57,3 +57,14 @@ describe('leadSentenceEnd (G2-180)', () => {
     expect(LEAD_MAX_CHARS).toBeLessThanOrEqual(300)
   })
 })
+
+describe('answer speed (G2-197)', () => {
+  it('reads the saved speed, anything unknown as reading pace', async () => {
+    const { parseAnswerSpeed, charsPerSecond } = await import('../src/shared/readingStyle')
+    expect(parseAnswerSpeed('instant')).toBe('instant')
+    expect(parseAnswerSpeed('warp')).toBe('normal')
+    expect(charsPerSecond('slow')).toBeLessThan(charsPerSecond('normal'))
+    expect(charsPerSecond('fast')).toBeGreaterThan(charsPerSecond('normal'))
+    expect(charsPerSecond('instant')).toBe(Infinity)
+  })
+})

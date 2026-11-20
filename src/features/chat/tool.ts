@@ -49,6 +49,7 @@ import {
   currentStream,
   endStream,
   freezeStream,
+  isInstant,
   moveHold,
   setCurrentStream,
   skipToEnd,
@@ -302,7 +303,11 @@ function hintScreen(): HintScreen {
   if (listening) return 'listening'
   if (transcribing && transcribingFor === chat.id) return 'transcribing'
   const stream = currentStream()
-  if (stream && stream.timer !== null) return stream.mode === 'hold' ? 'paused' : 'typing'
+  if (stream && stream.timer !== null) {
+    // Instant (G2-197): nothing to pause; it reads like waiting.
+    if (isInstant()) return 'thinking'
+    return stream.mode === 'hold' ? 'paused' : 'typing'
+  }
   if (waitingHere()) return 'thinking'
   if (lastErrorQuestion !== null) return 'error'
   return chat.messages.length > 0 ? 'answer' : 'empty'
@@ -1238,7 +1243,8 @@ async function askGeminiNow(question: string) {
   // screen; the answer is in the chat for when the wearer looks back.
   if (listening || transcribing) return
   const firstPage = renderConversation()
-  if (typed.outcome === 'caught-up' && typed.mode === 'follow') {
+  // An instant answer (G2-197) shows page 1 from its top instead.
+  if (typed.outcome === 'caught-up' && typed.mode === 'follow' && !isInstant()) {
     // The typing caught up by itself: the wearer is reading the last lines,
     // so leave them there instead of jumping back to the first (G2-107).
     const rows = rowsOf(typed.received, PAGE_INNER_WIDTH)

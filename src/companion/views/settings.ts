@@ -1,14 +1,18 @@
 import { bridge, onStatus, recentStatus } from '../../platform/bridge'
 import { trace } from '../../shared/trace'
 import {
+  ANSWER_SPEEDS,
   LONG_CODE_CHOICES,
   READING_STYLES,
+  type AnswerSpeed,
   type LongCode,
   type ReadingStyle,
 } from '../../shared/readingStyle'
 import {
+  getAnswerSpeed,
   getLongCode,
   getReadingStyle,
+  setAnswerSpeedSetting,
   setLongCodeSetting,
   setReadingStyle,
 } from '../../core/readingSettings'
@@ -561,6 +565,11 @@ function displayCard(): HTMLElement {
   reading.addEventListener('change', async () => {
     if (await setReadingStyle(reading.value as ReadingStyle)) toast('Reading style saved')
   })
+  const speed = select('Answer speed', ANSWER_SPEEDS)
+  speed.value = getAnswerSpeed()
+  speed.addEventListener('change', async () => {
+    if (await setAnswerSpeedSetting(speed.value as AnswerSpeed)) toast('Answer speed saved')
+  })
   const code = select('Long code', LONG_CODE_CHOICES)
   code.value = getLongCode()
   code.addEventListener('change', async () => {
@@ -582,6 +591,11 @@ function displayCard(): HTMLElement {
     ])
   return card(
     h('h2', {}, 'Reading'),
+    row(
+      'Answer speed',
+      'How answers appear while they arrive. Typing follows the newest line at the pace you pick (tap pauses, swipe down skips). Instant shows the answer from its first line and never scrolls you down: you read at your own pace.',
+      speed,
+    ),
     row(
       'Long answers',
       'The glasses always open text at its top, so going back up either opens the page above from its top (you can scroll), lands right above where you were, or turns one screen at a time with no scrolling.',

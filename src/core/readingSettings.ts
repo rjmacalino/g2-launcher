@@ -2,11 +2,14 @@ import { bridge, status } from '../platform/bridge'
 import { setScreensPerPage } from '../features/chat/paging'
 import { setUpStyle } from '../features/chat/viewer'
 import { setLongCode } from '../features/chat/codeView'
+import { setAnswerSpeed } from '../features/chat/typingView'
 import {
   DEFAULT_READING_STYLE,
+  parseAnswerSpeed,
   parseLongCode,
   parseReadingStyle,
   screensPerPage,
+  type AnswerSpeed,
   type LongCode,
   type ReadingStyle,
 } from '../shared/readingStyle'
@@ -32,9 +35,30 @@ export async function loadReadingStyle(): Promise<void> {
   try {
     apply(parseReadingStyle(await bridge.getLocalStorage(STORAGE_KEY)))
     applyLongCode(parseLongCode(await bridge.getLocalStorage(LONG_CODE_KEY)))
+    applySpeed(parseAnswerSpeed(await bridge.getLocalStorage(SPEED_KEY)))
   } catch {
     apply(DEFAULT_READING_STYLE)
   }
+}
+
+// How fast answers appear (G2-197).
+const SPEED_KEY = 'jarvis.answerSpeed'
+let speed: AnswerSpeed = 'normal'
+
+function applySpeed(next: AnswerSpeed): void {
+  speed = next
+  setAnswerSpeed(next)
+}
+
+export function getAnswerSpeed(): AnswerSpeed {
+  return speed
+}
+
+export async function setAnswerSpeedSetting(next: AnswerSpeed): Promise<boolean> {
+  applySpeed(next)
+  const ok = await bridge.setLocalStorage(SPEED_KEY, next)
+  if (!ok) status('Failed to save the answer speed')
+  return ok
 }
 
 // Where long code is read (G2-193).

@@ -1,5 +1,6 @@
-import { PAGE_INNER_WIDTH, tailRows } from './paging'
-import { TYPING_CHARS_PER_SECOND, leadSentenceEnd, nextShown } from './typing'
+import { PAGE_INNER_WIDTH, currentPageRows, tailRows } from './paging'
+import { leadSentenceEnd, nextShown } from './typing'
+import { charsPerSecond, type AnswerSpeed } from '../../shared/readingStyle'
 import { moveView, rowsOf, tailWin, viewLabel, type Win } from './viewer'
 
 // THE ANSWER BEING TYPED (G2-106, G2-107, G2-110, G2-111), split out of
@@ -54,6 +55,18 @@ export type StreamScreen = {
 }
 
 let screen: StreamScreen | null = null
+
+// How fast answers appear (G2-197, a Display setting).
+let answerSpeed: AnswerSpeed = 'normal'
+
+export function setAnswerSpeed(speed: AnswerSpeed): void {
+  answerSpeed = speed
+}
+
+// Instant answers end on their first page, not on the last lines.
+export function isInstant(): boolean {
+  return answerSpeed === 'instant'
+}
 let current: Stream | null = null
 
 export function useScreen(s: StreamScreen): void {
@@ -82,7 +95,15 @@ export function streamNote(s: Stream): string | null {
 
 function drawStream(s: Stream): void {
   if (current !== s) return
-  if (s.mode === 'follow') {
+  if (s.mode === 'follow' && answerSpeed === 'instant') {
+    // Instant (G2-197): the answer's first page from the top, growing as it
+    // arrives; once that page is full nothing changes, so nothing moves.
+    const head = rowsOf(s.received, PAGE_INNER_WIDTH).slice(0, currentPageRows()).join('\n')
+    if (head && head !== s.drawn) {
+      s.drawn = head
+      s.pending = s.pending.then(() => screen?.setContent(head))
+    }
+  } else if (s.mode === 'follow') {
     const tail = tailRows(s.received.slice(0, s.shown), PAGE_INNER_WIDTH)
     if (tail && tail !== s.drawn) {
       s.drawn = tail
@@ -104,7 +125,8 @@ export function tickStream(s: Stream): void {
   if (s.mode === 'follow') {
     // Only typing time counts: a pause must not store up time that is then
     // spent in one burst on resuming (G2-110).
-    s.budget += (TYPING_CHARS_PER_SECOND * elapsed) / 1000
+    s.budget += (charsPerSecond(answerSpeed) * elapsed) / 1000
+    if (answerSpeed === 'instant') s.shown = s.received.length
     // Interview and Code: the first sentence at once, to say now (G2-180).
     if (s.sayNow) {
       const lead = leadSentenceEnd(s.received)
@@ -160,7 +182,8 @@ function allRows(s: Stream): string[] {
 
 export function freezeStream(): Stream | null {
   const s = current
-  if (!s || s.timer === null || s.mode !== 'follow') return null
+  // Instant (G2-197): nothing to pause, and pausing jumps to the newest line.
+  if (!s || s.timer === null || s.mode !== 'follow' || answerSpeed === 'instant') return null
   s.mode = 'hold'
   s.win = tailWin(rowsOf(s.received.slice(0, s.shown), PAGE_INNER_WIDTH))
   screen?.setNote(streamNote(s))
@@ -207,6 +230,7 @@ export function skipToEnd(s: Stream): void {
 export function tapStream(): boolean {
   const s = current
   if (!s || s.timer === null) return false
+  if (answerSpeed === 'instant') return true
   if (s.mode === 'follow') freezeStream()
   else resumeStream(s)
   return true
