@@ -1,4 +1,4 @@
-import { describe, expect, it, vi } from 'vitest'
+import { afterEach, describe, expect, it, vi } from 'vitest'
 
 // paging.ts imports the screen geometry, which imports the glasses bridge and
 // its wait for the Even Hub; there is none under Vitest (see chat-paging).
@@ -12,6 +12,10 @@ const { PAGE_MAX_CHARS, PAGE_ROWS, SCREEN_ROWS } = await import('../src/features
 const TOTAL = 3 * PAGE_ROWS + 19
 const { movePaged, moveView, tailWin, viewLabel, viewPages, windowText } =
   await import('../src/features/chat/viewer')
+
+const { setScreensPerPage } = await import('../src/features/chat/paging')
+const { setUpStyle } = await import('../src/features/chat/viewer')
+const { parseReadingStyle, screensPerPage } = await import('../src/shared/readingStyle')
 
 const rows = (n: number) => Array.from({ length: n }, (_, i) => `row ${i}`)
 
@@ -98,5 +102,41 @@ describe('movePaged (G2-124)', () => {
       win: null,
     })
     expect(movePaged(lengths, { page: 2, win: null }, 1)).toBeNull()
+  })
+})
+
+describe('reading styles (G2-191)', () => {
+  const lengths = [27, 27, 12]
+
+  afterEach(() => {
+    setUpStyle('pageTop')
+    setScreensPerPage(3)
+  })
+
+  it('reads the saved style, anything unknown as page top', () => {
+    expect(parseReadingStyle('continuity')).toBe('continuity')
+    expect(parseReadingStyle('screens')).toBe('screens')
+    expect(parseReadingStyle('')).toBe('pageTop')
+    expect(screensPerPage('screens')).toBe(1)
+    expect(screensPerPage('pageTop')).toBe(3)
+  })
+
+  it('continuity: up lands on the last screen above, then a screen further, to the page end', () => {
+    setUpStyle('continuity')
+    let at = movePaged(lengths, { page: 1, win: null }, -1)
+    expect(at).toEqual({ page: 0, win: { start: 27 - SCREEN_ROWS, end: 27 } })
+    at = movePaged(lengths, at!, -1)
+    expect(at).toEqual({ page: 0, win: { start: 27 - 2 * SCREEN_ROWS, end: 27 } })
+  })
+
+  it('one screen per page: pages are one screen, and up shows exactly the screen above', () => {
+    setScreensPerPage(1)
+    // A row less than a screen, so the page plus "(more below)" fits exactly.
+    const per = SCREEN_ROWS - 1
+    const all = rows(per * 3)
+    const pages = viewPages(all)
+    expect(pages).toHaveLength(3)
+    expect(pages[1]).toEqual({ start: per, end: 2 * per })
+    expect(moveView(all, pages[2], -1)).toEqual(pages[1])
   })
 })

@@ -52,6 +52,16 @@ export function lowerPageLimit(): boolean {
 // very next line - nothing is repeated, so "75" follows "74".
 export const PAGE_ROWS = SCREEN_ROWS * 3
 
+// Rows in a page now: three screens, or one with the "one screen per page"
+// reading style (G2-191, shared/readingStyle.ts).
+let pageRows = PAGE_ROWS
+
+export function setScreensPerPage(screens: number): void {
+  // One screen: a row less, so the page and its "(more below)" line fit the
+  // screen exactly and nothing scrolls.
+  pageRows = screens === 1 ? SCREEN_ROWS - 1 : SCREEN_ROWS * screens
+}
+
 // Room kept for the indicator row within PAGE_MAX_CHARS.
 const HINT_RESERVE_CHARS = 40
 
@@ -122,7 +132,7 @@ export function pageRanges(rows: readonly string[]): RowRange[] {
     const start = next
     let chars = 0
     // Always takes at least one row, so paging always moves forward.
-    while (next < last && next - start < PAGE_ROWS) {
+    while (next < last && next - start < pageRows) {
       const added = (next > start ? 1 : 0) + rows[next].length
       if (next > start && chars + added > budget) break
       chars += added

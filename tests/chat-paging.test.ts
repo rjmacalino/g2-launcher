@@ -10,8 +10,15 @@ vi.mock('../src/platform/bridge', () => ({
   status: vi.fn(),
 }))
 
-const { paginate, rebuildSafe, PAGE_INNER_WIDTH, SCREEN_ROWS, PAGE_MAX_CHARS, PAGE_ROWS } =
-  await import('../src/features/chat/paging')
+const {
+  paginate,
+  rebuildSafe,
+  setScreensPerPage,
+  PAGE_INNER_WIDTH,
+  SCREEN_ROWS,
+  PAGE_MAX_CHARS,
+  PAGE_ROWS,
+} = await import('../src/features/chat/paging')
 
 // The firmware's hard ceiling on content in a page rebuild, the stricter of
 // its two limits (docs/platform.md).
@@ -216,5 +223,19 @@ describe('lowerPageLimit (G2-106)', () => {
       Math.max(...m.paginate(long, m.PAGE_INNER_WIDTH).map(p => p.text.length)),
     ).toBeLessThanOrEqual(1000)
     expect(m.lowerPageLimit()).toBe(false)
+  })
+})
+
+describe('one screen per page (G2-191)', () => {
+  it('fits each page and its "(more below)" line on one screen', () => {
+    setScreensPerPage(1)
+    try {
+      const numbers = Array.from({ length: 40 }, (_, i) => String(i + 1)).join('\n')
+      for (const page of paginate(numbers, PAGE_INNER_WIDTH)) {
+        expect(page.text.split('\n').length).toBeLessThanOrEqual(SCREEN_ROWS)
+      }
+    } finally {
+      setScreensPerPage(3)
+    }
   })
 })

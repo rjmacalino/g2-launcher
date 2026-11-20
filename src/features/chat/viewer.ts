@@ -1,3 +1,4 @@
+import type { ReadingStyle } from '../../shared/readingStyle'
 import { positionLabel } from '../../shared/position'
 import { SCREEN_ROWS, pageRanges, wrapLines, type RowRange } from './paging'
 
@@ -55,9 +56,29 @@ export function movePaged(
     if (cur.end < length) return { page: at.page, win: { start: cur.end, end: length } }
     return at.page + 1 < lengths.length ? { page: at.page + 1, win: null } : null
   }
+  if (upStyle === 'continuity') {
+    // The screen just above, through to the page's end (G2-191).
+    if (cur.start > 0) {
+      const start = Math.max(0, cur.start - SCREEN_ROWS)
+      return { page: at.page, win: start === 0 ? null : { start, end: length } }
+    }
+    if (at.page === 0) return null
+    const before = lengths[at.page - 1]
+    const start = Math.max(0, before - SCREEN_ROWS)
+    return { page: at.page - 1, win: start === 0 ? null : { start, end: before } }
+  }
   if (cur.start > 0) return { page: at.page, win: null }
   if (at.page === 0) return null
   return { page: at.page - 1, win: null }
+}
+
+// Which way up goes (G2-191): 'continuity' lands right above, anything else
+// opens a whole page from its top (with one screen per page, that is exactly
+// the screen above).
+let upStyle: ReadingStyle = 'pageTop'
+
+export function setUpStyle(style: ReadingStyle): void {
+  upStyle = style
 }
 
 // The same for a view over all of an answer's rows.

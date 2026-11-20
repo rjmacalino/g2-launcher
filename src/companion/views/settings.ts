@@ -1,5 +1,7 @@
 import { bridge, onStatus, recentStatus } from '../../platform/bridge'
 import { trace } from '../../shared/trace'
+import { READING_STYLES, type ReadingStyle } from '../../shared/readingStyle'
+import { getReadingStyle, setReadingStyle } from '../../core/readingSettings'
 import { ABOUT_ME_MAX_CHARS, getAboutMe, setAboutMe } from '../../core/geminiSettings'
 import {
   DEFAULT_LOCAL_INSTRUCTIONS,
@@ -120,6 +122,16 @@ function glassesCard(ctx: AppContext): HTMLElement {
   sizeSelect.addEventListener('change', async () => {
     if (await setCodeSize(Number(sizeSelect.value))) toast('Code size saved')
   })
+  // How long answers read (G2-191).
+  const readingSelect = h(
+    'select',
+    { class: 'field', 'aria-label': 'Reading style' },
+    READING_STYLES.map(s => h('option', { value: s.id }, s.label)),
+  ) as HTMLSelectElement
+  readingSelect.value = getReadingStyle()
+  readingSelect.addEventListener('change', async () => {
+    if (await setReadingStyle(readingSelect.value as ReadingStyle)) toast('Reading style saved')
+  })
 
   return card(
     h(
@@ -154,6 +166,15 @@ function glassesCard(ctx: AppContext): HTMLElement {
         'Bigger is easier to read but shows fewer lines. Applies the next time you open code.',
       ),
       sizeSelect,
+    ]),
+    h('div', { style: 'margin-top: 16px' }, [
+      h('div', { style: 'font-weight: 500' }, 'Reading long answers'),
+      h(
+        'p',
+        { class: 'caption', style: 'margin: 4px 0 6px' },
+        'The glasses always open text at its top, so going back up either opens the page above from its top (you can scroll), lands right above where you were, or turns one screen at a time with no scrolling. Applies to the next answer you open.',
+      ),
+      readingSelect,
     ]),
   )
 }
